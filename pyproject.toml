@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gleapp-forensics"
+version = "0.1.0"
+description = "GLEAPP - Graphics · Logs · Examination · Automated Processing · Parsing: an open-source image/video forensic triage toolkit"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "charpy4n6" }]
+dependencies = [
+    "Pillow>=10.0",
+    "pillow-heif>=0.13",
+    "texture2ddecoder>=1.0",
+    "pyliblzfse>=0.4.1",
+    "zstandard>=0.22",
+    "imagehash>=4.3",
+    "numpy>=1.24",
+    "opencv-python-headless>=4.8",
+    "Flask>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "piexif>=1.1"]
+desktop = ["pywebview>=5.0"]
+build = ["pywebview>=5.0", "pyinstaller>=6.0"]
+
+[project.scripts]
+gleapp = "gleapp.cli:main"
+gleapp-desktop = "gleapp.desktop:main"
+
+[tool.setuptools.packages.find]
+include = ["gleapp*"]
+
+[tool.setuptools.package-data]
+gleapp = ["web/templates/*", "web/static/*", "models/*.onnx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

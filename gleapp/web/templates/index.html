@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GLEAPP Review</title>
+<style>
+  :root{
+    --bg:#14161a; --panel:#1c1f26; --panel2:#242833; --line:#333a46;
+    --fg:#e6e8ec; --muted:#8b93a3; --accent:#4c8dff; --danger:#e5484d;
+    --ok:#3fb950; --warn:#d29922; --tile:150px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:13px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--fg)}
+  a{color:var(--accent)}
+  header{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  header .stat{color:var(--muted)}
+  header .stat b{color:var(--fg)}
+  #saveState{font-size:12px;color:var(--ok);white-space:nowrap}
+  #saveState.saving{color:var(--warn)}
+  #saveState.error{color:var(--danger);cursor:pointer}
+  #saveState::before{content:"● "}
+  .layout{display:flex;height:calc(100vh - 41px)}
+  aside.filters{width:225px;flex:0 0 225px;background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px}
+  aside.filters h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  aside.filters label{display:block;margin:3px 0}
+  aside.filters select,aside.filters input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
+  aside.filters input[type=range]{width:100%}
+  main{flex:1;overflow:auto;padding:10px;position:relative}
+  .banner{background:var(--panel2);border:1px solid var(--accent);border-radius:6px;padding:6px 10px;margin-bottom:8px;display:flex;gap:10px;align-items:center}
+  .pager{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 2px;font-size:12px;color:var(--muted)}
+  .pager.hidden{display:none}
+  #pagerTop{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--line);margin-bottom:6px}
+  #pagerBot{border-top:1px solid var(--line);margin-top:8px;justify-content:center}
+  .pager button{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:5px;padding:3px 9px;cursor:pointer;font:inherit}
+  .pager button:hover:not(:disabled){border-color:var(--accent)}
+  .pager button:disabled{opacity:.4;cursor:default}
+  .pager input{width:3.5em;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:3px;text-align:center}
+  .pager b{color:var(--fg)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tile),1fr));gap:8px}
+  .tile{position:relative;background:var(--panel2);border:2px solid var(--line);border-radius:7px;overflow:hidden;cursor:pointer;aspect-ratio:1/1}
+  .tile img{width:100%;height:100%;object-fit:cover;display:block;background:#0c0d10}
+  .tile .noimg{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#22262f;color:var(--muted);font-size:12px;font-weight:600;text-align:center;gap:2px}
+  .tile .noimg small{font-weight:400;font-size:10px}
+  .tile.sel{box-shadow:0 0 0 3px var(--accent) inset}
+  .tile.focus{outline:2px solid var(--accent);outline-offset:-2px}
+  .tile .badges{position:absolute;left:4px;top:4px;right:4px;display:flex;gap:3px;flex-wrap:wrap;pointer-events:none}
+  .tile .b{background:rgba(0,0,0,.72);border-radius:4px;padding:1px 5px;font-size:10px;line-height:1.5}
+  .tile .b.hit{background:var(--danger)}
+  .tile .rev{position:absolute;right:4px;top:4px;background:var(--ok);color:#04140a;border-radius:50%;width:16px;height:16px;text-align:center;font-size:11px;line-height:16px}
+  .tile .stackn{position:absolute;right:4px;bottom:20px;background:rgba(0,0,0,.8);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:0 5px;font-size:11px;font-weight:700;line-height:1.6}
+  .tile .stackn.vis{background:var(--accent);border-color:#fff}
+  .tile.stacked{box-shadow:2px 2px 0 0 var(--bg), 3px 3px 0 0 var(--line), 5px 5px 0 0 var(--bg), 6px 6px 0 0 var(--line)}
+  .tile.vstacked{box-shadow:2px 2px 0 0 var(--bg), 3px 3px 0 0 var(--accent), 5px 5px 0 0 var(--bg), 6px 6px 0 0 var(--accent)}
+  .grid{padding:0 8px 8px 0}
+  .tile .scrub{position:absolute;left:0;right:0;top:0;height:3px;background:rgba(255,255,255,.15)}
+  .tile .scrub i{display:block;height:100%;background:var(--accent);width:0}
+  .tile .vid{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.72);border-radius:4px;padding:1px 5px;font-size:10px}
+  /* category color bar along the bottom */
+  .tile .catbar{position:absolute;left:0;right:0;bottom:0;min-height:17px;padding:1px 6px;
+    font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+  .tile .catbar.none{background:#3a3f4b;color:var(--muted);font-weight:400}
+  #ctx{position:fixed;z-index:60;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:4px;min-width:200px;box-shadow:0 8px 30px rgba(0,0,0,.5);display:none;max-height:80vh;overflow:auto}
+  #ctx button{display:flex;align-items:center;gap:7px;width:100%;text-align:left;background:none;border:0;color:var(--fg);padding:6px 10px;border-radius:5px;cursor:pointer;font:inherit}
+  #ctx button:hover{background:var(--accent);color:#fff}
+  #ctx .sep{height:1px;background:var(--line);margin:4px 2px}
+  #ctx .dot{width:10px;height:10px;border-radius:3px;flex:0 0 10px}
+  /* right metadata pane */
+  aside.meta{width:340px;flex:0 0 340px;background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:0}
+  aside.meta.hidden{display:none}
+  .meta .preview{width:100%;height:230px;background:#000;display:flex;align-items:center;justify-content:center;position:relative}
+  .meta .preview img,.meta .preview video{max-width:100%;max-height:100%;object-fit:contain}
+  .meta .preview .full{position:absolute;right:6px;bottom:6px}
+  .meta .body{padding:12px 14px}
+  .meta h2{font-size:13px;margin:0 0 2px;word-break:break-all}
+  .meta .path{color:var(--muted);font-size:11px;word-break:break-all;margin-bottom:8px}
+  .meta table{width:100%;border-collapse:collapse;margin-top:6px}
+  .meta td{padding:3px 4px;vertical-align:top;border-bottom:1px solid var(--line);font-size:12px}
+  .meta td:first-child{color:var(--muted);width:34%}
+  .meta td.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;word-break:break-all}
+  .meta .catnow{display:inline-block;padding:2px 9px;border-radius:5px;color:#fff;font-weight:600;font-size:12px}
+  .meta .empty{color:var(--muted);padding:24px 14px;text-align:center}
+  .film{display:flex;gap:4px;overflow-x:auto;padding:6px 0}
+  .film img{height:52px;border-radius:4px;cursor:pointer;border:1px solid var(--line)}
+  .row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit}
+  .btn:hover{border-color:var(--accent)}
+  .btn.sm{padding:3px 8px;font-size:12px}
+  .btn.danger{border-color:var(--danger)}
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:1px 8px;margin:2px 2px 0 0;font-size:11px}
+  .pill b{cursor:pointer;color:var(--danger)}
+  textarea{width:100%;height:64px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;font:inherit;padding:6px}
+  /* full-size viewer */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:70;display:none}
+  .modal .vwrap{position:absolute;inset:2%;display:flex;align-items:center;justify-content:center}
+  .modal .vwrap img,.modal .vwrap video{max-width:100%;max-height:100%}
+  .modal .close{position:absolute;right:14px;top:10px;font-size:26px;cursor:pointer;color:#fff}
+  /* category editor */
+  #catEd,#reportDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd .box,#reportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:440px;max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #catEd h2,#reportDlg h2{margin:0 0 10px;font-size:15px}
+  #reportDlg label{display:block;margin:4px 0}
+  #catEd .cat{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
+  #catEd .dot{width:14px;height:14px;border-radius:4px;flex:0 0 14px}
+  #catEd .cat input[type=text]{flex:1;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
+  #catEd .cat .grip{cursor:grab;color:var(--muted)}
+  #catEd .cat.drag{opacity:.4}
+  #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--accent);border-radius:8px;padding:8px 16px;z-index:90;display:none}
+  .muted{color:var(--muted)}
+  .selbar{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:6px 10px;display:none;gap:6px;align-items:center;flex-wrap:wrap}
+  /* launcher */
+  #launcher{position:fixed;inset:0;background:var(--bg);z-index:95;display:none;overflow:auto}
+  #launcher .wrap{max-width:720px;margin:5vh auto;padding:0 20px}
+  #launcher h1{font-size:22px;margin:0 0 2px}
+  #launcher .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:14px}
+  #launcher .card h2{font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  #launcher .recent{display:flex;flex-direction:column;gap:6px}
+  #launcher .recent button{text-align:left;background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:9px 12px;cursor:pointer}
+  #launcher .recent button:hover{border-color:var(--accent)}
+  #launcher .recent small{color:var(--muted);display:block}
+  #launcher label{display:block;margin:8px 0 3px;color:var(--muted)}
+  #launcher input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px}
+  #launcher .field{display:flex;gap:6px}
+  #launcher .field input{flex:1}
+  .srclist{margin:8px 0}
+  .srclist .s{display:flex;gap:6px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:4px;font-size:12px}
+  .srclist .s span{flex:1;word-break:break-all}
+  .prog{height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;margin:10px 0}
+  .prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="caseName">GLEAPP</h1>
+  <span class="stat" id="statLine"></span>
+  <span id="saveState" title="">All changes saved</span>
+  <span style="flex:1"></span>
+  <button class="btn sm" id="btnClose" title="Snapshot, close this case, and pick another">⇤ Close case</button>
+  <button class="btn sm" id="btnCats">⚙ Categories</button>
+  <button class="btn sm" id="btnMeta">Details pane</button>
+  <button class="btn sm" id="btnSnapshot" title="Save a timestamped backup copy now">Save snapshot</button>
+  <button class="btn sm" id="btnVic" style="display:none" title="Export a Project VIC 2.0 JSON with your categories">Export Project VIC</button>
+  <button class="btn sm" id="btnReport">Export report</button>
+  <span class="muted" id="examiner"></span>
+</header>
+<div class="layout">
+  <aside class="filters">
+    <h3>Search</h3>
+    <input type="text" id="fq" placeholder="name, path, hash, date, camera, tag, notes…">
+    <div class="muted" style="font-size:10px;margin-top:2px">space-separated words all match</div>
+    <h3>Type</h3>
+    <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option></select>
+    <h3>Category</h3>
+    <select id="fcat"><option value="any">Any</option></select>
+    <h3>Review</h3>
+    <select id="frev"><option value="">Any</option><option value="0">Not reviewed</option><option value="1">Reviewed</option></select>
+    <h3>Source</h3>
+    <select id="fsrc"><option value="">All</option></select>
+    <h3>Cluster</h3>
+    <select id="fclu"><option value="">All</option></select>
+    <h3>Screening</h3>
+    <label><input type="checkbox" id="ffaces"> Has faces</label>
+    <label>Min skin ratio: <span id="skinv">0</span></label>
+    <input type="range" id="fskin" min="0" max="0.9" step="0.05" value="0">
+    <div id="screenInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+    <button class="btn sm" id="btnScreen" style="margin-top:4px;display:none">Run face / skin screening</button>
+    <h3>Other</h3>
+    <label><input type="checkbox" id="fgps"> Has GPS</label>
+    <label><input type="checkbox" id="fhit"> Known-hash hit</label>
+    <label><input type="checkbox" id="ferr"> Processing error / no preview <span id="errCount" class="muted"></span></label>
+    <button class="btn sm" id="btnRetryErr" style="margin-top:3px;display:none">Retry failed files</button>
+    <h3>Display</h3>
+    <label title="one tile per distinct image: exact copies + visual matches"><input type="checkbox" id="fcollapse" checked> Collapse duplicates &amp; visual matches</label>
+    <button class="btn sm" id="btnRedup" style="margin-top:3px">Re-scan for duplicates</button>
+    <label>Sort
+      <select id="fsort">
+        <option value="path">Path</option><option value="date">Capture date</option>
+        <option value="size">Size</option><option value="skin">Skin ratio</option>
+        <option value="faces">Faces</option><option value="cluster">Cluster</option>
+      </select>
+    </label>
+    <label>Thumbnails per page
+      <select id="fpagesize">
+        <option>50</option><option>100</option><option selected>200</option>
+        <option>400</option><option>800</option><option>1500</option>
+      </select>
+    </label>
+    <label>Tile size <input type="range" id="ftile" min="90" max="280" step="10" value="150"></label>
+    <h3 class="muted" style="margin-top:18px">Shortcuts</h3>
+    <div class="muted" style="font-size:11px">
+      1-9 categorize &nbsp; 0 clear<br>R review &nbsp; F find similar<br>
+      I toggle details &nbsp; A select all<br>← → move &nbsp; PgUp/PgDn page<br>Esc close
+    </div>
+  </aside>
+  <main id="main">
+    <div class="banner" id="simBanner" style="display:none">
+      <span>Showing <b id="simId"></b></span>
+      <button class="btn" id="simBack">Back to all</button>
+    </div>
+    <div class="pager" id="pagerTop"></div>
+    <div class="grid" id="grid"></div>
+    <div class="pager" id="pagerBot"></div>
+  </main>
+  <aside class="meta hidden" id="meta">
+    <div class="empty">Click a file to see its details.</div>
+  </aside>
+</div>
+<div class="selbar" id="selbar">
+  <b id="selCount">0</b> selected
+  <span id="selCats"></span>
+  <button class="btn sm" data-cat="0">Clear cat</button>
+  <button class="btn sm" id="selRev">Mark reviewed</button>
+  <button class="btn sm" id="selTag">Tag…</button>
+  <button class="btn sm" id="selMd5">Export MD5s</button>
+  <button class="btn sm" id="selClear">Deselect</button>
+</div>
+
+<div id="launcher"><div class="wrap">
+  <h1>GLEAPP</h1>
+  <div class="muted">Graphics · Logs · Examination · Automated Processing · Parsing — open a case to begin.</div>
+
+  <div class="card" id="recentCard" style="display:none">
+    <h2>Recent cases</h2>
+    <div class="recent" id="recentList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Open existing case</h2>
+    <div class="field">
+      <input type="text" id="openPath" placeholder="path to case folder (contains case.gleapp)">
+      <button class="btn" id="openBrowse">Browse…</button>
+      <button class="btn" id="openGo">Open</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>New case</h2>
+    <label>Case name</label>
+    <input type="text" id="newName" placeholder="Operation Example">
+    <label>Case folder (created if missing)</label>
+    <div class="field">
+      <input type="text" id="newPath" placeholder="C:\cases\operation-example">
+      <button class="btn" id="newBrowse">Browse…</button>
+    </div>
+    <label>Examiner</label>
+    <input type="text" id="newExaminer" placeholder="your name">
+
+    <h2 style="margin-top:16px">Evidence to ingest</h2>
+    <div class="srclist" id="srcList"></div>
+    <div class="field">
+      <input type="text" id="srcTypePath" placeholder="paste a folder or .json path, then Add">
+      <button class="btn" id="srcTypeAdd">Add</button>
+    </div>
+    <div class="field">
+      <button class="btn" id="addFolder">+ Browse for folder</button>
+      <button class="btn" id="addSpec">+ Browse for JSON (job or Project VIC)</button>
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:2px">
+      A Project VIC <code>.json</code> is detected automatically — its media
+      folder is resolved next to the file.
+    </div>
+    <label style="margin-top:10px"><input type="checkbox" id="optScreen" checked> Face / skin screening</label>
+    <label>Video key frames per clip: <span id="kfv">6</span>
+      <input type="range" id="optKf" min="2" max="16" step="1" value="6" style="width:100%"></label>
+
+    <div class="prog" id="jobProg" style="display:none"><i></i></div>
+    <div class="muted" id="jobMsg"></div>
+    <div class="field" style="margin-top:10px">
+      <button class="btn" id="createGo" style="border-color:var(--accent)">Create case &amp; ingest</button>
+    </div>
+  </div>
+</div></div>
+
+<div id="ctx"></div>
+
+<div id="catEd"><div class="box">
+  <h2>Categories</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:8px">
+    Name them however you like. Order sets the 1–9 shortcut keys. Colors are auto-assigned.
+  </div>
+  <div id="catRows"></div>
+  <div class="row" style="margin-top:12px">
+    <button class="btn" id="catAdd">+ Add category</button>
+    <span style="flex:1"></span>
+    <button class="btn" id="catClose">Done</button>
+  </div>
+</div></div>
+
+<div id="reportDlg"><div class="box">
+  <h2>Export</h2>
+  <div style="margin:6px 0"><b>Which files</b></div>
+  <label><input type="radio" name="rscope" value="all" checked> All files <span class="muted" id="scAll"></span></label>
+  <label><input type="radio" name="rscope" value="categorized"> Categorized only <span class="muted" id="scCat"></span></label>
+  <label><input type="radio" name="rscope" value="reviewed"> Reviewed only <span class="muted" id="scRev"></span></label>
+  <label><input type="radio" name="rscope" value="selected"> Selected files <span class="muted" id="scSel"></span></label>
+  <div style="margin:12px 0 6px"><b>Format</b></div>
+  <label><input type="checkbox" class="rfmt" value="html" checked> HTML contact sheet</label>
+  <label><input type="checkbox" class="rfmt" value="csv" checked> CSV (full metadata)</label>
+  <label><input type="checkbox" class="rfmt" value="json"> JSON</label>
+  <label><input type="checkbox" class="rfmt" value="kml"> KML (geolocated media)</label>
+  <label><input type="checkbox" class="rfmt" value="md5"> MD5 list (one hash per row)</label>
+  <label id="rfmtVic" style="display:none"><input type="checkbox" class="rfmt" value="vic"> Project VIC JSON</label>
+  <div class="row" style="margin-top:14px">
+    <span style="flex:1"></span>
+    <button class="btn" id="reportCancel">Cancel</button>
+    <button class="btn" id="reportGo" style="border-color:var(--accent)">Export</button>
+  </div>
+</div></div>
+
+<div class="modal" id="viewer">
+  <span class="close" id="vClose">&times;</span>
+  <div class="vwrap" id="vWrap"></div>
+</div>
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

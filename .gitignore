@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+case/
+*.gleapp
+*.gleapp-wal
+*.gleapp-shm
+sample_evidence/
+test_media/
+.pytest_cache/
+extracted/
+views/
+vt.json

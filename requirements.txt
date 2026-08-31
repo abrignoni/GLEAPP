@@ -1,0 +1,9 @@
+Pillow>=10.0
+pillow-heif>=0.13
+texture2ddecoder>=1.0
+pyliblzfse>=0.4.1
+zstandard>=0.22
+imagehash>=4.3
+numpy>=1.24
+opencv-python-headless>=4.8
+Flask>=3.0

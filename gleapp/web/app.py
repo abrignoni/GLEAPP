@@ -1,0 +1,802 @@
+"""Flask review gallery + case-management API.
+
+Runs in two front-ends off the same code:
+
+* ``gleapp web``      - opens in your browser
+* ``gleapp desktop``  - opens in a native pywebview window (offline .exe target)
+
+The app can start with **no case open**: ``/api/context`` then reports
+``needs_case`` and the UI shows a launcher (recent cases / open / new + ingest).
+"""
+
+from __future__ import annotations
+
+import mimetypes
+import threading
+import time
+import traceback
+from pathlib import Path
+
+from flask import Flask, abort, jsonify, request, send_file, send_from_directory
+from werkzeug.exceptions import HTTPException
+
+from .. import appconfig, backup, categories, report
+from ..case import open_case, parse_source_spec
+from ..pipeline import ingest_sources, process
+from ..similar import find_similar
+
+FIELDS = (
+    "id, rel_path, source, kind, ext, size, created_dt, md5, sha1, sha256, "
+    "phash, width, height, duration, gps_lat, gps_lon, camera, faces, "
+    "skin_ratio, category, triage, reviewed, reviewed_by, reviewed_at, notes, "
+    "hashset_hit, hashset_cat, stack_id, vstack_id, cluster_id, thumb, error, "
+    "media_id, orig_name, orig_path, mime, vic_flags"
+)
+
+
+def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
+    app = Flask(__name__, static_folder="static", template_folder="templates")
+    state: dict = {
+        "case": None,
+        "native": native,
+        "job": {"running": False, "stage": "idle", "done": 0, "total": 0,
+                "message": "", "stats": None, "error": None},
+        "last_backup": 0.0,
+    }
+    app.config["STATE"] = state
+
+    if case_dir and (Path(case_dir) / "case.gleapp").exists():
+        state["case"] = open_case(case_dir)
+        appconfig.push_recent(str(Path(case_dir).resolve()),
+                              state["case"].db.get_meta("case_name"))
+
+    # ---- auto-snapshot daemon --------------------------------------
+    def _auto_backup_loop() -> None:
+        while True:
+            time.sleep(60)
+            case = state["case"]
+            if case is None or not getattr(case.db, "dirty", False):
+                continue
+            due = time.time() - state["last_backup"] >= backup.AUTO_INTERVAL_MIN * 60
+            quiet = time.time() - case.db.last_write >= 20  # let edits settle
+            if due and quiet:
+                try:
+                    backup.snapshot(case, auto=True)
+                    state["last_backup"] = time.time()
+                except Exception:  # noqa: BLE001 - never kill the daemon
+                    pass
+
+    threading.Thread(target=_auto_backup_loop, daemon=True).start()
+
+    # ---- helpers ----------------------------------------------------
+    def C():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        return state["case"]
+
+    def row_dict(r) -> dict:
+        d = dict(r)
+        case = state["case"]
+        code = d.get("category") or 0
+        d["category_label"] = categories.label(case.db, code)
+        d["category_color"] = categories.color(case.db, code)
+        d["tags"] = case.db.tags_for(d["id"])
+        d["has_keyframes"] = bool(
+            case.db.conn.execute(
+                "SELECT 1 FROM keyframes WHERE file_id=? LIMIT 1", (d["id"],)
+            ).fetchone()
+        )
+        return d
+
+    # ---- pages ----------------------------------------------------
+    @app.get("/")
+    def index():
+        return send_from_directory(app.template_folder, "index.html")
+
+    @app.errorhandler(409)
+    def _no_case(e):
+        return jsonify({"error": "no_case", "message": str(e.description)}), 409
+
+    @app.errorhandler(Exception)
+    def _err(e):
+        if isinstance(e, HTTPException):
+            if e.code == 409:
+                return jsonify({"error": "no_case",
+                                "message": str(e.description)}), 409
+            return jsonify({"error": e.name, "message": str(e.description)}), e.code
+        tb = traceback.format_exc()
+        try:
+            (appconfig.config_dir() / "last-error.log").write_text(
+                tb, encoding="utf-8"
+            )
+        except OSError:
+            pass
+        app.logger.error(tb)
+        return jsonify({"error": "server_error",
+                        "message": f"{type(e).__name__}: {e}",
+                        "traceback": tb}), 500
+
+    # ---- launcher / case management ----------------------------
+    @app.get("/api/recent")
+    def recent():
+        return jsonify(appconfig.recent_cases())
+
+    @app.post("/api/pick")
+    def pick():
+        """Native folder/file dialog (desktop mode only).
+
+        Returns {"path": <str|null>, "error": <str|absent>}.  A null path with no
+        error means the user cancelled; the UI then falls back to typed input.
+        """
+        if not state["native"]:
+            return jsonify({"path": None, "error": "not running in desktop mode"})
+        kind = (request.get_json(silent=True) or {}).get("kind", "folder")
+        try:
+            import webview
+            win = webview.windows[0]
+            if kind == "folder":
+                res = win.create_file_dialog(webview.FOLDER_DIALOG)
+            else:
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=("JSON (*.json)", "All files (*.*)"),
+                )
+            return jsonify({"path": res[0] if res else None})
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"path": None, "error": f"{type(exc).__name__}: {exc}"})
+
+    def _close_current() -> None:
+        cur = state["case"]
+        if cur is None:
+            return
+        try:
+            if getattr(cur.db, "dirty", False):
+                backup.snapshot(cur, auto=True)
+        except Exception:  # noqa: BLE001
+            pass
+        cur.close()
+
+    state["close_current"] = _close_current
+
+    @app.post("/api/case/close")
+    def case_close():
+        """Snapshot + close the current case and return to the launcher."""
+        _close_current()
+        state["case"] = None
+        state["last_backup"] = 0.0
+        return jsonify({"ok": True})
+
+    @app.post("/api/case/open")
+    def case_open():
+        data = request.get_json(force=True)
+        path = Path(data["path"])
+        if not (path / "case.gleapp").exists():
+            abort(404, description=f"no case.gleapp in {path}")
+        _close_current()
+        state["last_backup"] = 0.0
+        state["case"] = open_case(path)
+        appconfig.push_recent(str(path.resolve()),
+                              state["case"].db.get_meta("case_name"))
+        return jsonify({"ok": True, "case": state["case"].db.get_meta("case_name")})
+
+    @app.post("/api/case/create")
+    def case_create():
+        data = request.get_json(force=True)
+        path = Path(data["path"]).resolve()
+        examiner = data.get("examiner") or "examiner"
+
+        # A case must never be created inside another case's folder tree - that
+        # is how the "reports/ nested case" mix-up happens.  Allow only the
+        # target dir itself already being a case (re-create is idempotent).
+        for anc in list(path.parents)[:6]:
+            if (anc / "case.gleapp").exists():
+                abort(400, description=(
+                    f"That folder is inside an existing case ({anc}). "
+                    "Choose a new, empty folder for the case."))
+        if path.name.lower() in {"reports", "thumbs", "views", "backups"}:
+            abort(400, description=(
+                f"'{path.name}' is a name GLEAPP uses for a case's own "
+                "sub-folders. Pick a different folder name."))
+
+        _close_current()
+        state["last_backup"] = 0.0
+        state["case"] = open_case(path, create=True, examiner=examiner)
+        if data.get("name"):
+            state["case"].db.set_meta("case_name", str(data["name"]))
+        # Deliberately NOT pushed to "recent" yet - only cases that get files
+        # ingested land there (see _run_job), so abandoned shells don't show.
+        return jsonify({"ok": True, "case": state["case"].db.get_meta("case_name")})
+
+    @app.post("/api/case/ingest")
+    def case_ingest():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        data = request.get_json(force=True)
+        opts = data.get("options", {})
+
+        sources = []
+        try:
+            if data.get("spec"):
+                src, meta = parse_source_spec(data["spec"])
+                sources += src
+                if meta.get("case"):
+                    state["case"].db.set_meta("case_name", str(meta["case"]))
+            for s in data.get("sources", []):
+                raw = s["path"] if isinstance(s, dict) else s
+                if not Path(raw).exists():
+                    abort(400, description=f"path does not exist: {raw}")
+                src, _ = parse_source_spec(raw)
+                if isinstance(s, dict) and s.get("name"):
+                    src[0].name = s["name"]
+                sources += src
+        except (FileNotFoundError, ValueError) as exc:
+            abort(400, description=str(exc))
+        if not sources:
+            abort(400, description="no sources given")
+
+        # flip the job to a definite running state *before* returning so the
+        # client's first /api/job poll can never race a still-"idle" job
+        state["job"] = {"running": True, "stage": "starting", "done": 0,
+                        "total": 0, "message": "Starting…", "stats": None,
+                        "error": None}
+        t = threading.Thread(
+            target=_run_job, args=(state, sources, opts), daemon=True
+        )
+        t.start()
+        return jsonify({"ok": True, "sources": [s.name for s in sources]})
+
+    @app.get("/api/job")
+    def job():
+        return jsonify(state["job"])
+
+    @app.post("/api/screen")
+    def run_screening():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        case = state["case"]
+        state["job"] = {"running": True, "stage": "process", "done": 0,
+                        "total": 0, "message": "Face / skin screening…",
+                        "stats": None, "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                from ..pipeline import screen_pass
+                n = screen_pass(case, workers=4,
+                                progress=lambda d, t: j.update(done=d, total=t))
+                j.update(running=False, stage="done", message="Screening done",
+                         stats={"screened": n})
+            except Exception as exc:  # noqa: BLE001
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.post("/api/reprocess-errors")
+    def reprocess_errors():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        case = state["case"]
+        n = case.db.conn.execute(
+            "SELECT COUNT(*) n FROM files WHERE error IS NOT NULL").fetchone()["n"]
+        state["job"] = {"running": True, "stage": "process", "done": 0,
+                        "total": n, "message": f"Retrying {n} failed files…",
+                        "stats": None, "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                from ..pipeline import process
+                st = process(case, where="error IS NOT NULL", force=True,
+                             screen=False,
+                             progress=lambda d, t: j.update(done=d, total=t),
+                             stage_cb=lambda m: j.update(message=m))
+                fixed = n - case.db.conn.execute(
+                    "SELECT COUNT(*) n FROM files WHERE error IS NOT NULL"
+                ).fetchone()["n"]
+                j.update(running=False, stage="done",
+                         message=f"Recovered {fixed} of {n}",
+                         stats={**st.as_dict(), "recovered": fixed})
+            except Exception as exc:  # noqa: BLE001
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True, "count": n})
+
+    @app.post("/api/redup")
+    def run_redup():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        case = state["case"]
+        state["job"] = {"running": True, "stage": "process", "done": 0,
+                        "total": 1, "message": "Re-scanning for duplicates…",
+                        "stats": None, "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                from .. import dedupe
+                j.update(message="Stacking exact duplicates…")
+                red = dedupe.stack_exact(case.db)
+                j.update(message="Stacking visual matches…")
+                vs = dedupe.stack_visual(case.db)
+                j.update(message="Clustering near-duplicates…")
+                cl = dedupe.cluster_near(case.db, threshold=12)
+                j.update(running=False, stage="done", message="Done",
+                         stats={"redundant_duplicates": red, "visual_stacks": vs,
+                                "clusters": cl})
+            except Exception as exc:  # noqa: BLE001
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
+    # ---- static media ------------------------------------------
+    @app.get("/thumb/<path:name>")
+    def thumb(name: str):
+        return send_from_directory(C().thumb_dir, name, max_age=3600)
+
+    def _display_path(r) -> Path:
+        """The file to actually show: the media unpacked from an LZC bundle
+        during processing, or the original file."""
+        ex_dir = C().root / "extracted"
+        if ex_dir.is_dir():
+            hit = next(ex_dir.glob(f"{r['id']}.*"), None)
+            if hit:
+                return hit
+        return Path(r["path"])
+
+    @app.get("/media/<int:file_id>")
+    def media(file_id: int):
+        r = C().db.get_file(file_id)
+        if not r:
+            abort(404)
+        if not Path(r["path"]).exists():
+            abort(410)
+        p = _display_path(r)
+        mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        return send_file(p, mimetype=mime, conditional=True, download_name=p.name)
+
+    @app.get("/view/<int:file_id>")
+    def view(file_id: int):
+        """Full-size display image. Serves the raw file when the browser can
+        render it; otherwise decodes (HEIC/TIFF/RAW/…) to a cached JPEG."""
+        from .. import imaging
+        case = C()
+        r = case.db.get_file(file_id)
+        if not r:
+            abort(404)
+        if not Path(r["path"]).exists():
+            abort(410)
+        p = _display_path(r)
+        if r["kind"] == "video" or p.suffix.lower() in imaging.WEB_IMAGE_EXTS:
+            mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+            return send_file(p, mimetype=mime, conditional=True)
+        cache = case.root / "views" / f"{file_id}.jpg"
+        if not cache.exists() and not imaging.transcode_isolated(p, cache):
+            abort(415, description=f"{p.suffix or 'this file'} can't be displayed "
+                  "(proprietary Apple asset / unknown codec)")
+        return send_file(cache, mimetype="image/jpeg", conditional=True)
+
+    @app.get("/api/file/<int:file_id>/keyframes")
+    def keyframes(file_id: int):
+        return jsonify([
+            {"ts": k["ts"], "thumb": f"/thumb/{k['thumb']}"}
+            for k in C().db.keyframes_for(file_id)
+        ])
+
+    # ---- listing / filtering --------------------------------
+    @app.get("/api/files")
+    def list_files():
+        case = C()
+        q = request.args
+        where, params = [], []
+
+        def eq(col: str, val):
+            where.append(f"{col} = ?")
+            params.append(val)
+
+        if q.get("kind"):
+            eq("kind", q["kind"])
+        if q.get("source"):
+            eq("source", q["source"])
+        if q.get("category") not in (None, "", "any"):
+            eq("category", int(q["category"]))
+        if q.get("reviewed") == "1":
+            where.append("reviewed = 1")
+        elif q.get("reviewed") == "0":
+            where.append("reviewed = 0")
+        if q.get("stack"):
+            eq("stack_id", int(q["stack"]))
+        if q.get("cluster"):
+            eq("cluster_id", int(q["cluster"]))
+        if q.get("hashset") == "1":
+            where.append("hashset_hit IS NOT NULL")
+        if q.get("faces") == "1":
+            where.append("faces > 0")
+        if q.get("min_skin"):
+            where.append("skin_ratio >= ?")
+            params.append(float(q["min_skin"]))
+        if q.get("has_gps") == "1":
+            where.append("gps_lat IS NOT NULL")
+        if q.get("error") == "1":
+            where.append("error IS NOT NULL")
+        elif q.get("error") == "0":
+            where.append("error IS NULL")
+        if q.get("q", "").strip():
+            # every whitespace-separated term must match somewhere (AND);
+            # within a term, match across every text/metadata column (OR).
+            cols = ("rel_path", "path", "orig_name", "orig_path", "camera",
+                    "notes", "mime", "source", "created_dt", "reviewed_by",
+                    "hashset_hit", "error", "md5", "sha1", "sha256", "phash")
+            for word in q["q"].split():
+                term = f"%{word}%"
+                clause = " OR ".join(f"{c} LIKE ?" for c in cols)
+                clause += " OR id IN (SELECT file_id FROM tags WHERE tag LIKE ?)"
+                where.append(f"({clause})")
+                params += [term] * (len(cols) + 1)
+        if q.get("dupes") == "collapse":
+            where.append("COALESCE(vstack_id, stack_id, id) = id")
+        if q.get("vstack"):
+            where.append("vstack_id = ?")
+            params.append(int(q["vstack"]))
+
+        sort = {
+            "path": "rel_path", "date": "created_dt", "size": "size",
+            "skin": "skin_ratio DESC", "faces": "faces DESC",
+            "cluster": "cluster_id", "id": "id",
+        }.get(q.get("sort", "path"), "rel_path")
+
+        limit = min(int(q.get("limit", 500)), 5000)
+        offset = int(q.get("offset", 0))
+        sql = f"SELECT {FIELDS} FROM files"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += f" ORDER BY {sort} LIMIT ? OFFSET ?"
+        rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
+
+        count_sql = "SELECT COUNT(*) n FROM files"
+        if where:
+            count_sql += " WHERE " + " AND ".join(where)
+        total = case.db.conn.execute(count_sql, tuple(params)).fetchone()["n"]
+
+        # stack / visual-stack sizes for the ids on this page (two aggregate queries)
+        def _counts(col: str, ids: set) -> dict:
+            if not ids:
+                return {}
+            ph = ",".join("?" * len(ids))
+            return {row[col]: row["n"] for row in case.db.conn.execute(
+                f"SELECT {col}, COUNT(*) n FROM files "
+                f"WHERE {col} IN ({ph}) GROUP BY {col}", tuple(ids))}
+
+        stack_n = _counts("stack_id", {r["stack_id"] for r in rows if r["stack_id"]})
+        vstack_n = _counts("vstack_id", {r["vstack_id"] for r in rows if r["vstack_id"]})
+
+        out = []
+        for r in rows:
+            d = row_dict(r)
+            d["stack_count"] = stack_n.get(r["stack_id"], 1)
+            d["vstack_count"] = vstack_n.get(r["vstack_id"], 0)
+            out.append(d)
+        return jsonify({"total": total, "offset": offset, "files": out})
+
+    @app.get("/api/file/<int:file_id>")
+    def get_file(file_id: int):
+        case = C()
+        r = case.db.get_file(file_id)
+        if not r:
+            abort(404)
+        d = row_dict(r)
+        d["keyframes"] = [
+            {"ts": k["ts"], "thumb": f"/thumb/{k['thumb']}"}
+            for k in case.db.keyframes_for(file_id)
+        ]
+        if r["stack_id"]:
+            d["stack"] = [row_dict(x) for x in
+                          case.db.iter_files("stack_id = ?", (r["stack_id"],))]
+        vsid = r["vstack_id"]
+        if vsid:
+            d["vstack"] = [dict(x) for x in case.db.conn.execute(
+                f"SELECT {FIELDS} FROM files WHERE vstack_id=? ORDER BY id", (vsid,))]
+        if r["cluster_id"]:
+            d["cluster_size"] = case.db.conn.execute(
+                "SELECT COUNT(*) n FROM files WHERE cluster_id=?", (r["cluster_id"],)
+            ).fetchone()["n"]
+        return jsonify(d)
+
+    @app.get("/api/similar/<int:file_id>")
+    def similar(file_id: int):
+        thr = int(request.args.get("threshold", 12))
+        case = C()
+        hits = find_similar(case, file_id, threshold=thr, limit=300)
+        for h in hits:
+            code = h.get("category") or 0
+            h["category_label"] = categories.label(case.db, code)
+            h["category_color"] = categories.color(case.db, code)
+        return jsonify({"file_id": file_id, "count": len(hits), "files": hits})
+
+    # ---- categories -----------------------------------------
+    @app.get("/api/categories")
+    def categories_list():
+        case = C()
+        return jsonify(list(categories.catmap(case.db).values()))
+
+    @app.post("/api/categories")
+    def categories_add():
+        case = C()
+        data = request.get_json(silent=True) or {}
+        code = case.db.add_category(str(data.get("name", "")),
+                                    notable=bool(data.get("notable", True)))
+        case.db.audit_log(case.examiner, "category_add", f"code={code}")
+        return jsonify(categories.catmap(case.db)[code])
+
+    @app.patch("/api/categories/<int:code>")
+    def categories_update(code: int):
+        case = C()
+        data = request.get_json(force=True)
+        fields = {k: data[k] for k in ("name", "color", "notable", "active")
+                  if k in data}
+        if "notable" in fields:
+            fields["notable"] = 1 if fields["notable"] else 0
+        if "active" in fields:
+            fields["active"] = 1 if fields["active"] else 0
+        case.db.update_category(code, **fields)
+        case.db.audit_log(case.examiner, "category_update", f"code={code} {fields}")
+        return jsonify(categories.catmap(case.db).get(code, {}))
+
+    @app.delete("/api/categories/<int:code>")
+    def categories_delete(code: int):
+        case = C()
+        reassign = request.args.get("reassign") == "1"
+        case.db.delete_category(code, reassign=reassign)
+        case.db.audit_log(case.examiner, "category_delete",
+                          f"code={code} reassign={reassign}")
+        return jsonify({"ok": True})
+
+    @app.post("/api/categories/reorder")
+    def categories_reorder():
+        case = C()
+        data = request.get_json(force=True)
+        case.db.reorder_categories([int(c) for c in data["codes"]])
+        return jsonify(list(categories.catmap(case.db).values()))
+
+    # ---- mutations ------------------------------------------
+    @app.post("/api/categorize")
+    def categorize():
+        case = C()
+        data = request.get_json(force=True)
+        cat = int(data["category"])
+        for fid in data["ids"]:
+            case.db.update_file(int(fid), category=cat)
+        case.db.audit_log(case.examiner, "categorize", f"cat={cat} ids={data['ids']}")
+        case.db.commit()
+        return jsonify({"ok": True, "category": cat,
+                        "label": categories.label(case.db, cat),
+                        "color": categories.color(case.db, cat)})
+
+    @app.post("/api/review")
+    def review():
+        case = C()
+        data = request.get_json(force=True)
+        val = 1 if data.get("reviewed", True) else 0
+        for fid in data["ids"]:
+            case.db.update_file(int(fid), reviewed=val,
+                                reviewed_at=time.time() if val else None,
+                                reviewed_by=case.examiner if val else None)
+        case.db.commit()
+        return jsonify({"ok": True, "reviewed": val})
+
+    @app.post("/api/triage")
+    def triage():
+        case = C()
+        data = request.get_json(force=True)
+        for fid in data["ids"]:
+            case.db.update_file(int(fid), triage=data.get("triage"))
+        case.db.commit()
+        return jsonify({"ok": True})
+
+    @app.post("/api/tag")
+    def tag():
+        case = C()
+        data = request.get_json(force=True)
+        for fid in data["ids"]:
+            for t in data.get("add", []):
+                case.db.add_tag(int(fid), t.strip())
+            for t in data.get("remove", []):
+                case.db.remove_tag(int(fid), t.strip())
+        case.db.commit()
+        return jsonify({"ok": True})
+
+    @app.post("/api/file/<int:file_id>/note")
+    def note(file_id: int):
+        case = C()
+        data = request.get_json(force=True)
+        case.db.update_file(file_id, notes=data.get("notes", ""))
+        case.db.commit()
+        return jsonify({"ok": True})
+
+    # ---- meta / stats / report ----------------------------
+    @app.get("/api/context")
+    def context():
+        case = state["case"]
+        if case is None:
+            return jsonify({"needs_case": True,
+                            "recent": appconfig.recent_cases(),
+                            "native": state["native"]})
+        srcs = [r["source"] for r in case.db.conn.execute(
+            "SELECT DISTINCT source FROM files WHERE source IS NOT NULL ORDER BY source")]
+        clusters = [
+            {"id": r["cluster_id"], "n": r["n"]}
+            for r in case.db.conn.execute(
+                "SELECT cluster_id, COUNT(*) n FROM files WHERE cluster_id IS NOT NULL "
+                "GROUP BY cluster_id ORDER BY n DESC LIMIT 200")
+        ]
+        vic = None
+        if case.db.get_meta("vic_source_json"):
+            vic = {k: case.db.get_meta("vic_" + k) for k in
+                   ("source_json", "files_dir", "case_id", "case_number",
+                    "source_app", "source_app_version")}
+        from .. import detect
+        scr = case.db.conn.execute(
+            "SELECT COUNT(*) n, "
+            "SUM(CASE WHEN faces > 0 THEN 1 ELSE 0 END) wf, "
+            "SUM(CASE WHEN skin_ratio IS NOT NULL AND skin_ratio > 0 THEN 1 ELSE 0 END) ws "
+            "FROM files WHERE kind IN ('image','video') AND thumb IS NOT NULL"
+        ).fetchone()
+        n_err = case.db.conn.execute(
+            "SELECT COUNT(*) n FROM files WHERE error IS NOT NULL").fetchone()["n"]
+        return jsonify({
+            "needs_case": False,
+            "native": state["native"],
+            "case": case.db.get_meta("case_name"),
+            "case_dir": str(case.root),
+            "examiner": case.examiner,
+            "sources": srcs,
+            "clusters": clusters,
+            "categories": list(categories.catmap(case.db).values()),
+            "stats": case.db.stats(),
+            "vic": vic,
+            "errors": n_err,
+            "screening": {
+                "done": case.db.get_meta("screened_at") is not None,
+                "backend": detect.face_backend(),
+                "with_faces": scr["wf"] or 0,
+                "with_skin": scr["ws"] or 0,
+                "screenable": scr["n"] or 0,
+            },
+        })
+
+    @app.get("/api/stats")
+    def stats():
+        return jsonify(C().db.stats())
+
+    def _scope_where(body: dict) -> tuple[str, str]:
+        """(where_sql, human_label) for a report/export scope selection."""
+        scope = body.get("scope", "all")
+        if scope == "selected":
+            ids = [int(x) for x in (body.get("ids") or [])]
+            if not ids:
+                abort(400, description="no files selected")
+            return f"id IN ({','.join(map(str, ids))})", f"{len(ids)} selected"
+        if scope == "categorized":
+            return "category != 0", "categorized only"
+        if scope == "uncategorized":
+            return "category = 0", "uncategorized only"
+        if scope == "reviewed":
+            return "reviewed = 1", "reviewed only"
+        if scope == "where" and body.get("where"):
+            return str(body["where"]), "custom filter"
+        return "", "all files"
+
+    @app.post("/api/report")
+    def make_report():
+        case = C()
+        body = request.get_json(silent=True) or {}
+        fmts = body.get("format", ["html", "csv", "json"])
+        where, label = _scope_where(body)
+        out = case.report_dir
+        tag = "" if not where else "_" + {
+            "categorized only": "categorized", "uncategorized only": "uncategorized",
+            "reviewed only": "reviewed",
+        }.get(label, "selection")
+        made = []
+        if "csv" in fmts:
+            made.append(str(report.export_csv(case, out / f"report{tag}.csv", where)))
+        if "json" in fmts:
+            made.append(str(report.export_json(case, out / f"report{tag}.json", where)))
+        if "html" in fmts:
+            made.append(str(report.export_html(case, out / f"report{tag}.html", where)))
+        if "kml" in fmts:
+            made.append(str(report.export_kml(case, out / f"geolocation{tag}.kml", where)))
+        if "md5" in fmts:
+            made.append(str(report.export_md5(case, out / f"md5{tag}.csv", where)))
+        if "vic" in fmts:
+            try:
+                made.append(str(report.export_projectvic(
+                    case, out / "projectvic_export.json",
+                    only_categorized=body.get("scope") == "categorized"
+                    or bool(body.get("only_categorized")))))
+            except FileNotFoundError as exc:
+                return jsonify({"error": "no_vic", "message": str(exc)}), 400
+        return jsonify({"ok": True, "written": made, "dir": str(out), "scope": label})
+
+    @app.post("/api/export/md5")
+    def export_md5_only():
+        case = C()
+        body = request.get_json(silent=True) or {}
+        where, label = _scope_where(body)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        dest = case.report_dir / f"md5_{ts}.csv"
+        report.export_md5(case, dest, where)
+        n = sum(1 for _ in open(dest, encoding="utf-8")) - 1
+        return jsonify({"ok": True, "path": str(dest), "count": n, "scope": label})
+
+    # ---- snapshots / backups --------------------------------------
+    @app.get("/api/save-state")
+    def save_state():
+        case = state["case"]
+        return jsonify({
+            "dirty": bool(getattr(case.db, "dirty", False)) if case else False,
+            "last_write": case.db.last_write if case else 0,
+            "last_backup": state["last_backup"],
+            "auto_interval_min": backup.AUTO_INTERVAL_MIN,
+        })
+
+    @app.get("/api/snapshots")
+    def snapshots_list():
+        return jsonify([s.__dict__ for s in backup.list_snapshots(C())])
+
+    @app.post("/api/snapshot")
+    def snapshot_now():
+        case = C()
+        label = (request.get_json(silent=True) or {}).get("label") or None
+        snap = backup.snapshot(case, label)
+        state["last_backup"] = time.time()
+        case.db.audit_log(case.examiner, "snapshot", snap.name)
+        return jsonify({"ok": True, **snap.__dict__})
+
+    return app
+
+
+def _run_job(state: dict, sources, opts: dict) -> None:
+    job = state["job"]
+    case = state["case"]
+    job.update(running=True, stage="ingest", done=0, total=0,
+               message="Scanning sources…", stats=None, error=None)
+    try:
+        n = ingest_sources(case, sources)
+        if n:
+            # now that the case has content, it's worth remembering
+            appconfig.push_recent(str(case.root),
+                                  case.db.get_meta("case_name") or case.root.name)
+        job.update(stage="process", total=n, message=f"Processing {n} files…")
+
+        def progress(done: int, total: int) -> None:
+            job.update(done=done, total=total)
+
+        stats = process(
+            case,
+            force=opts.get("force", False),
+            workers=int(opts.get("workers", 4)),
+            keyframes=int(opts.get("keyframes", 6)),
+            screen=opts.get("screen", True),
+            phash_cluster_threshold=int(opts.get("cluster_threshold", 8)),
+            progress=progress,
+            stage_cb=lambda msg: job.update(message=msg),
+        )
+        job.update(running=False, stage="done", message="Done",
+                   stats=stats.as_dict())
+    except Exception as exc:  # noqa: BLE001
+        job.update(running=False, stage="error",
+                   error=f"{type(exc).__name__}: {exc}")
