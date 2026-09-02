@@ -14,7 +14,9 @@ snapshots are point-in-time recovery copies, pruned to the most recent ``KEEP``.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,11 +24,68 @@ BACKUP_DIR = "backups"
 KEEP = 20
 AUTO_INTERVAL_MIN = 10
 
+# How many names to try before giving up. Only a competing process can cost an
+# attempt, since _Clock never hands out the same stamp twice in this one.
+_CLAIM_ATTEMPTS = 100
+
 _SLUG = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _slug(label: str) -> str:
     return _SLUG.sub("-", label.strip())[:40].strip("-")
+
+
+class _Clock:
+    """Hands out snapshot timestamps that never repeat within this process.
+
+    A snapshot filename is keyed on the wall clock to the millisecond, so two
+    snapshots taken inside the same millisecond resolve to one name and the
+    second overwrites the first. That is reachable rather than theoretical: the
+    auto-snapshot timer and a manual save can land together, and on hardware
+    that finishes a backup in under a millisecond any loop that snapshots
+    repeatedly collides. Twenty-five stamps read straight from the clock in a
+    tight loop can be one distinct value.
+
+    Stepping past the last value handed out keeps names unique and keeps them
+    ordered, which matters because ``prune`` and ``list_snapshots`` sort by
+    modification time and a reader sorts by name.
+    """
+
+    _lock = threading.Lock()
+    _last: _dt.datetime | None = None
+
+    @classmethod
+    def stamp(cls) -> str:
+        with cls._lock:
+            now = _dt.datetime.now()
+            # Floor to the millisecond the name is actually keyed on, before
+            # comparing. Tracking the raw reading instead would let a clock that
+            # advanced by less than a millisecond pass the check and still
+            # format to the string already used.
+            now = now.replace(microsecond=now.microsecond // 1000 * 1000)
+            if cls._last is not None and now <= cls._last:
+                now = cls._last + _dt.timedelta(milliseconds=1)
+            cls._last = now
+        return now.strftime("%Y%m%d-%H%M%S-%f")[:-3]   # ms precision
+
+
+def _claim_dest(d: Path, tag: str) -> Path:
+    """Create and return a snapshot path in ``d`` that nothing else holds.
+
+    O_CREAT | O_EXCL makes the claim atomic, so a second GLEAPP process working
+    the same case cannot be handed the name this call just took. The file is
+    left in place, empty, for the caller to write the backup into.
+    """
+    for _ in range(_CLAIM_ATTEMPTS):
+        name = f"case-{_Clock.stamp()}" + (f"-{tag}" if tag else "") + ".gleapp"
+        dest = d / name
+        try:
+            os.close(os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        except FileExistsError:
+            continue
+        return dest
+    raise OSError(f"could not claim a free snapshot name in {d} after "
+                  f"{_CLAIM_ATTEMPTS} attempts")
 
 
 @dataclass
@@ -42,14 +101,20 @@ class Snapshot:
 def snapshot(case, label: str | None = None, *, auto: bool = False) -> Snapshot:
     d = case.root / BACKUP_DIR
     d.mkdir(exist_ok=True)
-    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]   # ms precision
     tag = "auto" if auto and not label else (_slug(label) if label else "")
-    name = f"case-{ts}" + (f"-{tag}" if tag else "") + ".gleapp"
-    dest = d / name
-    case.db.backup(dest)
+    dest = _claim_dest(d, tag)
+    written = False
+    try:
+        case.db.backup(dest)
+        written = True
+    finally:
+        # The claim created the file, so a failed backup would otherwise leave an
+        # empty one behind for list_snapshots to report as a real snapshot.
+        if not written:
+            dest.unlink(missing_ok=True)
     prune(case)
     st = dest.stat()
-    return Snapshot(name=name, path=str(dest), size=st.st_size,
+    return Snapshot(name=dest.name, path=str(dest), size=st.st_size,
                     created=st.st_mtime, label=label, auto=auto)
 
 
