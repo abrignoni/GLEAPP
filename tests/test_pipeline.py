@@ -1,3 +1,4 @@
+import itertools
 import json
 import subprocess
 import sys
@@ -714,6 +715,93 @@ def test_backup_prune_keeps_recent(tmp_path):
             backup.snapshot(c)
         snaps = backup.list_snapshots(c)
         assert len(snaps) == backup.KEEP
+    finally:
+        c.close()
+
+
+def _use_creeping_clock(monkeypatch, backup, step_us=100):
+    """Point ``backup`` at a clock that advances by less than a millisecond.
+
+    Whether real snapshots land inside one millisecond depends on how fast the
+    machine is, so driving these tests from the real clock would make them pass
+    or fail by hardware. A 100 microsecond step puts ten reads in every
+    millisecond on every machine.
+
+    The step is deliberately non-zero rather than a clock frozen solid. Frozen
+    would only prove the equal case is handled and would miss a stamp source
+    that compares raw readings, since two readings 100 microseconds apart do
+    differ while still formatting to the same millisecond string.
+    """
+    import datetime as real_dt
+
+    start = real_dt.datetime(2020, 1, 1, 12, 0, 0, 500000)
+    step = real_dt.timedelta(microseconds=step_us)
+    reads = itertools.count()
+
+    class _CreepingDateTime:
+        @staticmethod
+        def now():
+            return start + step * next(reads)
+
+    class _CreepingClockModule:
+        datetime = _CreepingDateTime
+        timedelta = real_dt.timedelta
+
+    monkeypatch.setattr(backup, "_dt", _CreepingClockModule)
+    # The class carries the last stamp handed out, so a previous test's real
+    # timestamps would otherwise decide where this one starts.
+    monkeypatch.setattr(backup._Clock, "_last", None)  # pylint: disable=protected-access
+
+
+def test_snapshot_stamps_never_repeat_under_a_creeping_clock(monkeypatch):
+    """Every stamp must be a millisecond string this process has not used.
+
+    _claim_dest retries when a name is already taken, so a stamp source that can
+    repeat is survivable, but only by spending attempts. A clock advancing more
+    slowly than the retry loop runs would spend the whole budget inside one
+    millisecond and the snapshot would fail outright. Making each call return a
+    new string keeps that loop making progress by construction rather than by
+    hoping the wall clock outpaces it.
+    """
+    from gleapp import backup
+
+    _use_creeping_clock(monkeypatch, backup)
+
+    stamps = [backup._Clock.stamp()  # pylint: disable=protected-access
+              for _ in range(50)]
+    assert len(set(stamps)) == len(stamps), f"stamp repeated: {stamps}"
+
+
+def test_snapshots_in_one_millisecond_do_not_overwrite(tmp_path, monkeypatch):
+    """Snapshot names must stay distinct when several land in one millisecond."""
+    from gleapp import backup
+    from gleapp.db import CaseDB
+
+    _use_creeping_clock(monkeypatch, backup)
+
+    c = open_case(tmp_path / "mscase", create=True, examiner="t")
+    try:
+        fid = c.db.upsert_file("/a/b.jpg", kind="image")
+        c.db.update_file(fid, category=0, notes="hi")
+
+        taken = []
+        for _ in range(5):
+            c.db._touch()  # pylint: disable=protected-access
+            taken.append(backup.snapshot(c))
+
+        names = [s.name for s in taken]
+        assert len(set(names)) == len(names), f"snapshot names collided: {names}"
+        assert len(backup.list_snapshots(c)) == len(names)
+
+        # Every one is a real case rather than a truncated or empty file.
+        for s in taken:
+            assert Path(s.path).is_file()
+            assert s.size > 0
+            copy = CaseDB(s.path)
+            try:
+                assert copy.get_file(fid)["notes"] == "hi"
+            finally:
+                copy.close()
     finally:
         c.close()
 
