@@ -263,9 +263,16 @@ the auto-advance review flow.
 ### Source
 Restrict to one ingest source.
 
-### Cluster
-Jump to one near-duplicate cluster. Options are `#id (count)`, largest first — the
-id is a handle, the count is the group size.
+### Hash sets
+- **Import hash set… / Re-check** and the list of imported sets — see section 11
+  for the full workflow.
+- **Show** — a dropdown: *all files* (default), *any imported hash set*, or
+  *only* a single named set (e.g. one CyberTip). Filters to the files that set
+  flagged.
+- **Any known-hash hit** — matched *any* hash set at all, including the global
+  store (NSRL) and the local hash stash.
+- **Hide known-NSRL** — hides every file that matched a *known-good* set (NSRL
+  etc.), so OS/app files stop cluttering review. The count is how many are hidden.
 
 ### Duplicates
 Show only files with a relative in the collection:
@@ -281,16 +288,6 @@ Show only files with a relative in the collection:
 - **Has faces** — `faces > 0` from YuNet. Needs screening to have run.
 - **Min skin ratio** — require at least that fraction of the frame to be
   skin-toned. At 0 it does nothing.
-
-### Hash sets
-- **Import hash set… / Re-check** and the list of imported sets — see section 11.
-- **Show** — a dropdown: *all files* (default), *any imported hash set*, or
-  *only* a single named set (e.g. one CyberTip). Filters to the files that set
-  flagged.
-- **Any known-hash hit** — matched *any* hash set at all, including the global
-  store (NSRL) and the local hash stash.
-- **Hide known-NSRL** — hides every file that matched a *known-good* set (NSRL
-  etc.), so OS/app files stop cluttering review. The count is how many are hidden.
 
 ### Other
 - **Has GPS** — has latitude/longitude in its metadata.

@@ -308,8 +308,20 @@
     <select id="fcat"><option value="any">Any</option></select>
     <h3>Source</h3>
     <select id="fsrc"><option value="">All</option></select>
-    <h3>Cluster</h3>
-    <select id="fclu"><option value="">All</option></select>
+    <h3>Hash sets</h3>
+    <div style="display:flex;gap:4px">
+      <button class="btn sm" id="btnImportHash" title="Browse to an MD5/SHA hash list (e.g. from a CyberTip) and flag matching files">Import hash set…</button>
+      <button class="btn sm" id="btnRehash" title="Re-flag every file against every loaded hash set">Re-check</button>
+    </div>
+    <div id="caseSets" style="font-size:11px;margin-top:5px"></div>
+    <label style="margin-top:4px">Show
+      <select id="fhashset"><option value="">— all files —</option></select>
+    </label>
+    <label><input type="checkbox" id="fhit"> Any known-hash hit</label>
+    <label><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
+    <div id="rehashInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+    <div id="stashInfo" class="muted" style="font-size:11px;margin-top:3px;cursor:pointer" title="Open the local hash stash"></div>
+    <div class="prog jobbar" id="rehashProg" style="display:none"><i></i></div>
     <h3>Duplicates</h3>
     <select id="fdup">
       <option value="">Any file</option>
@@ -325,20 +337,6 @@
     <div id="screenInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
     <div class="prog jobbar" id="screenProg" style="display:none"><i></i></div>
     <button class="btn sm" id="btnScreen" style="margin-top:4px;display:none">Run face / skin screening</button>
-    <h3>Hash sets</h3>
-    <div style="display:flex;gap:4px">
-      <button class="btn sm" id="btnImportHash" title="Browse to an MD5/SHA hash list (e.g. from a CyberTip) and flag matching files">Import hash set…</button>
-      <button class="btn sm" id="btnRehash" title="Re-flag every file against every loaded hash set">Re-check</button>
-    </div>
-    <div id="caseSets" style="font-size:11px;margin-top:5px"></div>
-    <label style="margin-top:4px">Show
-      <select id="fhashset"><option value="">— all files —</option></select>
-    </label>
-    <label><input type="checkbox" id="fhit"> Any known-hash hit</label>
-    <label><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
-    <div id="rehashInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-    <div id="stashInfo" class="muted" style="font-size:11px;margin-top:3px;cursor:pointer" title="Open the local hash stash"></div>
-    <div class="prog jobbar" id="rehashProg" style="display:none"><i></i></div>
     <h3>Other</h3>
     <label><input type="checkbox" id="fgps"> Has GPS</label>
     <label style="margin-top:2px"><input type="checkbox" id="ferr"> Processing error / no preview <span id="errCount" class="muted"></span></label>

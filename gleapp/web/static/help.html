@@ -316,10 +316,19 @@ enables the auto-advance review flow.</p>
 <h3>Source</h3>
 <p>Restrict to one ingest source (folder name, or the Project VIC source).</p>
 
-<h3>Cluster</h3>
-<p>Jump to one near-duplicate cluster. Each option is <code>#id (count)</code>,
-largest first — the id is just a handle, the count is the group size. Useful for
-reviewing a whole burst or a set of edits together.</p>
+<h3>Hash sets</h3>
+<ul>
+  <li><strong>Import hash set… / Re-check</strong> and the list of imported sets
+  — see section&nbsp;11.</li>
+  <li><strong>Show</strong> — a dropdown: <em>all files</em> (default),
+  <em>any imported hash set</em>, or <em>only</em> one named set (e.g. one
+  CyberTip). Filters to the files that set flagged.</li>
+  <li><strong>Any known-hash hit</strong> — matched <em>any</em> hash set,
+  including the global store (NSRL) and the local hash stash.</li>
+  <li><strong>Hide known-NSRL</strong> — hides every file that matched a
+  <em>known-good</em> set (NSRL etc.), so OS and app files stop cluttering the
+  review. The count beside it is how many are hidden.</li>
+</ul>
 
 <h3>Duplicates</h3>
 <p>Show only files that have a relative in the collection:</p>
@@ -336,20 +345,6 @@ reviewing a whole burst or a set of edits together.</p>
   Needs screening to have run.</li>
   <li><strong>Min skin ratio</strong> — drag right to require at least that fraction
   of the frame to be skin-toned. At 0 it does nothing.</li>
-</ul>
-
-<h3>Hash sets</h3>
-<ul>
-  <li><strong>Import hash set… / Re-check</strong> and the list of imported sets
-  — see section&nbsp;11.</li>
-  <li><strong>Show</strong> — a dropdown: <em>all files</em> (default),
-  <em>any imported hash set</em>, or <em>only</em> one named set (e.g. one
-  CyberTip). Filters to the files that set flagged.</li>
-  <li><strong>Any known-hash hit</strong> — matched <em>any</em> hash set,
-  including the global store (NSRL) and the local hash stash.</li>
-  <li><strong>Hide known-NSRL</strong> — hides every file that matched a
-  <em>known-good</em> set (NSRL etc.), so OS and app files stop cluttering the
-  review. The count beside it is how many are hidden.</li>
 </ul>
 
 <h3>Other</h3>

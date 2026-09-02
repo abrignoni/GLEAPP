@@ -71,7 +71,6 @@ function filterParams() {
   if ($("#fkind").value) p.set("kind", $("#fkind").value);
   if ($("#fcat").value !== "any") p.set("category", $("#fcat").value);
   if ($("#fsrc").value) p.set("source", $("#fsrc").value);
-  if ($("#fclu").value) p.set("cluster", $("#fclu").value);
   if ($("#fdup").value) p.set("hasdup", $("#fdup").value);
   if ($("#ffaces").checked) p.set("faces", "1");
   if ($("#fgps").checked) p.set("has_gps", "1");
@@ -1385,7 +1384,7 @@ document.addEventListener("keydown", e => {
 });
 
 /* ---------- filter wiring ---------- */
-["#fq", "#fkind", "#fcat", "#fsrc", "#fclu", "#fdup", "#ffaces", "#fgps",
+["#fq", "#fkind", "#fcat", "#fsrc", "#fdup", "#ffaces", "#fgps",
  "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fsort"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
@@ -1492,11 +1491,6 @@ async function refreshContext() {
   (c.sources || []).forEach(s => {
     if (!have.has(s)) src.insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`);
   });
-  const clu = $("#fclu"), haveC = new Set([...clu.options].map(o => o.value));
-  (c.clusters || []).forEach(cl => {
-    if (!haveC.has(String(cl.id)))
-      clu.insertAdjacentHTML("beforeend", `<option value="${cl.id}">#${cl.id} (${cl.n})</option>`);
-  });
   if (c.errors > 0) {
     $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
     $("#btnRetryErr").style.display = "";
@@ -1509,7 +1503,6 @@ $("#btnClearFilters").onclick = () => {
   $("#fkind").value = "";
   $("#fcat").value = "any";
   $("#fsrc").value = "";
-  $("#fclu").value = "";
   $("#fdup").value = "";
   $("#fhashset").value = "";
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
@@ -2272,8 +2265,6 @@ $("#createGo").onclick = async () => {
   setupTz(c);
   try { await refreshCats(); } catch (e) {}
   (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
-  (c.clusters || []).forEach(cl => $("#fclu").insertAdjacentHTML("beforeend",
-    `<option value="${cl.id}">#${cl.id} (${cl.n})</option>`));
   try {
     if (localStorage.getItem("gleapp.meta") === "1") toggleMeta(true);
     const ps = localStorage.getItem("gleapp.pagesize");
