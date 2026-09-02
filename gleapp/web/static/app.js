@@ -2250,7 +2250,6 @@ $("#createGo").onclick = async () => {
   $("#launcher").style.display = "none";
   $("#main").style.display = "";
   $("#caseName").textContent = "GLEAPP — " + (c.case || "case");
-  $("#examiner").textContent = c.examiner || "";
   document.title = "GLEAPP — " + (c.case || "");
   if (c.vic) $("#btnVic").style.display = "";
   updateScreenInfo(c.screening);
