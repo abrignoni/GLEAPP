@@ -165,7 +165,17 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#stashDlg,#stashWipeDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#stashDlg,#stashWipeDlg,#hashImportDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #hashImportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #hashImportDlg h2{margin:0 0 4px;font-size:15px}
+  #hashImportDlg .field{margin-top:10px}
+  #hashImportDlg .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+  #hashImportDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
+  #hashImportDlg .kindrow label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);margin:3px 0}
+  #caseSets .cs{display:flex;align-items:center;gap:5px;padding:2px 0}
+  #caseSets .cs b{color:var(--danger)}
+  #caseSets .cs .x{cursor:pointer;color:var(--muted);font-weight:700}
+  #caseSets .cs .x:hover{color:var(--danger)}
   #stashWipeDlg{z-index:80}
   #snapDlg .box,#stashDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #snapDlg h2,#stashDlg h2{margin:0 0 8px;font-size:15px}
@@ -315,15 +325,23 @@
     <div id="screenInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
     <div class="prog jobbar" id="screenProg" style="display:none"><i></i></div>
     <button class="btn sm" id="btnScreen" style="margin-top:4px;display:none">Run face / skin screening</button>
-    <h3>Other</h3>
-    <label><input type="checkbox" id="fgps"> Has GPS</label>
-    <label><input type="checkbox" id="fhit"> Known-hash hit</label>
+    <h3>Hash sets</h3>
+    <div style="display:flex;gap:4px">
+      <button class="btn sm" id="btnImportHash" title="Browse to an MD5/SHA hash list (e.g. from a CyberTip) and flag matching files">Import hash set…</button>
+      <button class="btn sm" id="btnRehash" title="Re-flag every file against every loaded hash set">Re-check</button>
+    </div>
+    <div id="caseSets" style="font-size:11px;margin-top:5px"></div>
+    <label style="margin-top:4px">Show
+      <select id="fhashset"><option value="">— all files —</option></select>
+    </label>
+    <label><input type="checkbox" id="fhit"> Any known-hash hit</label>
     <label><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
-    <button class="btn sm" id="btnRehash" style="margin-top:3px">Re-check known hashes</button>
     <div id="rehashInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
     <div id="stashInfo" class="muted" style="font-size:11px;margin-top:3px;cursor:pointer" title="Open the local hash stash"></div>
     <div class="prog jobbar" id="rehashProg" style="display:none"><i></i></div>
-    <label style="margin-top:6px"><input type="checkbox" id="ferr"> Processing error / no preview <span id="errCount" class="muted"></span></label>
+    <h3>Other</h3>
+    <label><input type="checkbox" id="fgps"> Has GPS</label>
+    <label style="margin-top:2px"><input type="checkbox" id="ferr"> Processing error / no preview <span id="errCount" class="muted"></span></label>
     <button class="btn sm" id="btnRetryErr" style="margin-top:3px;display:none">Retry failed files</button>
     <div id="retryInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
     <div class="prog jobbar" id="retryProg" style="display:none"><i></i></div>
@@ -521,6 +539,38 @@
     <button class="btn sm" id="helpClose">Close</button>
   </header>
   <div id="helpDoc"><p class="muted">Loading…</p></div>
+</div></div>
+
+<div id="hashImportDlg"><div class="box">
+  <h2>Import hash set</h2>
+  <div class="muted" style="font-size:12px">
+    An MD5 / SHA-1 / SHA-256 list (one per line, or <code>hash,category</code>),
+    a CSV/TSV, a Project&nbsp;VIC JSON, or a CAID export. Every file in the case
+    whose hash is on the list is flagged; if the list asserts a category, an
+    <i>uncategorized</i> match adopts it.
+  </div>
+  <div class="field">
+    <label>File</label>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" id="hiPath" style="flex:1">
+      <button class="btn sm" id="hiBrowse">Choose file…</button>
+    </div>
+  </div>
+  <div class="field">
+    <label>Name (shown on the badge tooltip and in the report)</label>
+    <input type="text" id="hiName" placeholder="e.g. CyberTip 12345678">
+  </div>
+  <div class="field kindrow">
+    <label><input type="radio" name="hiKind" value="known" checked>
+      <b>Flag as notable</b> — red HASH badge (use this for a CyberTip / target list)</label>
+    <label><input type="radio" name="hiKind" value="known-good">
+      Mark as benign — grey badge, auto-categorizes an uncategorized match Non-pertinent</label>
+  </div>
+  <div class="row" style="margin-top:14px;display:flex;gap:6px">
+    <span style="flex:1"></span>
+    <button class="btn" id="hiCancel">Cancel</button>
+    <button class="btn" id="hiGo">Import &amp; flag</button>
+  </div>
 </div></div>
 
 <div id="snapDlg"><div class="box">

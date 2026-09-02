@@ -76,6 +76,7 @@ function filterParams() {
   if ($("#ffaces").checked) p.set("faces", "1");
   if ($("#fgps").checked) p.set("has_gps", "1");
   if ($("#fhit").checked) p.set("hashset", "1");
+  if ($("#fhashset").value) p.set("hashset_name", $("#fhashset").value);
   if ($("#fhidegood").checked) p.set("hidegood", "1");
   if ($("#ferr").checked) p.set("error", "1");
   if (state.vstack) p.set("vstack", state.vstack);
@@ -1344,7 +1345,7 @@ document.addEventListener("keydown", e => {
     $("#catEd").style.display = "none"; $("#reportDlg").style.display = "none";
     $("#helpDlg").style.display = "none"; $("#hexDlg").style.display = "none";
     $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
-    $("#stashWipeDlg").style.display = "none";
+    $("#stashWipeDlg").style.display = "none"; $("#hashImportDlg").style.display = "none";
     return;
   }
   if (e.key === "?" && !$("#helpDlg").style.display.includes("block")) {
@@ -1385,7 +1386,7 @@ document.addEventListener("keydown", e => {
 
 /* ---------- filter wiring ---------- */
 ["#fq", "#fkind", "#fcat", "#fsrc", "#fclu", "#fdup", "#ffaces", "#fgps",
- "#fhit", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fsort"].forEach(s => {
+ "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fsort"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
@@ -1510,6 +1511,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fsrc").value = "";
   $("#fclu").value = "";
   $("#fdup").value = "";
+  $("#fhashset").value = "";
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
   $("#fcollapse").checked = true;
   $("#fskin").value = 0; $("#skinv").textContent = "0";
@@ -1710,11 +1712,12 @@ function updateKnownHash(kh) {
   if (!kh) return;
   $("#goodCount").textContent = kh.known_good
     ? `(${kh.known_good.toLocaleString()})` : "";
+  renderCaseSets(kh.case_sets);
   const store = (kh.global_entries || 0).toLocaleString();
   const names = (kh.global_sets || []).map(s => s.name).join(", ");
   $("#rehashInfo").textContent = kh.global_entries
     ? `Global store: ${store} hashes${names ? " — " + names : ""}`
-    : "No global hash sets imported. Use: gleapp hashset --global <file>";
+    : "Global store empty (NSRL etc. — add via CLI).";
   const st = kh.stash;
   $("#stashInfo").textContent = st && st.total
     ? `🔒 Hash stash: ${st.total.toLocaleString()} MD5(s) — click to manage`
@@ -1796,6 +1799,100 @@ $("#btnRehash").onclick = async () => {
     toast(`Known-hash re-check done: ${hits.toLocaleString()} hit(s)`);
     try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
     load();
+  });
+};
+
+/* ---------- import a hash set (CyberTip MD5s, CAID, CSV, VIC JSON) ---------- */
+function renderCaseSets(sets) {
+  sets = sets || [];
+  const el = $("#caseSets");
+  if (el) {
+    el.innerHTML = sets.map(s =>
+      `<div class="cs" data-id="${s.id}">` +
+      `<span title="${esc(s.source || "")}">${s.kind === "known" ? "<b>⚑</b> " : "· "}` +
+      `${esc(s.name)}</span>` +
+      `<span class="muted">${(s.count || 0).toLocaleString()} · ${(s.hits || 0).toLocaleString()} hit${s.hits === 1 ? "" : "s"}</span>` +
+      `<span class="x" title="Remove this set and clear its flags">✕</span></div>`).join("")
+      || `<span class="muted">No hash set imported yet.</span>`;
+    el.querySelectorAll(".cs .x").forEach(x => x.onclick = async () => {
+      const row = x.closest(".cs");
+      const id = +row.dataset.id;
+      if (!confirm("Remove this hash set and clear the flags it added?")) return;
+      row.style.opacity = ".4";
+      const r = await api("/api/hashset/remove", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      if (r.error) { row.style.opacity = ""; return toast(r.message || "Could not remove"); }
+      row.remove();
+      const refresh = async () => {
+        try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+        if ($("#fhashset").value && ![...$("#fhashset").options].some(o => o.value === $("#fhashset").value))
+          $("#fhashset").value = "";
+        load();
+      };
+      if (r.rematched) trackJob("#rehashInfo", "#rehashProg", "Updating flags", refresh);
+      else { toast("Hash set removed"); refresh(); }
+    });
+  }
+  // the "Show" filter dropdown: one row per imported set, plus "any"
+  const sel = $("#fhashset");
+  if (sel) {
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">— all files —</option>` +
+      (sets.length ? `<option value="*">Any imported hash set</option>` : "") +
+      sets.map(s => `<option value="${esc(s.name)}">Only: ${esc(s.name)}</option>`).join("");
+    sel.value = [...sel.options].some(o => o.value === cur) ? cur : "";
+  }
+}
+
+async function browseHashFile() {
+  const p = await pick("hashlist",
+    "Path to the hash list (a CyberTip MD5 list, CSV, VIC JSON…):");
+  if (!p) return;                       // user cancelled the dialog
+  $("#hiPath").value = p;
+  if (!$("#hiName").value.trim())
+    $("#hiName").value = p.split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
+}
+$("#btnImportHash").onclick = () => {
+  $("#hiPath").value = "";
+  $("#hiName").value = "";
+  $("#hiPath").readOnly = !!Lr.native;   // desktop: pick only; browser: allow paste
+  $("#hiPath").placeholder = Lr.native ? "click “Choose file…”" : "paste the path, or Choose file…";
+  document.querySelector('input[name=hiKind][value=known]').checked = true;
+  $("#hiGo").disabled = false;
+  $("#hashImportDlg").style.display = "block";
+  browseHashFile();                       // open the OS file dialog right away
+};
+$("#hiBrowse").onclick = browseHashFile;
+$("#hiCancel").onclick = () => $("#hashImportDlg").style.display = "none";
+$("#hashImportDlg").addEventListener("click", e => {
+  if (e.target.id === "hashImportDlg") $("#hashImportDlg").style.display = "none";
+});
+$("#hiGo").onclick = async () => {
+  const path = $("#hiPath").value.trim();
+  if (!path) return toast("Choose a hash-list file first");
+  const kind = document.querySelector('input[name=hiKind]:checked').value;
+  const name = $("#hiName").value.trim();
+  $("#hiGo").disabled = true;
+  const r = await api("/api/hashset/import", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, name, kind }),
+  });
+  $("#hiGo").disabled = false;
+  if (r.error) return toast(r.message || "Import failed");
+  $("#hashImportDlg").style.display = "none";
+  toast(`Imported ${r.entries.toLocaleString()} hashes as “${r.name}” — flagging files…`);
+  trackJob("#rehashInfo", "#rehashProg", "Flagging files", async (ok, j) => {
+    if (!ok) return;
+    const hits = j.stats?.hashset_hits ?? 0;
+    toast(`“${r.name}”: ${hits.toLocaleString()} file(s) flagged`);
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+    // jump straight to the flagged files
+    if (r.kind === "known" && [...$("#fhashset").options].some(o => o.value === r.name)) {
+      $("#fhashset").value = r.name;
+    }
+    reload();
   });
 };
 $("#btnRedup").onclick = async () => {
@@ -2154,6 +2251,8 @@ $("#createGo").onclick = async () => {
   let c;
   try { c = await api("/api/context"); }
   catch (e) { c = {}; }
+  Lr.native = !!c.native;          // so pick() uses the OS file dialog even when
+                                   // GLEAPP boots straight into an existing case
   if (c.needs_case) { showLauncher(c); return; }
   $("#launcher").style.display = "none";
   $("#main").style.display = "";
