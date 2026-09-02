@@ -1057,8 +1057,22 @@ def _make_vic(tmp_path, evidence):
                    "SourceApplicationName": "UnitTest", "Media": media}],
     }
     p = tmp_path / "vic.json"
-    p.write_text(json.dumps(doc), encoding="utf-8")
+    # some exporters write UTF-8 *with* a BOM - GLEAPP must still parse it
+    p.write_text(json.dumps(doc), encoding="utf-8-sig")
     return p
+
+
+def test_projectvic_json_with_bom(tmp_path, evidence):
+    """A Project VIC JSON saved as UTF-8-with-BOM parses without a
+    'Unexpected UTF-8 BOM' JSONDecodeError."""
+    from gleapp import projectvic
+
+    vic = _make_vic(tmp_path, evidence)
+    assert vic.read_bytes()[:3] == b"\xef\xbb\xbf"      # BOM really is there
+    assert projectvic.is_vic_file(vic)
+    doc = projectvic.load(vic)
+    recs = list(projectvic.iter_records(doc, json_dir=vic.parent))
+    assert len(recs) == 4
 
 
 def test_projectvic_detect_and_import(tmp_path, evidence):

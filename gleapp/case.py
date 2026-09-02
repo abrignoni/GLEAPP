@@ -136,7 +136,7 @@ def parse_source_spec(spec: str | Path) -> tuple[list[Source], dict]:
         return [Source(name=f"Project VIC ({p.stem})", path=str(p.resolve()),
                        kind="projectvic")], {}
 
-    doc = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+    doc = json.loads(p.read_text(encoding="utf-8-sig", errors="replace"))
     base = p.parent
     meta: dict = {}
     sources: list[Source] = []
