@@ -1395,16 +1395,6 @@ $("#ftile").addEventListener("input", () => {
   try { localStorage.setItem("gleapp.tile", $("#ftile").value); } catch (e) {}
 });
 
-/* thumbnail Fit (whole image) vs Fill (crop to square) */
-function setImgFit(mode) {
-  const fit = mode !== "fill";
-  $("#grid").classList.toggle("fit", fit);
-  $("#vFit").classList.toggle("on", fit);
-  $("#vFill").classList.toggle("on", !fit);
-  try { localStorage.setItem("gleapp.imgfit", fit ? "fit" : "fill"); } catch (e) {}
-}
-$("#vFit").onclick = () => setImgFit("fit");
-$("#vFill").onclick = () => setImgFit("fill");
 $("#fpagesize").addEventListener("change", () => {
   state.pageSize = +$("#fpagesize").value || 200;
   try { localStorage.setItem("gleapp.pagesize", state.pageSize); } catch (e) {}
@@ -2192,7 +2182,6 @@ $("#createGo").onclick = async () => {
     const tl = localStorage.getItem("gleapp.tile");
     if (tl) { $("#ftile").value = tl;
       document.documentElement.style.setProperty("--tile", tl + "px"); }
-    setImgFit(localStorage.getItem("gleapp.imgfit") || "fit");
   } catch (e) {}
   restoreListPrefs();
   await load();

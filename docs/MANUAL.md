@@ -156,13 +156,11 @@ report — the stored (MD5) name is still available as the **Stored name** colum
 / report field.
 
 The file name and the category color bar sit **below** the thumbnail, not on top
-of it, so they never hide part of the picture. The **Fit / Fill** toggle (top
-bar) controls how the thumbnail sits in its square area. **Fit** (default) shows
-the *whole* image — important when text is burned into the top or bottom of a
-screenshot or Snap. **Fill** crops to a square for a denser, edge-to-edge grid.
-The choice is remembered between sessions. The small corner badges (hash hit,
-faces, GPS, stack count, selection tick) still sit over the image corners; the
-full-size viewer always shows the complete image with nothing over it.
+of it, so they never hide part of the picture. The thumbnail always shows the
+*whole* image (never cropped) — important when text is burned into the top or
+bottom of a screenshot or Snap. The small corner badges (hash hit, faces, GPS,
+stack count, selection tick) still sit over the image corners; the full-size
+viewer shows the complete image with nothing over it.
 
 | Badge | Meaning |
 |---|---|
