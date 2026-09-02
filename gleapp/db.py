@@ -517,6 +517,33 @@ class CaseDB:
             (algo, value.lower().strip()),
         ).fetchone()
 
+    def list_hashsets(self) -> list[sqlite3.Row]:
+        """This case's imported hash sets, with how many files each currently
+        flags."""
+        return self.conn.execute(
+            "SELECT hs.id, hs.name, hs.kind, hs.source, hs.count, hs.imported_at, "
+            "  (SELECT COUNT(*) FROM files f WHERE f.hashset_hit = hs.name) AS hits "
+            "FROM hashsets hs ORDER BY hs.imported_at DESC"
+        ).fetchall()
+
+    def delete_hashset(self, hashset_id: int) -> str | None:
+        """Remove an imported set (its entries cascade) and immediately clear the
+        flags it put on files. Returns the set name, or None if it didn't exist.
+        A category a file *adopted* from the set is left in place - that is now
+        the examiner's, not the set's."""
+        row = self.conn.execute(
+            "SELECT name FROM hashsets WHERE id=?", (hashset_id,)).fetchone()
+        if row is None:
+            return None
+        name = row["name"]
+        with self.lock:
+            self.conn.execute("DELETE FROM hashsets WHERE id=?", (hashset_id,))
+            self.conn.execute(
+                "UPDATE files SET hashset_hit=NULL, hashset_cat=NULL, "
+                "hashset_kind=NULL WHERE hashset_hit=?", (name,))
+            self.conn.commit()
+        return name
+
     # -- audit ------------------------------------------------------
     def audit_log(self, actor: str, action: str, detail: str = "") -> None:
         with self.lock:

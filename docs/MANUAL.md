@@ -263,9 +263,16 @@ the auto-advance review flow.
 ### Source
 Restrict to one ingest source.
 
-### Cluster
-Jump to one near-duplicate cluster. Options are `#id (count)`, largest first — the
-id is a handle, the count is the group size.
+### Hash sets
+- **Import hash set… / Re-check** and the list of imported sets — see section 11
+  for the full workflow.
+- **Show** — a dropdown: *all files* (default), *any imported hash set*, or
+  *only* a single named set (e.g. one CyberTip). Filters to the files that set
+  flagged.
+- **Any known-hash hit** — matched *any* hash set at all, including the global
+  store (NSRL) and the local hash stash.
+- **Hide known-NSRL** — hides every file that matched a *known-good* set (NSRL
+  etc.), so OS/app files stop cluttering review. The count is how many are hidden.
 
 ### Duplicates
 Show only files with a relative in the collection:
@@ -284,9 +291,6 @@ Show only files with a relative in the collection:
 
 ### Other
 - **Has GPS** — has latitude/longitude in its metadata.
-- **Known-hash hit** — matched any imported hash set (any kind).
-- **Hide known-NSRL** — hides every file that matched a *known-good* set (NSRL
-  etc.), so OS/app files stop cluttering review. The count is how many are hidden.
 - **Processing error / no preview** — files that failed to decode. **Retry failed
   files** re-runs processing on just those.
 
@@ -342,13 +346,34 @@ Set **kinds**:
 | **known-good** | shows the grey `NSRL` badge; **auto-categorizes Non-pertinent** if uncategorized; can be hidden with "Hide known-NSRL"; never overrides a category you set |
 | **other** | informational only |
 
-**Re-check known hashes** (Other section) re-runs matching against all sets
-without a full reprocess — use it after importing a new set or updating the
-**local hash stash** (section 12).
+### Importing a hash set into a case (e.g. a CyberTip)
 
-Importing is a command-line operation (the frozen app takes no sub-commands) —
-run it from the GLEAPP virtual environment. Accepted files: a SQLite `.db`,
-Project VIC JSON, CAID JSON, or a plain hash list.
+Sidebar → **Hash sets** → **Import hash set…**. A file browser opens — pick the
+CyberTip file. GLEAPP fills in a name from the filename (edit it if you like,
+e.g. `CyberTip 12345678`); choose **Flag as notable** (the default — red `HASH`
+badge) or *Mark as benign*; click **Import & flag**.
+
+GLEAPP loads the hashes and re-checks every file in the case immediately.
+Matches get the badge, and the grid jumps to them. Each imported set is listed
+under the button with its entry count and current hit count and an **✕** to
+remove it (removing clears its flags). Use **Show → Only: &lt;name&gt;** in that
+section to see one set's hits, or **Any imported hash set** for all of them; the
+matches also appear in the report's known-hash section.
+
+Accepted files: a plain **MD5 / SHA-1 / SHA-256 list** (one per line, or
+`hash,category`), a **CSV / TSV**, a **Project VIC JSON**, or a **CAID** export.
+Hashes are matched case-insensitively; a header row or blank lines are ignored.
+
+**Re-check** (next to *Import hash set…*) re-runs matching against every loaded
+set — case sets, the global store, and the local hash stash — without a full
+reprocess.
+
+### The global store (NSRL and other large reference sets)
+
+The global store lives at `%LOCALAPPDATA%\GLEAPP\hashsets\` and is shared by
+every case. Importing into it is a command-line operation (the frozen app takes
+no sub-commands) — run it from the GLEAPP virtual environment. Accepted files: a
+SQLite `.db`, Project VIC JSON, CAID JSON, or a plain hash list.
 
 ```
 .venv\Scripts\gleapp hashset --global <file> --name "…" --kind <known|known-good|other>

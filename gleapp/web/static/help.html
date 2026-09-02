@@ -316,10 +316,19 @@ enables the auto-advance review flow.</p>
 <h3>Source</h3>
 <p>Restrict to one ingest source (folder name, or the Project VIC source).</p>
 
-<h3>Cluster</h3>
-<p>Jump to one near-duplicate cluster. Each option is <code>#id (count)</code>,
-largest first — the id is just a handle, the count is the group size. Useful for
-reviewing a whole burst or a set of edits together.</p>
+<h3>Hash sets</h3>
+<ul>
+  <li><strong>Import hash set… / Re-check</strong> and the list of imported sets
+  — see section&nbsp;11.</li>
+  <li><strong>Show</strong> — a dropdown: <em>all files</em> (default),
+  <em>any imported hash set</em>, or <em>only</em> one named set (e.g. one
+  CyberTip). Filters to the files that set flagged.</li>
+  <li><strong>Any known-hash hit</strong> — matched <em>any</em> hash set,
+  including the global store (NSRL) and the local hash stash.</li>
+  <li><strong>Hide known-NSRL</strong> — hides every file that matched a
+  <em>known-good</em> set (NSRL etc.), so OS and app files stop cluttering the
+  review. The count beside it is how many are hidden.</li>
+</ul>
 
 <h3>Duplicates</h3>
 <p>Show only files that have a relative in the collection:</p>
@@ -341,10 +350,6 @@ reviewing a whole burst or a set of edits together.</p>
 <h3>Other</h3>
 <ul>
   <li><strong>Has GPS</strong> — has latitude/longitude in its metadata.</li>
-  <li><strong>Known-hash hit</strong> — matched any imported hash set (of any kind).</li>
-  <li><strong>Hide known-NSRL</strong> — the inverse for known-good sets: hides
-  every file that matched a <em>known-good</em> set (NSRL etc.), so OS and app
-  files stop cluttering the review. The count beside it is how many are hidden.</li>
   <li><strong>Processing error / no preview</strong> — files that failed to decode.
   The <strong>Retry failed files</strong> button re-runs processing on just those.</li>
 </ul>
@@ -399,15 +404,30 @@ within a threshold) against:</p>
   <tr><td><strong>known-good</strong></td><td>benign (NSRL, OS/app files). A hit shows the grey NSRL badge, is <strong>auto-categorized Non-pertinent</strong> if uncategorized, and can be hidden with "Hide known-NSRL". Never overrides a category you set.</td></tr>
   <tr><td><strong>other</strong></td><td>informational only.</td></tr>
 </table>
-<p><strong>Re-check known hashes</strong> (Other section) re-runs matching against
-all sets without a full reprocess — use it after importing a new set or updating
-the <strong>local hash stash</strong> (section&nbsp;12). Importing is a
-command-line operation (the frozen app can't take sub-commands): run it from the
-GLEAPP virtual environment, e.g.
-<code>.venv\Scripts\gleapp hashset --global &lt;file&gt; --name "…" --kind &lt;kind&gt;</code>.
-Accepted files: a SQLite <code>.db</code>, Project VIC JSON, CAID JSON, or a plain
-hash list. <code>--list</code> shows what's imported, <code>--rm ID</code> removes
-a set, and re-importing with the same <code>--name</code> replaces it.</p>
+<h3>Importing a hash set into a case (e.g. a CyberTip)</h3>
+<p>Sidebar &rarr; <strong>Hash sets</strong> &rarr; <strong>Import hash set…</strong>.
+A file browser opens — pick the CyberTip file. GLEAPP fills a name in from the
+filename (edit it, e.g. <code>CyberTip 12345678</code>); pick <strong>Flag as
+notable</strong> (default — red HASH badge) or <em>Mark as benign</em>; click
+<strong>Import &amp; flag</strong>. GLEAPP loads the hashes, re-checks every file,
+and jumps the grid to the matches. Each imported set is listed under the button
+with its entry / hit counts and an <strong>&times;</strong> to remove it (removing
+clears its flags). Use <strong>Show &rarr; Only: &lt;name&gt;</strong> to view one
+set's hits, or <strong>Any imported hash set</strong> for all of them; matches
+also appear in the report.</p>
+<p>Accepted: a plain <strong>MD5 / SHA-1 / SHA-256 list</strong> (one per line, or
+<code>hash,category</code>), a <strong>CSV / TSV</strong>, a <strong>Project&nbsp;VIC
+JSON</strong>, or a <strong>CAID</strong> export. Matching is case-insensitive; a
+header row and blank lines are ignored.</p>
+<p><strong>Re-check</strong> (next to <em>Import hash set…</em>) re-runs matching
+against every loaded set — case sets, the global store, and the local hash stash
+— without a full reprocess.</p>
+<p>The <strong>global store</strong> (NSRL and other large reference sets, at
+<code>%LOCALAPPDATA%\GLEAPP\hashsets\</code>, shared by every case) is imported
+from the command line:
+<code>.venv\Scripts\gleapp hashset --global &lt;file&gt; --name "…" --kind &lt;kind&gt;</code>
+(also <code>--list</code> / <code>--rm ID</code>). Accepts a SQLite
+<code>.db</code>, Project&nbsp;VIC JSON, CAID JSON, or a hash list.</p>
 
 <h3>Setting up the NSRL RDS on your own machine</h3>
 <p>The <strong>National Software Reference Library Reference Data Set (RDS)</strong>

@@ -187,6 +187,55 @@ def test_hashset_match(case, tmp_path):
     assert hit["category"] == 1
 
 
+def test_hashset_import_endpoint_flags_and_removes(tmp_path):
+    """Import a CyberTip-style MD5 list via the web API, flag matches, remove it."""
+    from gleapp.web.app import create_app
+
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "ct"), "name": "CT"})
+    c = app.config["STATE"]["case"]
+    c.db.upsert_file("/e/hit.jpg", kind="image", md5="a" * 32, rel_path="hit.jpg")
+    c.db.upsert_file("/e/miss.jpg", kind="image", md5="b" * 32, rel_path="miss.jpg")
+    c.db.commit()
+
+    # a plain list: header row, blank line, upper-case hash -> all tolerated
+    lst = tmp_path / "cybertip_9999.txt"
+    lst.write_text("MD5\n\n" + "A" * 32 + "\n" + "c" * 32 + "\n")
+    r = cl.post("/api/hashset/import",
+                json={"path": str(lst), "name": "CyberTip 9999", "kind": "known"}).get_json()
+    assert r["ok"] and r["entries"] == 2
+    for _ in range(100):
+        if not cl.get("/api/job").get_json()["running"]:
+            break
+        time.sleep(0.02)
+
+    rows = {x["rel_path"]: dict(x) for x in c.db.iter_files()}
+    assert rows["hit.jpg"]["hashset_hit"] == "CyberTip 9999"
+    assert rows["hit.jpg"]["hashset_kind"] == "known"
+    assert rows["miss.jpg"]["hashset_hit"] is None
+
+    sets = cl.get("/api/hashsets/case").get_json()
+    assert len(sets) == 1 and sets[0]["hits"] == 1
+
+    # "known-hash hit" filter surfaces only the flagged file
+    files = cl.get("/api/files?hashset=1").get_json()["files"]
+    assert [f["rel_path"] for f in files] == ["hit.jpg"]
+    # filter by the named set, and by "any imported set"
+    assert [f["rel_path"] for f in
+            cl.get("/api/files?hashset_name=CyberTip 9999").get_json()["files"]] == ["hit.jpg"]
+    assert [f["rel_path"] for f in
+            cl.get("/api/files?hashset_name=*").get_json()["files"]] == ["hit.jpg"]
+
+    # removal clears the flag immediately, even if a job happens to be running
+    app.config["STATE"]["job"] = {"running": True, "stage": "process", "done": 0,
+                                  "total": 0, "message": "x", "stats": None, "error": None}
+    rr = cl.post("/api/hashset/remove", json={"id": r["id"]})
+    assert rr.status_code == 200 and rr.get_json()["rematched"] is False
+    assert dict(c.db.iter_files("rel_path='hit.jpg'")[0])["hashset_hit"] is None
+    assert cl.get("/api/hashsets/case").get_json() == []
+
+
 def test_local_hash_stash(tmp_path):
     from gleapp import hashdb, stash
     from gleapp.case import open_case

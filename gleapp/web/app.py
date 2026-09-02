@@ -197,6 +197,13 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             win = webview.windows[0]
             if kind == "folder":
                 res = win.create_file_dialog(webview.FOLDER_DIALOG)
+            elif kind == "hashlist":
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=(
+                        "Hash lists (*.txt;*.csv;*.tsv;*.md5;*.hash;*.lst;*.json)",
+                        "All files (*.*)"),
+                )
             else:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
@@ -380,10 +387,18 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             abort(409, description="no case open")
         if state["job"]["running"]:
             abort(409, description="a job is already running")
-        case = state["case"]
+        _rematch_job(state["case"], "Re-checking known hashes…")
+        return jsonify({"ok": True})
+
+    @app.get("/api/hashsets")
+    def hashsets_list():
+        from .. import hashstore
+        return jsonify(hashstore.summary())
+
+    def _rematch_job(case, msg: str) -> None:
+        """Spawn the background 'flag files against every loaded hash set' pass."""
         state["job"] = {"running": True, "stage": "process", "done": 0,
-                        "total": 0, "message": "Re-checking known hashes…",
-                        "stats": None, "error": None}
+                        "total": 0, "message": msg, "stats": None, "error": None}
 
         def _job() -> None:
             j = state["job"]
@@ -399,12 +414,58 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                          error=f"{type(exc).__name__}: {exc}")
 
         threading.Thread(target=_job, daemon=True).start()
-        return jsonify({"ok": True})
 
-    @app.get("/api/hashsets")
-    def hashsets_list():
-        from .. import hashstore
-        return jsonify(hashstore.summary())
+    @app.get("/api/hashsets/case")
+    def hashsets_case():
+        case = C()
+        return jsonify([dict(r) for r in case.db.list_hashsets()])
+
+    @app.post("/api/hashset/import")
+    def hashset_import():
+        """Import a hash list (CyberTip MD5s, CAID, CSV, VIC JSON, ...) into
+        this case and re-flag every file against it."""
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        case = state["case"]
+        data = request.get_json(force=True) or {}
+        raw = str(data.get("path", "")).strip().strip('"')
+        if not raw or not Path(raw).is_file():
+            abort(400, description=f"file not found: {raw or '(none)'}")
+        kind = data.get("kind") if data.get("kind") in (
+            "known", "known-good", "other") else "known"
+        name = str(data.get("name", "")).strip() or Path(raw).stem
+        try:
+            from .. import hashdb
+            hs_id, added = hashdb.import_hashset(
+                case.db, raw, name=name, kind=kind)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            abort(400, description=f"could not read hash list: {exc}")
+        case.db.audit_log(case.examiner, "hashset_import",
+                          f"{name!r} ({kind}): {added} entries from {Path(raw).name}")
+        _rematch_job(case, f"Flagging files against {name}…")
+        return jsonify({"ok": True, "id": hs_id, "name": name,
+                        "kind": kind, "entries": added})
+
+    @app.post("/api/hashset/remove")
+    def hashset_remove():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        case = state["case"]
+        hs_id = int((request.get_json(force=True) or {}).get("id", 0))
+        # the delete + flag-clear is instant, so it's fine even mid-job
+        removed = case.db.delete_hashset(hs_id)
+        if removed is None:
+            abort(404, description="no such hash set")
+        case.db.audit_log(case.examiner, "hashset_remove", f"{removed!r} (id {hs_id})")
+        # re-evaluate the now-unflagged files against the *remaining* sets so an
+        # overlap (e.g. NSRL) re-flags them - unless a job is already running
+        rematched = False
+        if not state["job"]["running"]:
+            _rematch_job(case, f"Updating flags after removing {removed}…")
+            rematched = True
+        return jsonify({"ok": True, "name": removed, "rematched": rematched})
 
     # ---- local hash stash (its own file - see gleapp/stash.py) -------
     def _stash_candidates(case):
@@ -617,6 +678,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             eq("cluster_id", int(q["cluster"]))
         if q.get("hashset") == "1":
             where.append("hashset_hit IS NOT NULL")
+        _hn = q.get("hashset_name", "")
+        if _hn == "*":                       # any set imported into this case
+            where.append("hashset_hit IN (SELECT name FROM hashsets)")
+        elif _hn:                            # one named set
+            where.append("hashset_hit = ?")
+            params.append(_hn)
         if q.get("hidegood") == "1":
             where.append("(hashset_kind IS NULL OR hashset_kind != 'known-good')")
         if q.get("faces") == "1":
@@ -947,6 +1014,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 "known_good": cst.get("known_good", 0),
                 "global_sets": hstore["sets"],
                 "global_entries": hstore["entries"],
+                "case_sets": [dict(r) for r in case.db.list_hashsets()],
                 "stash": stash_sum,
             },
             "screening": {
