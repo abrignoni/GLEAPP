@@ -189,8 +189,6 @@ def test_hashset_match(case, tmp_path):
 
 def test_hashset_import_endpoint_flags_and_removes(tmp_path):
     """Import a CyberTip-style MD5 list via the web API, flag matches, remove it."""
-    import time as _t
-
     from gleapp.web.app import create_app
 
     app = create_app(None)
@@ -210,7 +208,7 @@ def test_hashset_import_endpoint_flags_and_removes(tmp_path):
     for _ in range(100):
         if not cl.get("/api/job").get_json()["running"]:
             break
-        _t.sleep(0.02)
+        time.sleep(0.02)
 
     rows = {x["rel_path"]: dict(x) for x in c.db.iter_files()}
     assert rows["hit.jpg"]["hashset_hit"] == "CyberTip 9999"

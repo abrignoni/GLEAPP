@@ -440,7 +440,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             from .. import hashdb
             hs_id, added = hashdb.import_hashset(
                 case.db, raw, name=name, kind=kind)
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, ValueError, sqlite3.Error) as exc:
             abort(400, description=f"could not read hash list: {exc}")
         case.db.audit_log(case.examiner, "hashset_import",
                           f"{name!r} ({kind}): {added} entries from {Path(raw).name}")
