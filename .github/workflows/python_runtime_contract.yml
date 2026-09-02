@@ -1,0 +1,62 @@
+name: Python Runtime Contract
+
+# pyproject.toml declares requires-python = ">=3.10". That is a promise to anyone who
+# installs GLEAPP, and nothing else in CI checks it: the other jobs run one newer
+# Python, where the standard library is more permissive than it is on 3.10.
+#
+# The breaks this catches are quiet ones. datetime.fromisoformat accepted only 3 or 6
+# fractional-second digits before 3.11 and any count from 3.11 on, so a timestamp that
+# parses on a developer machine raises on the oldest supported runtime. Syntax is the
+# other half: a multi-line expression inside an f-string parses from 3.12 and is a
+# syntax error before it, which no amount of linting on a newer version will show.
+#
+# If a version in this matrix is genuinely not supportable, the honest fix is to raise
+# requires-python in pyproject.toml, not to drop the version from here.
+
+on:
+  pull_request:
+    paths:
+      - 'gleapp/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/python_runtime_contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    runs-on: ubuntu-latest
+    strategy:
+      # Every version reports independently. One old-runtime break should not hide
+      # the state of the others.
+      fail-fast: false
+      matrix:
+        # The range pyproject.toml's requires-python promises.
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest piexif
+
+      # Importing every module is the only check that the whole package parses on this
+      # runtime. A test suite only reaches the modules it happens to exercise.
+      - name: Import every gleapp module
+        run: python tools/ci_import_smoke.py
+
+      - name: Run test suite
+        run: python -m pytest tests -v

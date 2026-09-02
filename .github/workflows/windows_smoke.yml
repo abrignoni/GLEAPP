@@ -1,0 +1,49 @@
+name: Windows Smoke Test
+
+# GLEAPP is built and shipped for Windows: packaging/ carries a PyInstaller spec, an
+# Inno Setup installer, and a WebView2-backed desktop shell. Development and the other
+# CI jobs run on Linux, so without this job the platform the tool actually ships on is
+# the one platform nothing tests.
+#
+# This checks importability, not parsing correctness. That is a low bar and it still
+# catches a real class of break: backslash path separators, a case-sensitivity
+# assumption that only holds on Linux, and any module reaching for a POSIX-only name at
+# import time. All of those pass every Linux job and fail on a user's machine.
+#
+# --prefer-binary matters here. pyliblzfse publishes a Windows wheel but no Linux one,
+# and the runner has no C toolchain configured by default, so preferring wheels keeps
+# this job from failing on a source build rather than on GLEAPP's own code.
+
+on:
+  pull_request:
+    paths:
+      - 'gleapp/**'
+      - 'tools/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/windows_smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --prefer-binary -r requirements.txt
+
+      - name: Import every gleapp module on Windows
+        run: python tools/ci_import_smoke.py

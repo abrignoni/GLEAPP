@@ -1,0 +1,55 @@
+name: Test Cases
+
+# Runs the pytest suite under tests/. This is the baseline job: it answers "does the
+# code still do what the tests say it does" on the platform most development happens
+# on. Platform coverage is windows_smoke.yml's job and version coverage is
+# python_runtime_contract.yml's; neither replaces this one.
+
+on:
+  pull_request:
+    paths:
+      - 'gleapp/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/test_cases.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'gleapp/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/test_cases.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # pyliblzfse publishes no Linux wheel, so pip builds it from source here. That
+      # needs nothing beyond the compiler the runner already has, but it is the reason
+      # this step is slower than the requirements list suggests.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest piexif
+
+      - name: Run test suite
+        run: python -m pytest tests -v

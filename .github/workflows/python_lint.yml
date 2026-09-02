@@ -1,0 +1,58 @@
+name: Python Lint Check
+
+# Runs pylint over the Python files a pull request touches, and fails only on warnings
+# the change introduces. tools/lint_changed.py has the reasoning: holding a PR to the
+# full standard on files that already carry deliberate warnings sends contributors off
+# into unrelated refactors or blanket file-level disables, and both are worse than the
+# debt they hide.
+#
+# The changed-file list is computed with plain git rather than a third-party action.
+# That is deliberate: an action referenced by a mutable tag runs whatever that tag
+# points at on the day CI runs, with access to the job's token, and the ecosystem has
+# already had one widely-used changed-files action compromised exactly that way. Two
+# lines of git carry no such dependency.
+
+on:
+  pull_request:
+    paths:
+      - '**.py'
+
+permissions:
+  contents: read
+
+jobs:
+  lint-changed-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # lint_changed.py builds a worktree at the merge base, so the history has to
+          # be there.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install pylint and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pylint
+          python -m pip install -r requirements.txt
+
+      # NUL-delimited so a path containing a space cannot be split into two paths.
+      - name: Lint the files this pull request changes
+        run: |
+          BASE=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
+          echo "Comparing against merge base $BASE"
+          mapfile -d '' -t CHANGED < <(
+            git diff --name-only -z --diff-filter=d "$BASE" HEAD -- '*.py'
+          )
+          if [ ${#CHANGED[@]} -eq 0 ]; then
+            echo "No Python files changed."
+            exit 0
+          fi
+          python tools/lint_changed.py --base-ref "$BASE" "${CHANGED[@]}"
