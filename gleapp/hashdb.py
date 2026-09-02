@@ -68,7 +68,7 @@ def _iter_projectvic(obj: object) -> Iterator[tuple[str, str, int | None]]:
 
 
 def _iter_delimited(path: Path) -> Iterator[tuple[str, str, int | None]]:
-    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+    with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as fh:
         sample = fh.read(4096)
         fh.seek(0)
         if "," in sample or "\t" in sample:
@@ -105,7 +105,7 @@ def import_hashset(
     hs_id = db.create_hashset(name, source=str(path), kind=kind)
 
     entries: list[tuple[str, str, int | None]]
-    text = path.read_text(encoding="utf-8", errors="replace").lstrip()
+    text = path.read_text(encoding="utf-8-sig", errors="replace").lstrip()
     if text[:1] in "[{":
         entries = list(_iter_projectvic(json.loads(text)))
     else:

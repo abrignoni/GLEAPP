@@ -91,7 +91,8 @@ def is_vic_file(path: str | Path) -> bool:
     if p.suffix.lower() != ".json":
         return False
     try:
-        head = p.read_text(encoding="utf-8", errors="replace")[:8192]
+        # utf-8-sig drops a leading BOM if the exporter wrote one
+        head = p.read_text(encoding="utf-8-sig", errors="replace")[:8192]
     except OSError:
         return False
     if "projectvic" in head.lower() or "vicsdatamodel" in head.lower():
@@ -101,8 +102,12 @@ def is_vic_file(path: str | Path) -> bool:
 
 
 def load(path: str | Path) -> dict:
-    """Parse a VIC file. Large files (tens of MB) load fully into memory."""
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    """Parse a VIC file. Large files (tens of MB) load fully into memory.
+
+    ``utf-8-sig`` transparently strips a leading byte-order mark - some tools
+    export the case JSON as UTF-8 with a BOM, which plain ``json`` rejects.
+    """
+    return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
 def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None
