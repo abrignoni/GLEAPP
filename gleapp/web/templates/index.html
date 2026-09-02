@@ -11,9 +11,10 @@
     --ok:#3fb950; --warn:#d29922; --tile:150px;
   }
   *{box-sizing:border-box}
-  body{margin:0;font:13px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--fg)}
+  html,body{height:100%}
+  body{margin:0;font:13px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;overflow:hidden}
   a{color:var(--accent)}
-  header{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  header{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto;z-index:20}
   header h1{font-size:15px;margin:0;font-weight:600}
   header .stat{color:var(--muted)}
   header .stat b{color:var(--fg)}
@@ -21,13 +22,19 @@
   #saveState.saving{color:var(--warn)}
   #saveState.error{color:var(--danger);cursor:pointer}
   #saveState::before{content:"● "}
-  .layout{display:flex;height:calc(100vh - 41px)}
+  .layout{display:flex;flex:1 1 auto;min-height:0}
   aside.filters{width:225px;flex:0 0 225px;background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px}
   aside.filters h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
   aside.filters label{display:block;margin:3px 0}
   aside.filters select,aside.filters input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
   aside.filters input[type=range]{width:100%}
-  main{flex:1;overflow:auto;padding:10px;position:relative}
+  main{flex:1;min-width:0;overflow:auto;padding:10px;position:relative}
+  .viewbar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:0 2px 8px;font-size:12px;color:var(--muted)}
+  .viewbar label{display:flex;align-items:center;gap:5px}
+  .viewbar select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:3px 6px;font:inherit}
+  .viewbar input[type=range]{width:110px}
+  .viewbar .keyhint{font-size:11px;line-height:1.5}
+  .viewbar .keyhint b{color:var(--fg);font-weight:600}
   .banner{background:var(--panel2);border:1px solid var(--accent);border-radius:6px;padding:6px 10px;margin-bottom:8px;display:flex;gap:10px;align-items:center}
   .pager{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 2px;font-size:12px;color:var(--muted)}
   .pager.hidden{display:none}
@@ -38,27 +45,78 @@
   .pager button:disabled{opacity:.4;cursor:default}
   .pager input{width:3.5em;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:3px;text-align:center}
   .pager b{color:var(--fg)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tile),1fr));gap:8px}
-  .tile{position:relative;background:var(--panel2);border:2px solid var(--line);border-radius:7px;overflow:hidden;cursor:pointer;aspect-ratio:1/1}
-  .tile img{width:100%;height:100%;object-fit:cover;display:block;background:#0c0d10}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tile),1fr));gap:8px;user-select:none}
+  .tile{position:relative;background:var(--panel2);border:2px solid var(--line);border-radius:7px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column}
+  .tile .thumb{position:relative;aspect-ratio:1/1;overflow:hidden;background:#0c0d10;flex:none}
+  .tile .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .grid.fit .tile .thumb img{object-fit:contain}
   .tile .noimg{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#22262f;color:var(--muted);font-size:12px;font-weight:600;text-align:center;gap:2px}
   .tile .noimg small{font-weight:400;font-size:10px}
-  .tile.sel{box-shadow:0 0 0 3px var(--accent) inset}
-  .tile.focus{outline:2px solid var(--accent);outline-offset:-2px}
+  .tile.sel{outline:3px solid var(--accent);outline-offset:-3px}
+  .tile.sel .thumb img{filter:brightness(1.06) saturate(1.05)}
+  .tile.focus{box-shadow:0 0 0 2px #fff}
+  .tile .selcheck{position:absolute;left:5px;bottom:5px;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font:700 12px/20px system-ui,sans-serif;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.55);display:none;z-index:4}
+  .tile.sel .selcheck{display:block}
   .tile .badges{position:absolute;left:4px;top:4px;right:4px;display:flex;gap:3px;flex-wrap:wrap;pointer-events:none}
   .tile .b{background:rgba(0,0,0,.72);border-radius:4px;padding:1px 5px;font-size:10px;line-height:1.5}
   .tile .b.hit{background:var(--danger)}
-  .tile .rev{position:absolute;right:4px;top:4px;background:var(--ok);color:#04140a;border-radius:50%;width:16px;height:16px;text-align:center;font-size:11px;line-height:16px}
-  .tile .stackn{position:absolute;right:4px;bottom:20px;background:rgba(0,0,0,.8);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:0 5px;font-size:11px;font-weight:700;line-height:1.6}
+  .tile .b.good{background:#2f6e4f}
+  .tile .b.stash{background:#7c4dff}
+  .tile .stackn{position:absolute;right:4px;bottom:5px;background:rgba(0,0,0,.8);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:0 5px;font-size:11px;font-weight:700;line-height:1.6}
   .tile .stackn.vis{background:var(--accent);border-color:#fff}
   .tile.stacked{box-shadow:2px 2px 0 0 var(--bg), 3px 3px 0 0 var(--line), 5px 5px 0 0 var(--bg), 6px 6px 0 0 var(--line)}
   .tile.vstacked{box-shadow:2px 2px 0 0 var(--bg), 3px 3px 0 0 var(--accent), 5px 5px 0 0 var(--bg), 6px 6px 0 0 var(--accent)}
   .grid{padding:0 8px 8px 0}
+  /* details list view */
+  .vtoggle{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .vtoggle button{background:var(--panel2);border:0;color:var(--muted);padding:3px 10px;cursor:pointer;font:inherit}
+  .vtoggle button.on{background:var(--accent);color:#fff}
+  #colMenu{position:fixed;z-index:60;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    padding:8px;max-height:60vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.5);display:none;min-width:210px}
+  #colMenu label{display:flex;align-items:center;gap:6px;padding:2px 4px;font-size:12px;color:var(--fg);white-space:nowrap}
+  #colMenu .mrow{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+  #colMenu .mrow button{flex:1 0 auto;font-size:11px;padding:2px 6px;white-space:nowrap}
+  .grid.aslist{display:block;overflow:visible;padding:0 0 8px;user-select:none}
+  table.lv{border-collapse:separate;border-spacing:0;font-size:12px;white-space:nowrap;table-layout:fixed}
+  table.lv th,table.lv td{border-bottom:1px solid var(--line);border-right:1px solid var(--line);
+    padding:3px 8px;text-align:left;overflow:hidden;text-overflow:ellipsis}
+  table.lv thead th{position:sticky;top:0;background:var(--panel2);z-index:2}
+  table.lv tr.lvhead th{overflow:visible}
+  table.lv tr.lvhead th .lbl{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  table.lv tr.lvhead th .rz{position:absolute;top:0;right:-5px;width:11px;height:100%;
+    cursor:col-resize;z-index:6;user-select:none;touch-action:none}
+  table.lv tr.lvhead th .rz::before{content:"";position:absolute;top:3px;bottom:3px;left:5px;
+    width:2px;background:var(--line)}
+  table.lv tr.lvhead th .rz:hover::before,table.lv tr.lvhead th .rz.drag::before{background:var(--accent)}
+  body.colresize,body.colresize *{cursor:col-resize!important;user-select:none!important}
+  table.lv tr.lvfilt th{top:26px;padding:2px 4px;vertical-align:top}
+  table.lv thead th.sortable{cursor:pointer;user-select:none}
+  table.lv thead th.sortable:hover{color:var(--accent)}
+  table.lv thead th .ar{color:var(--accent);font-size:10px}
+  table.lv thead th .ar:not(:empty){margin-left:2px}
+  table.lv tr.lvfilt input,table.lv tr.lvfilt select{width:100%;min-width:0;background:var(--panel);color:var(--fg);
+    border:1px solid var(--line);border-radius:4px;padding:2px 4px;font:inherit;font-size:11px}
+  table.lv tr.lvfilt input.on{border-color:var(--accent)}
+  table.lv tr.lvfilt th.lvdate{padding:2px 3px}
+  table.lv tr.lvfilt th.lvdate input[type=date]{color-scheme:dark;display:block;margin:1px 0;font-size:10px;padding:1px 3px}
+  table.lv td.lvthumb{padding:1px 2px;width:44px}
+  table.lv td.lvthumb img{width:40px;height:40px;object-fit:cover;border-radius:3px;display:block;background:#0c0d10}
+  table.lv td.lvthumb .nt{width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+    background:#22262f;color:var(--muted);font-size:9px;border-radius:3px}
+  table.lv tbody tr{cursor:pointer}
+  table.lv tbody tr:hover td{background:rgba(127,127,127,.09)}
+  table.lv tbody tr.sel td{background:rgba(88,166,255,.18)}
+  table.lv tbody tr.focus td{box-shadow:inset 0 0 0 1px #fff}
+  table.lv td.catcell{border-left:4px solid transparent}
+  table.lv td.mono{font-family:ui-monospace,Consolas,monospace}
+  table.lv .lvcount{padding:6px 8px;color:var(--muted)}
   .tile .scrub{position:absolute;left:0;right:0;top:0;height:3px;background:rgba(255,255,255,.15)}
   .tile .scrub i{display:block;height:100%;background:var(--accent);width:0}
   .tile .vid{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.72);border-radius:4px;padding:1px 5px;font-size:10px}
-  /* category color bar along the bottom */
-  .tile .catbar{position:absolute;left:0;right:0;bottom:0;min-height:17px;padding:1px 6px;
+  /* name + category bar sit BELOW the thumbnail so they never cover the image */
+  .tile .fname{flex:none;background:var(--panel);color:var(--fg);border-top:1px solid var(--line);
+    font-size:10px;line-height:1.6;padding:1px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .catbar{flex:none;min-height:16px;padding:1px 6px;
     font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;
     text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,.5)}
   .tile .catbar.none{background:#3a3f4b;color:var(--muted);font-weight:400}
@@ -87,6 +145,8 @@
   .row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
   .btn{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit}
   .btn:hover{border-color:var(--accent)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:disabled:hover{border-color:var(--line)}
   .btn.sm{padding:3px 8px;font-size:12px}
   .btn.danger{border-color:var(--danger)}
   .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:1px 8px;margin:2px 2px 0 0;font-size:11px}
@@ -96,17 +156,85 @@
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:70;display:none}
   .modal .vwrap{position:absolute;inset:2%;display:flex;align-items:center;justify-content:center}
   .modal .vwrap img,.modal .vwrap video{max-width:100%;max-height:100%}
+  .modal .vwrap img.enh{filter:url(#vEnhFilter)}
   .modal .close{position:absolute;right:14px;top:10px;font-size:26px;cursor:pointer;color:#fff}
+  .modal .vbar{position:absolute;left:14px;top:12px;z-index:5;display:none;align-items:center;gap:10px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:12px;color:var(--fg)}
+  .modal .vbar.show{display:flex}
+  .modal .vbar label{display:flex;align-items:center;gap:5px;cursor:pointer}
+  .modal .vbar input[type=range]{width:130px}
+  .modal .vbar input[type=range]:disabled{opacity:.4}
+  .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#stashDlg,#stashWipeDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #stashWipeDlg{z-index:80}
+  #snapDlg .box,#stashDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #snapDlg h2,#stashDlg h2{margin:0 0 8px;font-size:15px}
+  #stashWipeDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,94vw);
+    background:var(--panel);border:2px solid var(--danger);border-radius:10px;overflow:hidden}
+  #stashWipeDlg .whead{background:var(--danger);color:#fff;font-weight:700;font-size:14px;padding:10px 16px}
+  #stashWipeDlg .wbody{padding:16px}
+  #stashWipeDlg .wbody p{margin:0 0 10px}
+  #stashWipeDlg .wbody b{color:var(--danger)}
+  #stashWipeDlg .wchk{display:flex;gap:8px;align-items:flex-start;font-size:12px;margin:12px 0 4px;color:var(--fg)}
+  #stashWipeDlg .btn.wipe{background:var(--danger);border-color:var(--danger);color:#fff}
+  #stashWipeDlg .btn.wipe:disabled{opacity:.45;cursor:not-allowed}
+  #stashDlg .statgrid{display:grid;grid-template-columns:1fr auto;gap:3px 14px;font-size:13px;margin:10px 0}
+  #stashDlg .statgrid .n{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  #stashDlg .statgrid .tot{border-top:1px solid var(--line);padding-top:4px;margin-top:2px}
+  #stashDlg .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:0}
+  #stashDlg .note{font-size:12px;color:var(--muted);margin:8px 0}
+  #snapDlg input[type=text]{flex:1;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px;font:inherit}
+  #snapList .snaprow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+  #snapList .snaprow > div{flex:1}
+  #snapList .snaprow small{color:var(--muted)}
+  #snapList .snaprow b{font-size:12px}
+  #snapList .tagauto{display:inline-block;padding:1px 7px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);font-size:10px;vertical-align:1px}
+  #snapList button[data-snap]{white-space:nowrap}
   #catEd .box,#reportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:440px;max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #reportDlg .box{width:520px}
   #catEd h2,#reportDlg h2{margin:0 0 10px;font-size:15px}
   #reportDlg label{display:block;margin:4px 0}
+  #reportDlg input[type=text],#reportDlg textarea{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px;font:inherit;margin-top:2px}
+  #reportDlg .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
+  #reportDlg .rfields{display:grid;grid-template-columns:1fr 1fr;gap:1px 12px;border:1px solid var(--line);border-radius:6px;padding:8px;max-height:180px;overflow:auto}
+  #reportDlg .rfields label{margin:2px 0;font-size:12px}
+  #helpDlg{z-index:100}   /* above the launcher (z-index 95) so Help works pre-case */
+  #helpDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,94vw);height:88vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  #helpDlg .box>header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);position:static}
+  #helpDlg .box>header h2{margin:0;font-size:15px;flex:1}
+  #helpDoc{flex:1;overflow:auto;padding:18px 26px;line-height:1.6}
+  #helpDoc h2{font-size:17px;margin:26px 0 8px;padding-top:10px;border-top:1px solid var(--line);color:var(--fg)}
+  #helpDoc h2:first-child{border-top:0;padding-top:0;margin-top:0}
+  #helpDoc h3{font-size:14px;margin:16px 0 4px;color:var(--accent)}
+  #helpDoc p,#helpDoc li{color:var(--fg)}
+  #helpDoc code{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  #helpDoc pre{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:9px 12px;overflow-x:auto;margin:8px 0}
+  #helpDoc pre code{background:none;border:0;padding:0;font-size:12px;white-space:pre}
+  #helpDoc table{border-collapse:collapse;margin:8px 0;width:100%}
+  #helpDoc td,#helpDoc th{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top;font-size:12.5px}
+  #helpDoc th{background:var(--panel2)}
+  #helpDoc .tag{display:inline-block;border-radius:4px;padding:0 6px;font-size:11px;font-weight:700;color:#fff}
+  #helpDoc .toc{columns:2;font-size:12.5px;margin:4px 0 8px}
+  #helpDoc kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
+  #hexDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #hexDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(820px,96vw);height:86vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  #hexDlg header{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel2);border-bottom:1px solid var(--line)}
+  #hexDlg header h2{margin:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #hexDlg #hexNav{color:var(--muted);font-size:12px;white-space:nowrap}
+  #hexDlg #hexJump{width:130px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:3px 6px;font:inherit}
+  #hexBody{flex:1;overflow:auto;margin:0;padding:12px 14px;font:12px/1.45 ui-monospace,Consolas,monospace;white-space:pre;color:var(--fg)}
   #catEd .cat{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
   #catEd .dot{width:14px;height:14px;border-radius:4px;flex:0 0 14px}
+  #catEd .cat input[type=color]{width:22px;height:22px;flex:0 0 22px;padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel2);cursor:pointer}
+  #catEd .cat input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
+  #catEd .cat input[type=color]::-webkit-color-swatch{border:none;border-radius:2px}
   #catEd .cat input[type=text]{flex:1;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
   #catEd .cat .grip{cursor:grab;color:var(--muted)}
   #catEd .cat.drag{opacity:.4}
+  #catEd .cat.locked .grip{cursor:default}
+  #catEd .cat .lockname{flex:1;font-weight:600;padding:5px 0}
+  #catEd .cat .vcode{font-size:10px;white-space:nowrap}
   #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--accent);border-radius:8px;padding:8px 16px;z-index:90;display:none}
   .muted{color:var(--muted)}
   .selbar{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:6px 10px;display:none;gap:6px;align-items:center;flex-wrap:wrap}
@@ -129,6 +257,17 @@
   .srclist .s span{flex:1;word-break:break-all}
   .prog{height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;margin:10px 0}
   .prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+  .prog.jobbar{height:6px;margin:4px 0 2px}
+  /* live processing bar (bottom of the window while a job runs) */
+  #procBar{flex:none;display:none;align-items:center;gap:12px;background:var(--panel);
+    border-top:2px solid var(--accent);padding:7px 14px;font-size:12px}
+  #procBar.err{border-top-color:var(--danger)}
+  #procBar .txt{white-space:nowrap;color:var(--fg);font-weight:500}
+  #procBar .track{flex:1;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden}
+  #procBar .track i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+  #procBar.err .track i{background:var(--danger)}
+  #procBar .pct{white-space:nowrap;color:var(--muted);min-width:3.6em;text-align:right}
+  #launcher .lhead{display:flex;align-items:baseline;gap:12px}
 </style>
 </head>
 <body>
@@ -136,17 +275,21 @@
   <h1 id="caseName">GLEAPP</h1>
   <span class="stat" id="statLine"></span>
   <span id="saveState" title="">All changes saved</span>
+  <button class="btn sm" id="btnRefresh" title="Re-run the current filter — files that no longer match (e.g. ones you just categorized) drop out of view">↻ Refresh</button>
   <span style="flex:1"></span>
   <button class="btn sm" id="btnClose" title="Snapshot, close this case, and pick another">⇤ Close case</button>
   <button class="btn sm" id="btnCats">⚙ Categories</button>
   <button class="btn sm" id="btnMeta">Details pane</button>
-  <button class="btn sm" id="btnSnapshot" title="Save a timestamped backup copy now">Save snapshot</button>
+  <button class="btn sm" id="btnSnapshot" title="Save, list and restore case snapshots">Snapshots</button>
+  <button class="btn sm" id="btnStash" title="Save the MD5s of your category 1–3 files to the local hash stash, and re-use them in future cases">Hash stash</button>
   <button class="btn sm" id="btnVic" style="display:none" title="Export a Project VIC 2.0 JSON with your categories">Export Project VIC</button>
   <button class="btn sm" id="btnReport">Export report</button>
+  <button class="btn sm" id="btnHelp" title="Manual — features, filters, categories, shortcuts">? Help</button>
   <span class="muted" id="examiner"></span>
 </header>
 <div class="layout">
   <aside class="filters">
+    <button class="btn sm" id="btnClearFilters" style="width:100%;margin-bottom:4px">Clear all filters</button>
     <h3>Search</h3>
     <input type="text" id="fq" placeholder="name, path, hash, date, camera, tag, notes…">
     <div class="muted" style="font-size:10px;margin-top:2px">space-separated words all match</div>
@@ -154,47 +297,74 @@
     <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option></select>
     <h3>Category</h3>
     <select id="fcat"><option value="any">Any</option></select>
-    <h3>Review</h3>
-    <select id="frev"><option value="">Any</option><option value="0">Not reviewed</option><option value="1">Reviewed</option></select>
     <h3>Source</h3>
     <select id="fsrc"><option value="">All</option></select>
     <h3>Cluster</h3>
     <select id="fclu"><option value="">All</option></select>
+    <h3>Duplicates</h3>
+    <select id="fdup">
+      <option value="">Any file</option>
+      <option value="any">Has any duplicate</option>
+      <option value="exact">Has an exact copy</option>
+      <option value="visual">Has a visual copy</option>
+      <option value="cluster">In a near-dup cluster</option>
+    </select>
     <h3>Screening</h3>
     <label><input type="checkbox" id="ffaces"> Has faces</label>
     <label>Min skin ratio: <span id="skinv">0</span></label>
     <input type="range" id="fskin" min="0" max="0.9" step="0.05" value="0">
     <div id="screenInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+    <div class="prog jobbar" id="screenProg" style="display:none"><i></i></div>
     <button class="btn sm" id="btnScreen" style="margin-top:4px;display:none">Run face / skin screening</button>
     <h3>Other</h3>
     <label><input type="checkbox" id="fgps"> Has GPS</label>
     <label><input type="checkbox" id="fhit"> Known-hash hit</label>
-    <label><input type="checkbox" id="ferr"> Processing error / no preview <span id="errCount" class="muted"></span></label>
+    <label><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
+    <button class="btn sm" id="btnRehash" style="margin-top:3px">Re-check known hashes</button>
+    <div id="rehashInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+    <div id="stashInfo" class="muted" style="font-size:11px;margin-top:3px;cursor:pointer" title="Open the local hash stash"></div>
+    <div class="prog jobbar" id="rehashProg" style="display:none"><i></i></div>
+    <label style="margin-top:6px"><input type="checkbox" id="ferr"> Processing error / no preview <span id="errCount" class="muted"></span></label>
     <button class="btn sm" id="btnRetryErr" style="margin-top:3px;display:none">Retry failed files</button>
+    <div id="retryInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+    <div class="prog jobbar" id="retryProg" style="display:none"><i></i></div>
     <h3>Display</h3>
     <label title="one tile per distinct image: exact copies + visual matches"><input type="checkbox" id="fcollapse" checked> Collapse duplicates &amp; visual matches</label>
     <button class="btn sm" id="btnRedup" style="margin-top:3px">Re-scan for duplicates</button>
-    <label>Sort
-      <select id="fsort">
-        <option value="path">Path</option><option value="date">Capture date</option>
-        <option value="size">Size</option><option value="skin">Skin ratio</option>
-        <option value="faces">Faces</option><option value="cluster">Cluster</option>
-      </select>
-    </label>
-    <label>Thumbnails per page
-      <select id="fpagesize">
-        <option>50</option><option>100</option><option selected>200</option>
-        <option>400</option><option>800</option><option>1500</option>
-      </select>
-    </label>
-    <label>Tile size <input type="range" id="ftile" min="90" max="280" step="10" value="150"></label>
-    <h3 class="muted" style="margin-top:18px">Shortcuts</h3>
-    <div class="muted" style="font-size:11px">
-      1-9 categorize &nbsp; 0 clear<br>R review &nbsp; F find similar<br>
-      I toggle details &nbsp; A select all<br>← → move &nbsp; PgUp/PgDn page<br>Esc close
-    </div>
+    <div id="redupInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
+    <div class="prog jobbar" id="redupProg" style="display:none"><i></i></div>
   </aside>
   <main id="main">
+    <div class="viewbar">
+      <span class="vtoggle">
+        <button id="vGrid" class="on" title="Thumbnail grid">▦ Grid</button>
+        <button id="vList" title="Details list — sortable, filterable columns">☰ List</button>
+      </span>
+      <button class="btn sm" id="btnCols" style="display:none">Columns ▾</button>
+      <button class="btn sm" id="btnClearColFilters" style="display:none" title="Clear every column filter in the list">Clear column filters</button>
+      <label id="sortWrap">Sort
+        <select id="fsort">
+          <option value="path">Path</option><option value="date">Capture date</option>
+          <option value="size">Size</option><option value="skin">Skin ratio</option>
+          <option value="faces">Faces</option><option value="cluster">Cluster</option>
+        </select>
+      </label>
+      <label>Per page
+        <select id="fpagesize">
+          <option>50</option><option>100</option><option selected>200</option>
+          <option>400</option><option>800</option><option>1500</option>
+        </select>
+      </label>
+      <label>Tile size <input type="range" id="ftile" min="90" max="280" step="10" value="150"></label>
+      <span class="vtoggle" title="Fit = whole image; Fill = crop to a square">
+        <button id="vFit" class="on">Fit</button>
+        <button id="vFill">Fill</button>
+      </span>
+      <label title="Timezone for filesystem / ingest times shown in the list and details pane. Does NOT change Captured (EXIF) times.">Times
+        <select id="ftz"></select>
+      </label>
+      <span class="keyhint"><b>1&ndash;9</b> categorize &middot; <b>0</b> clear &middot; <b>F</b> find similar &middot; <b>H</b> hex &middot; <b>I</b> details &middot; <b>A</b> select all &middot; <b>&larr;&uarr;&darr;&rarr;</b> move &middot; <b>PgUp/PgDn</b> page &middot; <b>Esc</b> close</span>
+    </div>
     <div class="banner" id="simBanner" style="display:none">
       <span>Showing <b id="simId"></b></span>
       <button class="btn" id="simBack">Back to all</button>
@@ -202,23 +372,33 @@
     <div class="pager" id="pagerTop"></div>
     <div class="grid" id="grid"></div>
     <div class="pager" id="pagerBot"></div>
+    <div id="colMenu"></div>
   </main>
   <aside class="meta hidden" id="meta">
     <div class="empty">Click a file to see its details.</div>
   </aside>
 </div>
+<div id="procBar">
+  <span class="txt" id="procTxt">Processing…</span>
+  <span class="track"><i id="procFill"></i></span>
+  <span class="pct" id="procPct"></span>
+  <button class="btn sm" id="procDismiss" style="display:none">Dismiss</button>
+</div>
 <div class="selbar" id="selbar">
   <b id="selCount">0</b> selected
   <span id="selCats"></span>
   <button class="btn sm" data-cat="0">Clear cat</button>
-  <button class="btn sm" id="selRev">Mark reviewed</button>
   <button class="btn sm" id="selTag">Tag…</button>
   <button class="btn sm" id="selMd5">Export MD5s</button>
   <button class="btn sm" id="selClear">Deselect</button>
 </div>
 
 <div id="launcher"><div class="wrap">
-  <h1>GLEAPP</h1>
+  <div class="lhead">
+    <h1>GLEAPP</h1>
+    <span style="flex:1"></span>
+    <button class="btn" id="btnHelpLauncher" title="Manual — features, filters, categories, shortcuts">? Help / Manual</button>
+  </div>
   <div class="muted">Graphics · Logs · Examination · Automated Processing · Parsing — open a case to begin.</div>
 
   <div class="card" id="recentCard" style="display:none">
@@ -278,7 +458,8 @@
 <div id="catEd"><div class="box">
   <h2>Categories</h2>
   <div class="muted" style="font-size:12px;margin-bottom:8px">
-    Name them however you like. Order sets the 1–9 shortcut keys. Colors are auto-assigned.
+    Codes 0–5 are locked Project VIC categories. Add your own below — order sets
+    the number-key shortcuts, colors are auto-assigned.
   </div>
   <div id="catRows"></div>
   <div class="row" style="margin-top:12px">
@@ -293,15 +474,45 @@
   <div style="margin:6px 0"><b>Which files</b></div>
   <label><input type="radio" name="rscope" value="all" checked> All files <span class="muted" id="scAll"></span></label>
   <label><input type="radio" name="rscope" value="categorized"> Categorized only <span class="muted" id="scCat"></span></label>
-  <label><input type="radio" name="rscope" value="reviewed"> Reviewed only <span class="muted" id="scRev"></span></label>
+  <label><input type="radio" name="rscope" value="uncategorized"> Uncategorized only <span class="muted" id="scUncat"></span></label>
+  <label><input type="radio" name="rscope" value="categories"> Specific categories</label>
+  <div id="rscopeCats" class="rfields" style="display:none"></div>
   <label><input type="radio" name="rscope" value="selected"> Selected files <span class="muted" id="scSel"></span></label>
   <div style="margin:12px 0 6px"><b>Format</b></div>
-  <label><input type="checkbox" class="rfmt" value="html" checked> HTML contact sheet</label>
+  <label><input type="checkbox" class="rfmt" value="html" checked> HTML report</label>
   <label><input type="checkbox" class="rfmt" value="csv" checked> CSV (full metadata)</label>
   <label><input type="checkbox" class="rfmt" value="json"> JSON</label>
   <label><input type="checkbox" class="rfmt" value="kml"> KML (geolocated media)</label>
   <label><input type="checkbox" class="rfmt" value="md5"> MD5 list (one hash per row)</label>
   <label id="rfmtVic" style="display:none"><input type="checkbox" class="rfmt" value="vic"> Project VIC JSON</label>
+
+  <div id="rptHtmlOpts">
+    <div style="margin:14px 0 6px"><b>Report header</b> <span class="muted" style="font-size:11px">— saved with the case</span></div>
+    <div class="rgrid">
+      <label>Agency<input type="text" id="rhAgency"></label>
+      <label>Case number<input type="text" id="rhCase"></label>
+      <label>Item number<input type="text" id="rhItem"></label>
+      <label>Examiner<input type="text" id="rhExaminer"></label>
+    </div>
+    <label style="display:block;margin-top:6px">Notes<textarea id="rhNotes" rows="3"></textarea></label>
+    <label style="display:block;margin-top:6px">Agency logo
+      <span class="field" style="display:flex;gap:6px;align-items:center;margin-top:3px">
+        <input type="file" id="rhLogoFile" accept="image/*" style="flex:1">
+        <img id="rhLogoPrev" style="max-height:34px;max-width:90px;display:none">
+        <button type="button" class="btn sm" id="rhLogoClear" style="display:none">Clear</button>
+      </span>
+    </label>
+
+    <div style="margin:14px 0 6px"><b>Media</b></div>
+    <label><input type="checkbox" id="rhFull" checked> Embed full-size images
+      <span class="muted" style="font-size:11px">— click a thumbnail to open it in a new tab</span></label>
+    <label><input type="checkbox" id="rhVideo" checked> Embed playable videos
+      <span class="muted" style="font-size:11px">— click to play in a new tab (adds each video file to the report)</span></label>
+
+    <div style="margin:14px 0 6px"><b>Fields under each image</b></div>
+    <div id="rptFields" class="rfields"></div>
+  </div>
+
   <div class="row" style="margin-top:14px">
     <span style="flex:1"></span>
     <button class="btn" id="reportCancel">Cancel</button>
@@ -309,10 +520,127 @@
   </div>
 </div></div>
 
+<div id="helpDlg"><div class="box">
+  <header>
+    <h2>GLEAPP manual</h2>
+    <button class="btn sm" id="helpClose">Close</button>
+  </header>
+  <div id="helpDoc"><p class="muted">Loading…</p></div>
+</div></div>
+
+<div id="snapDlg"><div class="box">
+  <h2>Snapshots</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:10px">
+    Standalone copies of the whole case. Taken automatically every 10&nbsp;min while
+    you're editing and when the case closes, plus whenever you save one here.
+    <b>Restore</b> saves the current state first, so it's undoable.
+  </div>
+  <div class="field" style="display:flex;gap:6px">
+    <input type="text" id="snapLabel" placeholder="optional label">
+    <button class="btn" id="snapSave">Save snapshot now</button>
+  </div>
+  <div id="snapList" style="margin-top:12px"></div>
+  <div class="row" style="margin-top:12px"><span style="flex:1"></span>
+    <button class="btn" id="snapClose">Done</button></div>
+</div></div>
+
+<div id="stashDlg"><div class="box">
+  <h2>Local hash stash</h2>
+  <p class="note">
+    A private, on-this-machine list of the <b>MD5 hashes</b> of every file you
+    categorize as <b>1&nbsp;CAM</b>, <b>2&nbsp;Child&nbsp;Exploitative</b> or
+    <b>3&nbsp;CGI/Animation</b>. It is checked automatically in every case you
+    process from now on — a matching file is flagged <span class="b" style="background:#7c4dff;color:#fff;padding:0 5px;border-radius:4px">STASH</span>
+    and, if still uncategorized, adopts the category you stashed it under. You
+    always confirm the final call.
+  </p>
+
+  <div style="font-weight:600;font-size:12px;margin-top:12px">This case</div>
+  <div class="statgrid" id="stashCase"></div>
+  <button class="btn" id="stashAdd" style="border-color:var(--accent)">Add this case's hashes to the stash</button>
+
+  <div style="font-weight:600;font-size:12px;margin-top:16px">Stash total</div>
+  <div class="statgrid" id="stashTotal"></div>
+  <div class="note" id="stashUpdated"></div>
+
+  <div style="font-weight:600;font-size:12px;margin-top:16px">Sharing</div>
+  <div class="note">
+    The stash is its own file, kept separate from the NSRL / global store.
+  </div>
+  <div style="font-size:11px;color:var(--muted);word-break:break-all;margin:2px 0">
+    <span id="stashPath"></span> <span id="stashShared"></span>
+  </div>
+  <div class="row" style="gap:6px">
+    <button class="btn sm" id="stashExportDb">Export a copy…</button>
+    <button class="btn sm" id="stashExportCsv">Export CSV…</button>
+    <button class="btn sm" id="stashMerge">Merge a colleague's stash…</button>
+    <button class="btn sm" id="stashSetPath">Use a shared file…</button>
+    <button class="btn sm" id="stashResetPath" style="display:none">Back to my own</button>
+  </div>
+
+  <div class="row" style="margin-top:14px">
+    <button class="btn sm" id="stashClear">Clear stash…</button>
+    <span style="flex:1"></span>
+    <button class="btn" id="stashClose">Done</button>
+  </div>
+</div></div>
+
+<div id="stashWipeDlg"><div class="box">
+  <div class="whead">⚠  Erase your entire hash stash?</div>
+  <div class="wbody">
+    <p>You are about to <b>permanently delete every hash in your local hash
+      stash</b> — <b><span id="wipeCount">0</span> MD5(s)</b> collected from
+      <b>all of your cases</b>, not just this one.</p>
+    <p><b>This cannot be undone.</b> The stash cannot be rebuilt except by
+      re-opening every case and adding its hashes again.</p>
+    <p>If you might want it back, click <b>Cancel</b> and use
+      <b>Export a copy…</b> first.</p>
+    <label class="wchk"><input type="checkbox" id="wipeConfirm">
+      I understand this erases the whole stash and cannot be undone.</label>
+    <div class="row" style="margin-top:12px">
+      <span style="flex:1"></span>
+      <button class="btn" id="wipeCancel">Cancel</button>
+      <button class="btn wipe" id="wipeGo" disabled>Erase everything</button>
+    </div>
+  </div>
+</div></div>
+
+<div id="hexDlg"><div class="box">
+  <header>
+    <h2 id="hexTitle">Hex view</h2>
+    <span id="hexNav"></span>
+    <span style="flex:1"></span>
+    <input type="text" id="hexJump" placeholder="go to offset" title="decimal, or hex like 0x1A0">
+    <button class="btn sm" id="hexPrev" title="previous page">◂</button>
+    <button class="btn sm" id="hexNext" title="next page">▸</button>
+    <button class="btn sm" id="hexClose">Close</button>
+  </header>
+  <pre id="hexBody"></pre>
+</div></div>
+
 <div class="modal" id="viewer">
   <span class="close" id="vClose">&times;</span>
+  <div class="vbar" id="vBar">
+    <label><input type="checkbox" id="vEnhOn"> Lighten dark areas</label>
+    <input type="range" id="vEnhAmt" min="0" max="100" value="55">
+    <span class="amt" id="vEnhVal">55</span>
+  </div>
   <div class="vwrap" id="vWrap"></div>
 </div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <filter id="vEnhFilter" color-interpolation-filters="sRGB">
+    <feComponentTransfer>
+      <feFuncR id="vEnhG_R" type="gamma" exponent="0.5"/>
+      <feFuncG id="vEnhG_G" type="gamma" exponent="0.5"/>
+      <feFuncB id="vEnhG_B" type="gamma" exponent="0.5"/>
+    </feComponentTransfer>
+    <feComponentTransfer>
+      <feFuncR id="vEnhL_R" type="linear" slope="1.15"/>
+      <feFuncG id="vEnhL_G" type="linear" slope="1.15"/>
+      <feFuncB id="vEnhL_B" type="linear" slope="1.15"/>
+    </feComponentTransfer>
+  </filter>
+</defs></svg>
 <div id="toast"></div>
 
 <script src="/static/app.js"></script>

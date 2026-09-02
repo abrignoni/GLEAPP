@@ -239,6 +239,13 @@ def build(out: str) -> None:
     add("corrupt/not_an_image.png", kind="image", expect={"error": True})
     (root / "corrupt/empty.jpg").write_bytes(b"")
     add("corrupt/empty.jpg", kind="image", expect={"error": True})
+    # header-only PNG stub, like Snapchat SCContent cache entries: valid PNG
+    # signature + IHDR and then nothing (no IDAT, no IEND)
+    png_full = (root / "images/graphic.png").read_bytes()
+    _cut = png_full.find(b"IDAT") - 4
+    (root / "corrupt/header_only.png").write_bytes(png_full[:_cut] if _cut > 8 else png_full[:33])
+    add("corrupt/header_only.png", kind="image",
+        expect={"error": "Truncated PNG"})
 
     # ---- GPU textures -----------------------------------------
     _uncompressed_ktx(root / "textures/uncompressed.ktx")

@@ -71,12 +71,117 @@ def cmd_process(args: argparse.Namespace) -> int:
 
 
 def cmd_hashset(args: argparse.Namespace) -> int:
-    case = open_case(args.case, create=True, examiner=args.examiner)
-    hs_id, added = hashdb.import_hashset(
-        case.db, args.file, name=args.name, kind=args.kind
-    )
-    _p(f"Imported hash set '{args.name or Path(args.file).stem}': {added} entries.")
-    case.close()
+    from . import hashstore
+
+    if args.rm is not None:
+        hashstore.delete_set(args.rm)
+        _p(f"Removed global hash set {args.rm}.")
+        return 0
+
+    if args.list:
+        s = hashstore.summary()
+        _p(f"Global hash store: {s['entries']:,} entries across {len(s['sets'])} set(s)")
+        for hs in s["sets"]:
+            _p(f"  [{hs['id']}] {hs['name']}  {hs['count']:,}  ({hs['kind']})")
+        return 0
+
+    # NSRL RDSv3 helpers: build a .db from a full .sql dump, and/or apply a delta
+    src = args.file
+    if args.schema and args.full:
+        out = Path(args.full).with_suffix(".db")
+        _p(f"Building {out.name} from {Path(args.schema).name} + {Path(args.full).name} …")
+        src = str(hashstore.build_db(args.schema, args.full, out_db=out))
+    if args.delta:
+        base = src or args.base
+        if not base:
+            _p("error: --delta needs a base full .db (positional arg or --base)")
+            return 2
+        _p(f"Applying {Path(args.delta).name} onto a copy of {Path(base).name} …")
+        src = str(hashstore.apply_delta(base, args.delta))
+        _p(f"  updated database: {src}")
+
+    if not src:
+        _p("error: give a hash list (.db / VIC json / CSV / text), or --list, "
+           "or --schema/--full/--delta to build one")
+        return 2
+
+    algos = tuple(a.strip() for a in args.algos.split(",")) if args.algos else None
+    name = args.name or Path(src).stem
+    last = [0.0]
+    import time as _time
+
+    def prog(seen: int, added: int) -> None:
+        now = _time.monotonic()
+        if now - last[0] >= 5:
+            last[0] = now
+            _p(f"  … {seen:,} rows scanned, {added:,} unique hashes stored")
+
+    if args.to_global:
+        hs_id, added = hashstore.import_path(
+            src, name=name, kind=args.kind, table=args.table,
+            algos=algos, progress=prog)
+        _p(f"Imported '{name}' into the global store: {added:,} hashes.")
+    else:
+        case = open_case(args.case, create=True, examiner=args.examiner)
+        hs_id, added = hashdb.import_hashset(
+            case.db, src, name=name, kind=args.kind)
+        _p(f"Imported hash set '{name}' into the case: {added:,} entries.")
+        case.close()
+    return 0
+
+
+def cmd_stash(args: argparse.Namespace) -> int:
+    """Manage the local hash stash (examiner's own category 1-3 MD5s).
+
+    Its own portable file, separate from the global/NSRL store - share it by
+    ``--export`` + a colleague's ``--merge``, or point a team at one file with
+    ``--set-path`` (or $GLEAPP_STASH_PATH).
+    """
+    from . import stash
+
+    if args.set_path is not None:
+        p = stash.set_path(args.set_path or None)
+        _p(f"Stash file is now: {p}")
+        return 0
+
+    if args.clear:
+        n = stash.clear()
+        _p(f"Local hash stash cleared — {n:,} entries removed.")
+        return 0
+
+    if args.export:
+        dest = stash.export(Path(args.export))
+        _p(f"Wrote the stash to {dest}")
+        return 0
+
+    if args.merge:
+        res = stash.merge(Path(args.merge))
+        _p(f"Merged {Path(args.merge).name}: +{res['added']:,} new, "
+           f"{res['total']:,} total.")
+        return 0
+
+    if args.add:
+        case = open_case(args.case, examiner=args.examiner)
+        label = case.db.get_meta("case_name") or Path(args.case).name
+        ph = ",".join("?" * len(stash.STASH_CATEGORIES))
+        rows = case.db.conn.execute(
+            f"SELECT md5, category FROM files WHERE category IN ({ph}) "
+            "AND md5 IS NOT NULL AND md5 != ''",
+            tuple(stash.STASH_CATEGORIES)).fetchall()
+        res = stash.add((r["md5"], r["category"], label) for r in rows)
+        case.db.audit_log(args.examiner, "stash_add",
+                          f"{res['submitted']} md5s, {res['added']} new")
+        case.close()
+        _p(f"Stash: +{res['added']:,} new ({res['submitted']:,} submitted), "
+           f"{res['total']:,} total.")
+        return 0
+
+    s = stash.summary()
+    _p(f"Local hash stash: {s['total']:,} MD5(s)"
+       + (f", updated {s['updated']:.0f}" if s["updated"] else " (empty)"))
+    _p(f"  file: {s['path']}" + ("  (shared)" if s["shared"] else ""))
+    for code, n in sorted(s["by_category"].items()):
+        _p(f"  category {code}: {n:,}")
     return 0
 
 
@@ -119,7 +224,6 @@ def cmd_report(args: argparse.Namespace) -> int:
     where = args.where or {
         "categorized": "category != 0",
         "uncategorized": "category = 0",
-        "reviewed": "reviewed = 1",
     }.get(args.scope, "")
     tag = f"_{args.scope}" if args.scope != "all" and not args.where else ""
     out_dir = case.report_dir
@@ -130,7 +234,9 @@ def cmd_report(args: argparse.Namespace) -> int:
     if "json" in fmts:
         made.append(report.export_json(case, out_dir / f"report{tag}.json", where))
     if "html" in fmts:
-        made.append(report.export_html(case, out_dir / f"report{tag}.html", where))
+        made.append(report.export_html(case, out_dir / f"report{tag}.html", where,
+                                       full_images=not args.thumbs_only,
+                                       full_videos=not args.thumbs_only))
     if "kml" in fmts:
         made.append(report.export_kml(case, out_dir / f"geolocation{tag}.kml", where))
     if "md5" in fmts:
@@ -198,11 +304,39 @@ def build_parser() -> argparse.ArgumentParser:
     add_proc_opts(s)
     s.set_defaults(func=cmd_process)
 
-    s = sub.add_parser("hashset", help="import a known-hash list (Project VIC / CAID / CSV)")
-    s.add_argument("file")
+    s = sub.add_parser("hashset",
+                       help="import a known-hash list (SQLite / NSRL RDSv3 / VIC / CSV)")
+    s.add_argument("file", nargs="?", help="hash list (.db/.json/.csv/.txt); "
+                                           "omit with --list or --schema/--full")
     s.add_argument("--name")
     s.add_argument("--kind", choices=["known", "known-good", "other"], default="known")
+    s.add_argument("--global", dest="to_global", action="store_true",
+                   help="import into the shared global store (all cases use it)")
+    s.add_argument("--table", help="SQLite: table/view with the hash columns "
+                                   "(default: auto - METADATA / FILE / DISTINCT_HASH)")
+    s.add_argument("--algos", help="comma list to import, e.g. sha256,sha1 "
+                                   "(default: all of md5,sha1,sha256 present)")
+    s.add_argument("--schema", help="NSRL: <set>.schema.sql (with --full)")
+    s.add_argument("--full", help="NSRL: full <set>.sql data dump (built into a .db)")
+    s.add_argument("--base", help="NSRL: previous full <set>.db to apply --delta onto")
+    s.add_argument("--delta", help="NSRL: <set>_delta.sql to merge onto the base .db")
+    s.add_argument("--list", action="store_true", help="list the global store's sets")
+    s.add_argument("--rm", type=int, metavar="ID", help="remove a global set by id")
     s.set_defaults(func=cmd_hashset)
+
+    s = sub.add_parser("stash",
+                       help="local hash stash: your category 1-3 MD5s, re-used across cases")
+    s.add_argument("--add", action="store_true",
+                   help="add the current case's category 1-3 MD5s to the stash")
+    s.add_argument("--clear", action="store_true", help="erase the entire stash")
+    s.add_argument("--export", metavar="FILE",
+                   help="write the stash to FILE (.csv = hash list, else a portable .gleapp copy)")
+    s.add_argument("--merge", metavar="FILE",
+                   help="fold another examiner's stash (.csv or .gleapp) into yours")
+    s.add_argument("--set-path", metavar="PATH", default=None,
+                   help="use a different stash file (e.g. on a shared drive); "
+                        "pass '' to reset to the per-user default")
+    s.set_defaults(func=cmd_stash)
 
     s = sub.add_parser("stats", help="print case statistics")
     s.set_defaults(func=cmd_stats)
@@ -221,9 +355,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--format", nargs="+",
                    choices=["csv", "json", "html", "kml", "md5", "vic"])
     s.add_argument("--scope", default="all",
-                   choices=["all", "categorized", "uncategorized", "reviewed"],
+                   choices=["all", "categorized", "uncategorized"],
                    help="which files to include (default: all)")
     s.add_argument("--where", help="raw SQL filter on the files table (overrides --scope)")
+    s.add_argument("--thumbs-only", action="store_true",
+                   help="HTML report: thumbnails only - no full-size images or videos")
     s.set_defaults(func=cmd_report)
 
     s = sub.add_parser("web", help="launch the review gallery in a browser")

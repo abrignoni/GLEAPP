@@ -30,6 +30,24 @@ def config_dir() -> Path:
     return d
 
 
+def data_dir() -> Path:
+    """Large app data (the global hash store) - kept off a roaming profile.
+
+    ``$GLEAPP_CONFIG_DIR`` still wins (tests point it at a tmp dir); otherwise
+    %LOCALAPPDATA%\\GLEAPP on Windows, same as ``config_dir`` elsewhere.
+    """
+    override = os.environ.get("GLEAPP_CONFIG_DIR")
+    if override:
+        d = Path(override)
+    elif sys.platform == "win32":
+        d = Path(os.environ.get("LOCALAPPDATA",
+                                Path.home() / "AppData" / "Local")) / APP_NAME
+    else:
+        d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _cfg_path() -> Path:
     return config_dir() / "config.json"
 
@@ -46,6 +64,20 @@ def save(cfg: dict) -> None:
         _cfg_path().write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def get_timezone() -> str:
+    """The examiner's chosen display timezone (IANA name), or 'UTC'."""
+    return load().get("timezone") or "UTC"
+
+
+def set_timezone(name: str | None) -> None:
+    cfg = load()
+    if name and str(name).strip().upper() != "UTC":
+        cfg["timezone"] = str(name).strip()
+    else:
+        cfg.pop("timezone", None)
+    save(cfg)
 
 
 def _case_summary(case_dir: Path) -> dict | None:

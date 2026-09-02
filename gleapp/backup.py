@@ -69,15 +69,32 @@ def prune(case, keep: int = KEEP) -> int:
     return removed
 
 
+_NAME_RE = re.compile(r"case-\d{8}-\d{6}-\d{3}(?:-(?P<tail>.+))?$")
+
+
+def _describe(p: Path) -> Snapshot:
+    st = p.stat()
+    m = _NAME_RE.match(p.stem)
+    tail = m.group("tail") if m else None
+    auto = tail == "auto"
+    return Snapshot(name=p.name, path=str(p), size=st.st_size,
+                    created=st.st_mtime, label=None if auto else tail, auto=auto)
+
+
 def list_snapshots(case) -> list[Snapshot]:
     d = case.root / BACKUP_DIR
     if not d.is_dir():
         return []
-    out = []
-    for p in sorted(d.glob("case-*.gleapp"),
-                    key=lambda p: p.stat().st_mtime, reverse=True):
-        st = p.stat()
-        auto = p.stem.endswith("-auto")
-        out.append(Snapshot(name=p.name, path=str(p), size=st.st_size,
-                            created=st.st_mtime, label=None, auto=auto))
-    return out
+    return [_describe(p) for p in sorted(
+        d.glob("case-*.gleapp"), key=lambda p: p.stat().st_mtime, reverse=True)]
+
+
+def snapshot_path(case, name: str) -> Path:
+    """Validated path to a named snapshot inside ``<case>/backups/``."""
+    if not re.fullmatch(r"case-[0-9A-Za-z._-]+\.gleapp", name or ""):
+        raise ValueError("invalid snapshot name")
+    d = (case.root / BACKUP_DIR).resolve()
+    p = (d / name).resolve()
+    if p.parent != d or not p.is_file():
+        raise ValueError("snapshot not found")
+    return p

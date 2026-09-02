@@ -1,7 +1,7 @@
 """GLEAPP - Graphics · Logs · Examination · Automated Processing · Parsing.
 
 An open-source media forensics toolkit for triaging and analyzing large sets of
-images and video, inspired by the workflow of Magnet Griffeye Analyze.
+images and video in a digital-forensics workflow.
 
 Core capabilities
 -----------------

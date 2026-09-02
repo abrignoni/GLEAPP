@@ -9,6 +9,7 @@ fully processed are skipped unless ``force=True``.
 
 from __future__ import annotations
 
+import struct
 import threading
 import time
 import traceback
@@ -21,9 +22,9 @@ from PIL import Image
 from . import dedupe, detect, hashdb, imaging, lzc  # noqa: F401  (imaging: decoder setup)
 from .case import Case, Source
 from .hashing import crypto_hashes, perceptual_hashes
-from .ingest import scan
+from .ingest import scan, sniff_kind
 from .media import extract_video_isolated, make_image_thumb
-from .metadata import best_created_dt, extract_image
+from .metadata import extract_image
 
 
 @dataclass
@@ -41,8 +42,13 @@ class RunStats:
         return self.__dict__.copy()
 
 
-def ingest_sources(case: Case, sources: list[Source]) -> int:
-    """Discover files from each source and register them in the DB."""
+def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
+    """Discover files from each source and register them in the DB.
+
+    ``progress(n)`` (optional) is called every ~200 files with the running
+    count, and the DB is committed at the same cadence so the web UI can show
+    files as they are registered rather than only when the whole scan ends.
+    """
     from . import projectvic
 
     n = 0
@@ -52,6 +58,8 @@ def ingest_sources(case: Case, sources: list[Source]) -> int:
                 case, src.path, files_dir=src.files_dir
             )
             n += reg + missing
+            if progress:
+                progress(n)
             continue
         for d in scan(
             src.path,
@@ -68,8 +76,13 @@ def ingest_sources(case: Case, sources: list[Source]) -> int:
                 size=d.size,
                 mtime=d.mtime,
                 ctime=d.ctime,
+                atime=d.atime or None,
             )
             n += 1
+            if n % 200 == 0:
+                case.db.commit()
+                if progress:
+                    progress(n)
     case.db.commit()
     case.db.audit_log(case.examiner, "ingest",
                       f"{n} files from {len(sources)} source(s)")
@@ -89,8 +102,6 @@ def _process_one(thumb_dir, row, *, force: bool, keyframes: int, screen: bool) -
     if row["error"] == "file not found on disk" and not Path(path).exists():
         return {"id": fid, "status": "skip", "fields": {}, "keyframes": []}
 
-    mtime = row["mtime"] if "mtime" in keys else None
-    ctime = row["ctime"] if "ctime" in keys else None
     existing_dt = row["created_dt"] if "created_dt" in keys else None
 
     def keep_dt(new):  # don't clobber a good imported date with nothing
@@ -120,14 +131,23 @@ def _process_one(thumb_dir, row, *, force: bool, keyframes: int, screen: bool) -
             kind = ekind
             upd["kind"] = ekind
 
+        # A Project VIC import (or an app image cache) can hand us an
+        # extension-less file with a vague MIME (image/unknown) as kind=other.
+        # Content-sniff it by magic bytes so real images/videos still render.
+        if kind == "other":
+            sniffed = sniff_kind(decode_path)
+            if sniffed in ("image", "video"):
+                kind = sniffed
+                upd["kind"] = sniffed
+
         if kind == "image":
             im = imaging.load_for_processing(decode_path)   # Pillow/HEIC/KTX
             try:
                 upd.update(perceptual_hashes(im))
                 meta = extract_image(decode_path, im)
                 upd.update({k: v for k, v in meta.items() if v is not None})
-                upd["created_dt"] = keep_dt(best_created_dt(
-                    meta.get("created_dt"), mtime, ctime))
+                # "captured" is EXIF/embedded only - never a filesystem time
+                upd["created_dt"] = keep_dt(meta.get("created_dt"))
                 thumb = make_image_thumb(path, thumb_dir, im)
                 if thumb:
                     upd["thumb"] = thumb
@@ -137,12 +157,12 @@ def _process_one(thumb_dir, row, *, force: bool, keyframes: int, screen: bool) -
                 im.close()
 
         elif kind == "video":
-            upd["created_dt"] = keep_dt(best_created_dt(None, mtime, ctime))
             # isolated: a corrupt/partial clip can hard-crash the decoder
             res = extract_video_isolated(decode_path, thumb_dir, count=keyframes,
                                          screen=screen)
             if res is None:
-                upd["error"] = "video could not be decoded (corrupt or unsupported)"
+                upd["error"] = _video_failure_reason(
+                    decode_path, "video could not be decoded (corrupt or unsupported)")
                 return {"id": fid, "status": "error", "fields": upd, "keyframes": []}
             for k, v in res.get("info", {}).items():
                 if v is not None:
@@ -157,15 +177,18 @@ def _process_one(thumb_dir, row, *, force: bool, keyframes: int, screen: bool) -
                 if screen:
                     upd["faces"] = res.get("faces", 0)
                     upd["skin_ratio"] = res.get("skin_ratio", 0.0)
-        else:
-            upd["created_dt"] = keep_dt(best_created_dt(None, mtime, ctime))
-
         upd["error"] = None
         return {"id": fid, "status": "ok", "fields": upd, "keyframes": kfs}
     except Exception as exc:  # noqa: BLE001 - record and continue
+        err = imaging.describe_failure(path, exc)
+        # the source tool tells us when its own carve was incomplete
+        on = (row["orig_name"] if "orig_name" in keys else "") or ""
+        if "_partial" in on or "_embedded_" in on:
+            err = (f"Incomplete carve by the source tool ({on}) - the embedded "
+                   f"media was not fully extracted; recover it from the parent file")
         return {
             "id": fid, "status": "error",
-            "fields": {"error": imaging.describe_failure(path, exc)},
+            "fields": {"error": err},
             "keyframes": [],
         }
 
@@ -211,13 +234,90 @@ def screen_pass(case: Case, *, workers: int = 4, progress=None) -> int:
     return n[0]
 
 
+def rematch_hashes(case: Case, *, progress=None) -> int:
+    """Re-check every hashed file against the case + global known-hash sets.
+
+    Standalone so it can be re-run after importing a set without a full
+    reprocess.  Clears stale hits first, re-adopts an asserted category only
+    when the file is still uncategorized and the set is 'known'.  Returns the
+    number of current hits.
+    """
+    from .db import NONPERTINENT_CATEGORY
+    rows = list(case.db.iter_files("md5 IS NOT NULL OR sha256 IS NOT NULL"))
+    total, hits = len(rows), 0
+    for i, r in enumerate(rows, 1):
+        hit = hashdb.match_file(case.db, r)
+        if hit:
+            hits += 1
+            case.db.update_file(r["id"], hashset_hit=hit["name"],
+                                hashset_cat=hit["category"],
+                                hashset_kind=hit["kind"])
+            # auto-categorize only an as-yet-uncategorized file:
+            #  - a 'known' set asserts its own category
+            #  - a 'known-good' hit (NSRL etc.) -> Non-pertinent
+            if (r["category"] or 0) == 0:
+                if hit["kind"] == "known" and hit["category"]:
+                    case.db.update_file(r["id"], category=hit["category"])
+                elif hit["kind"] == "known-good":
+                    case.db.update_file(r["id"], category=NONPERTINENT_CATEGORY)
+        elif r["hashset_hit"] is not None:
+            case.db.update_file(r["id"], hashset_hit=None, hashset_cat=None,
+                                hashset_kind=None)
+        if i % 500 == 0 or i == total:
+            case.db.commit()
+            if progress:
+                progress(i, total)
+    case.db.commit()
+    case.db.audit_log(case.examiner, "rematch_hashes", f"{hits} hits / {total} files")
+    return hits
+
+
+def _mp4_box_names(raw: bytes, limit: int = 40) -> list[str]:
+    i, out = 0, []
+    while i + 8 <= len(raw) and len(out) < limit:
+        try:
+            size = struct.unpack_from(">I", raw, i)[0]
+        except struct.error:
+            break
+        out.append(raw[i + 4:i + 8].decode("latin1", "replace"))
+        if size < 8:
+            break
+        i += size
+    return out
+
+
+def _video_failure_reason(path: str, fallback: str) -> str:
+    """Say *why* a video wouldn't decode - most of these are Snapchat's
+    segmented streaming cache (an init segment plus byte-range fragments),
+    not standalone playable files."""
+    if str(path).lower().endswith(".stream_0_offset_key"):
+        return "Snapchat streamed-video fragment - one chunk of a segmented download, not a whole clip"
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(8192)
+    except OSError:
+        return fallback
+    if raw[:2] in (b"\xff\xf3", b"\xff\xf2", b"\xff\xfb"):
+        return "Audio-frame fragment - contains no video"
+    if raw[4:8] == b"ftyp":
+        names = _mp4_box_names(raw)
+        has_moov, has_mdat = "moov" in names, "mdat" in names
+        if has_moov and not has_mdat:
+            return "Fragmented-MP4 init segment - the media data lives in separate fragment files"
+        if has_mdat and not has_moov:
+            return "MP4 media data with no header - can't be decoded without its init segment"
+        if "moof" in names:
+            return "Fragmented MP4 - incomplete (missing fragments) or unsupported by the decoder"
+    return fallback
+
+
 def _video_result_to_payload(row, res: dict | None, *, screen: bool) -> dict:
     fid = row["id"]
     keys = row.keys()
-    mtime = row["mtime"] if "mtime" in keys else None
-    ctime = row["ctime"] if "ctime" in keys else None
     existing_dt = row["created_dt"] if "created_dt" in keys else None
-    upd: dict = {"created_dt": (best_created_dt(None, mtime, ctime) or existing_dt)}
+    # capture time comes only from embedded metadata (res["info"]) below;
+    # filesystem timestamps are not a capture time.
+    upd: dict = {"created_dt": existing_dt}
     if not row["md5"]:
         try:
             upd.update(crypto_hashes(row["path"]))
@@ -225,14 +325,16 @@ def _video_result_to_payload(row, res: dict | None, *, screen: bool) -> dict:
             return {"id": fid, "status": "error",
                     "fields": {"error": f"{exc}"[:300]}, "keyframes": []}
     if res is None:
-        upd["error"] = "video could not be decoded (corrupt or unsupported)"
+        upd["error"] = _video_failure_reason(
+            row["path"], "video could not be decoded (corrupt or unsupported)")
         return {"id": fid, "status": "error", "fields": upd, "keyframes": []}
     for k, v in (res.get("info") or {}).items():
         if v is not None:
             upd[k] = v
     frames = res.get("frames") or []
     if not frames:
-        upd["error"] = "no video frames could be read (truncated or unsupported)"
+        upd["error"] = _video_failure_reason(
+            row["path"], "no video frames could be read (truncated or unsupported)")
         return {"id": fid, "status": "error", "fields": upd, "keyframes": []}
     mid = len(frames) // 2
     upd["thumb"] = frames[mid]["name"]
@@ -341,19 +443,7 @@ def process(
 
     # Known-hash matching (needs all hashes present).
     stage("Matching known-hash lists…")
-    for r in case.db.iter_files("md5 IS NOT NULL"):
-        hit = hashdb.match_file(case.db, r)
-        if hit:
-            case.db.update_file(
-                r["id"],
-                hashset_hit=hit["name"],
-                hashset_cat=hit["category"],
-            )
-            # adopt the asserted category if the file is still uncategorized
-            if hit["category"] and (r["category"] or 0) == 0 and hit["kind"] == "known":
-                case.db.update_file(r["id"], category=hit["category"])
-            stats.hashset_hits += 1
-    case.db.commit()
+    stats.hashset_hits = rematch_hashes(case)
 
     stage("Stacking exact duplicates…")
     stats.redundant_duplicates = dedupe.stack_exact(case.db)
@@ -361,6 +451,11 @@ def process(
     stats.visual_stacks = dedupe.stack_visual(case.db)
     stage("Clustering near-duplicates…")
     stats.clusters = dedupe.cluster_near(case.db, threshold=phash_cluster_threshold)
+
+    # screening ran inline with processing (screen=True) - record it so the UI
+    # doesn't keep offering "Run screening" for a collection that's already done
+    if screen and not where:
+        case.db.set_meta("screened_at", str(time.time()))
 
     case.db.set_meta("last_run", str(time.time()))
     case.db.audit_log(case.examiner, "process", str(stats.as_dict()))

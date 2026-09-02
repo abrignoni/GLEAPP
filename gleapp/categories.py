@@ -1,9 +1,10 @@
 """Categorization helpers.
 
-Categories are **examiner-defined and stored per case** in the ``categories``
-table (see ``db.py``).  They ship blank - code 0 is always "Uncategorized" and
-the examiner names the rest.  This module is just a thin read helper over a
-``CaseDB`` plus the non-category triage buckets.
+Categories are stored per case in the ``categories`` table (see ``db.py``).
+Codes 0-5 are locked Project VIC 2.0 (US) presets seeded into every case; the
+examiner can add their own (code 6+) but cannot edit the presets.  This module
+is just a thin read helper over a ``CaseDB`` plus the non-category triage
+buckets.
 """
 
 from __future__ import annotations
@@ -57,5 +58,6 @@ def catmap(db: "CaseDB", *, include_inactive: bool = True) -> dict[int, dict]:
             "notable": bool(r["notable"]),
             "position": r["position"],
             "active": bool(r["active"]),
+            "locked": bool(r["locked"]),
         }
     return out

@@ -19,12 +19,47 @@ category 0 ("Uncategorized") maps to ``null``.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
 VIC_SOURCE_NAME = "Project VIC"
+
+_DOTNET_DATE = re.compile(r"/Date\((-?\d+)(?:[+-]\d{4})?\)/")
+_TS_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %I:%M:%S %p",
+)
+
+
+def _parse_ts(v) -> float | None:
+    """A Project VIC filesystem timestamp -> epoch seconds, or None.
+
+    Handles ISO 8601 (with/without 'Z' or offset), .NET ``/Date(ms)/`` and a
+    few common explicit formats.
+    """
+    if v in (None, "", 0):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    m = _DOTNET_DATE.search(s)
+    if m:
+        return int(m.group(1)) / 1000.0
+    try:
+        return _dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        pass
+    for fmt in _TS_FORMATS:
+        try:
+            return _dt.datetime.strptime(s, fmt).timestamp()
+        except ValueError:
+            continue
+    return None
 
 
 @dataclass
@@ -40,7 +75,9 @@ class VicRecord:
     mime: str | None
     orig_name: str | None
     orig_path: str | None
-    created_dt: str | None
+    fs_created: float | None
+    fs_modified: float | None
+    fs_accessed: float | None
     flags: dict = field(default_factory=dict)
     tags: object = None
     series: object = None
@@ -61,14 +98,6 @@ def is_vic_file(path: str | Path) -> bool:
         return True
     # structural fallback: a top-level "value" array of case objects with "Media"
     return '"value"' in head and '"Media"' in head
-
-
-def _first(seq, *keys, default=None):
-    for k in keys:
-        v = seq.get(k)
-        if v not in (None, "", []):
-            return v
-    return default
 
 
 def load(path: str | Path) -> dict:
@@ -110,7 +139,9 @@ def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None
                 mime=m.get("MimeType"),
                 orig_name=mf.get("FileName"),
                 orig_path=mf.get("FilePath"),
-                created_dt=_first(mf, "Created", "Written", "Accessed"),
+                fs_created=_parse_ts(mf.get("Created")),
+                fs_modified=_parse_ts(mf.get("Written") or mf.get("Modified")),
+                fs_accessed=_parse_ts(mf.get("Accessed")),
                 flags={
                     "victim_identified": bool(m.get("VictimIdentified")),
                     "offender_identified": bool(m.get("OffenderIdentified")),
@@ -174,7 +205,9 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
             size=r.size,
             md5=r.md5,
             sha1=r.sha1 or None,
-            created_dt=r.created_dt,
+            ctime=r.fs_created,
+            mtime=r.fs_modified,
+            atime=r.fs_accessed,
             media_id=r.media_id,
             orig_name=r.orig_name,
             orig_path=r.orig_path,

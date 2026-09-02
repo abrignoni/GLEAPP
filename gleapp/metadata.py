@@ -92,11 +92,12 @@ def extract_image(path: str | Path, img: Image.Image | None = None) -> dict[str,
     return out
 
 
-def best_created_dt(exif_dt: str | None, mtime: float, ctime: float) -> str | None:
-    """Fall back to filesystem times when EXIF has no capture date."""
-    if exif_dt:
-        return exif_dt
-    ts = min(t for t in (mtime, ctime) if t) if (mtime or ctime) else None
-    if ts:
-        return _dt.datetime.fromtimestamp(ts).isoformat()
-    return None
+def best_created_dt(exif_dt: str | None, mtime: float = 0, ctime: float = 0) -> str | None:
+    """The capture time, from EXIF/embedded metadata only.
+
+    Filesystem timestamps (create/modify/access) are *not* a capture time and
+    are kept in their own columns (``ctime`` / ``mtime`` / ``atime``); this
+    returns a value only when the media itself carries one.  ``mtime``/``ctime``
+    are accepted and ignored for backwards compatibility.
+    """
+    return exif_dt or None

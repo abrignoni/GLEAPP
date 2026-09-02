@@ -3,6 +3,8 @@
 
 const $ = (s, r = document) => r.querySelector(s);
 const api = (u, opt) => fetch(u, opt).then(r => r.json());
+const cssEsc = (typeof CSS !== "undefined" && CSS.escape)
+  ? s => CSS.escape(s) : s => String(s).replace(/[^\w-]/g, "\\$&");
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -13,6 +15,13 @@ const state = {
   cats: [],                       // [{code,name,color,notable,position,active}]
   keyframeCache: new Map(),
   metaOpen: false,
+  sources: [],
+  view: "grid",                   // "grid" | "list"
+  listCols: null,                 // Set of visible column keys (list view)
+  sortCol: "name", sortDir: "asc",
+  colFilters: {},                 // { colKey: [{col,op,val}, …] }
+  colWidths: {},                  // { colId: pixels } — list-view column widths
+  tz: "UTC",                      // display timezone for epoch timestamps (not EXIF)
 };
 
 function toast(msg) {
@@ -28,6 +37,9 @@ const fmtDur = s => {
 const fmtSize = b => !b ? "" : b > 1e6 ? (b / 1048576).toFixed(1) + " MB"
   : (b / 1024).toFixed(0) + " KB";
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+const diskName = f => (f.rel_path || f.path || "").split(/[\\/]/).pop();
+/* preferred display name: the original file name, else the on-disk name (an MD5 for VIC imports) */
+const dispName = f => f.orig_name || diskName(f) || ("file #" + f.id);
 
 /* ---------- categories ---------- */
 const catByCode = c => state.cats.find(x => x.code === +c);
@@ -58,36 +70,56 @@ function filterParams() {
   const q = $("#fq").value.trim(); if (q) p.set("q", q);
   if ($("#fkind").value) p.set("kind", $("#fkind").value);
   if ($("#fcat").value !== "any") p.set("category", $("#fcat").value);
-  if ($("#frev").value) p.set("reviewed", $("#frev").value);
   if ($("#fsrc").value) p.set("source", $("#fsrc").value);
   if ($("#fclu").value) p.set("cluster", $("#fclu").value);
+  if ($("#fdup").value) p.set("hasdup", $("#fdup").value);
   if ($("#ffaces").checked) p.set("faces", "1");
   if ($("#fgps").checked) p.set("has_gps", "1");
   if ($("#fhit").checked) p.set("hashset", "1");
+  if ($("#fhidegood").checked) p.set("hidegood", "1");
   if ($("#ferr").checked) p.set("error", "1");
   if (state.vstack) p.set("vstack", state.vstack);
   if (+$("#fskin").value > 0) p.set("min_skin", $("#fskin").value);
   if ($("#fcollapse").checked) p.set("dupes", "collapse");
-  p.set("sort", $("#fsort").value);
+  if (state.view === "list") {
+    p.set("sort", state.sortCol || "name");
+    p.set("dir", state.sortDir || "asc");
+    const cf = [];
+    for (const v of Object.values(state.colFilters))
+      if (v && v.clauses) cf.push(...v.clauses);
+    if (cf.length) p.set("colfilters", JSON.stringify(cf));
+  } else {
+    p.set("sort", $("#fsort").value);
+  }
   p.set("limit", state.pageSize);
   p.set("offset", (state.page - 1) * state.pageSize);
   return p;
 }
 
-/* load the current page (call reload() to also reset to page 1) */
-async function load() {
+/* load the current page (call reload() to also reset to page 1).
+   opts.keepScroll: keep the current scroll position (used by the live refresh
+   while a processing job is running). */
+async function load(opts = {}) {
   state.similarOf = null;
   if (!state.vstack) $("#simBanner").style.display = "none";
+  const scroll = { mainT: $("#main").scrollTop, mainL: $("#main").scrollLeft,
+                   gridT: $("#grid").scrollTop, gridL: $("#grid").scrollLeft };
   const d = await api("/api/files?" + filterParams());
   state.total = d.total;
   const pages = Math.max(1, Math.ceil(d.total / state.pageSize));
-  if (state.page > pages) { state.page = pages; return load(); }
+  if (state.page > pages) { state.page = pages; return load(opts); }
   state.files = d.files;
-  $("#grid").innerHTML = "";
-  render(d.files);
+  renderFiles(d.files);
   renderPager();
   updateStat();
-  $("#main").scrollTop = 0;
+  if (opts.keepScroll) {
+    $("#main").scrollTop = scroll.mainT; $("#main").scrollLeft = scroll.mainL;
+    $("#grid").scrollTop = scroll.gridT; $("#grid").scrollLeft = scroll.gridL;
+  } else {
+    $("#main").scrollTop = 0;
+    // list view scrolls horizontally - a new sort/filter shouldn't fling it sideways
+    if (state.view === "list") $("#main").scrollLeft = scroll.mainL;
+  }
 }
 function reload() { state.page = 1; state.vstack = null; state.sel.clear(); load(); }
 
@@ -131,8 +163,7 @@ async function showSimilar(id) {
   const d = await api(`/api/similar/${id}?threshold=14`);
   state.similarOf = id;
   state.files = d.files;
-  $("#grid").innerHTML = "";
-  render(d.files);
+  renderFiles(d.files);
   renderPager();
   $("#simBanner").style.display = "flex";
   $("#simId").textContent = `files similar to #${id}`;
@@ -157,7 +188,14 @@ function tileEl(f) {
   const nVis = f.vstack_count || 0;
   const dist = f.distance != null ? `<span class="b">${f.similarity}%</span>` : "";
   const faces = f.faces ? `<span class="b">${f.faces}\u{1F464}</span>` : "";
-  const hit = f.hashset_hit ? `<span class="b hit">HASH</span>` : "";
+  const hit = f.hashset_hit
+    ? (f.hashset_kind === "known-good"
+        ? `<span class="b good" title="${esc(f.hashset_hit)}">${
+             esc(f.hashset_hit.split(/[\s_-]/)[0].toUpperCase().slice(0, 6))}</span>`
+        : f.hashset_hit === "Local Hash Stash"
+          ? `<span class="b stash" title="In your local hash stash — you previously categorized this file">STASH</span>`
+          : `<span class="b hit" title="${esc(f.hashset_hit)}">HASH</span>`)
+    : "";
   const gps = f.gps_lat != null ? `<span class="b">\u{1F4CD}</span>` : "";
   const err = f.error && !f.thumb ? `<span class="b hit">ERR</span>` : "";
   let stack = "";
@@ -176,13 +214,18 @@ function tileEl(f) {
          onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg',textContent:'no preview'}))">`
     : `<div class="noimg">${esc((f.ext || "").replace(".", "").toUpperCase() || "?")}${
          f.error ? "<br><small>not decoded</small>" : ""}</div>`;
+  const nm = dispName(f);
+  el.title = nm;
   el.innerHTML = `
-    ${media}
-    ${f.kind === "video" ? `<div class="scrub"><i></i></div>
-      <span class="vid">▶ ${fmtDur(f.duration)}</span>` : ""}
-    <div class="badges">${hit}${err}${dist}${faces}${gps}</div>
-    ${stack}
-    ${f.reviewed ? `<span class="rev">✓</span>` : ""}
+    <div class="thumb">
+      ${media}
+      ${f.kind === "video" ? `<div class="scrub"><i></i></div>
+        <span class="vid">▶ ${fmtDur(f.duration)}</span>` : ""}
+      <div class="badges">${hit}${err}${dist}${faces}${gps}</div>
+      ${stack}
+      <span class="selcheck">✓</span>
+    </div>
+    <div class="fname">${esc(nm)}</div>
     ${catbar}`;
   if (f.kind === "video" && f.has_keyframes) enableScrub(el, f);
   return el;
@@ -195,19 +238,569 @@ function render(files) {
 }
 
 function refreshTiles(ids) {
+  const defs = state.view === "list" ? visibleDefs() : null;
   ids.forEach(id => {
-    const t = document.querySelector(`.tile[data-id="${id}"]`);
+    const t = document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`);
     const f = state.files.find(x => x.id === id);
-    if (t && f) t.replaceWith(tileEl(f));
+    if (t && f) t.replaceWith(state.view === "list" ? lvRowEl(f, defs) : tileEl(f));
   });
   syncSel();
 }
 function refreshAllTiles() {
+  if (state.view === "list") return renderList(state.files);
   document.querySelectorAll(".tile").forEach(t => {
     const f = state.files.find(x => x.id === +t.dataset.id);
     if (f) t.replaceWith(tileEl(f));
   });
 }
+
+/* pick grid vs. details-list rendering. The list view keeps its header/filter
+   row across reloads (renderList reuses it), so it clears #grid itself only when
+   the column set changes — don't wipe #grid here for the list. */
+function renderFiles(files) {
+  const g = $("#grid");
+  g.classList.toggle("aslist", state.view === "list");
+  if (state.view === "list") { renderList(files); }
+  else { g.innerHTML = ""; render(files); }
+}
+
+/* =========================================================================
+   Details list view — every column, sortable + filterable
+   ===================================================================== */
+/* an epoch (UTC) rendered in the chosen display timezone, with DST — never
+   applied to Captured/EXIF, which is camera-local wall time shown as-is */
+let _tzFmt = null, _tzFmtFor = null;
+function fmtEpoch(e) {
+  if (!e) return "";
+  const d = new Date(e * 1000);
+  if (isNaN(d)) return "";
+  const tz = state.tz && state.tz !== "UTC" ? state.tz : "UTC";
+  try {
+    if (_tzFmtFor !== tz) {
+      _tzFmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz, hourCycle: "h23",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        timeZoneName: "short",
+      });
+      _tzFmtFor = tz;
+    }
+    const p = {};
+    _tzFmt.formatToParts(d).forEach(x => { p[x.type] = x.value; });
+    return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second} ${p.timeZoneName || ""}`.trim();
+  } catch (_) {
+    return d.toISOString().slice(0, 19).replace("T", " ") + " UTC";
+  }
+}
+const shortHash = h => !h ? "" : h.length > 12 ? h.slice(0, 12) + "…" : h;
+
+// key:      files column (server-side sort/filter target); "" = not sortable
+// label:    header text
+// type:     text | num | enum | date  (drives the filter widget)
+// get(f):   display string
+// mono:     render in monospace
+// options:  for enum filters — array or () => array of {value,label}
+const LIST_DEFS = [
+  { key: "", label: "", type: "", get: () => "", thumb: true },
+  { key: "id", label: "ID", type: "num", get: f => f.id },
+  // filterKey: filter/sort on this virtual column server-side, so it matches the
+  // fallback chain shown (a folder-ingest file has no orig_name/orig_path).
+  { key: "orig_name", filterKey: "name", label: "Name", type: "text", alt: "name",
+    get: f => dispName(f) },
+  { key: "rel_path", label: "Stored name", type: "text", alt: "diskname",
+    get: f => diskName(f) },
+  // "File path" = the original path recorded in the Project VIC JSON; for
+  // folder-ingest cases (no VIC data) it falls back to the on-disk path.
+  { key: "orig_path", filterKey: "file_path", label: "File path", type: "text",
+    get: f => f.orig_path || f.path || "" },
+  { key: "path", label: "File path (working copy)", type: "text", get: f => f.path || "" },
+  { key: "rel_path", label: "Relative path", type: "text", alt: "relpath",
+    get: f => f.rel_path || "" },
+  { key: "orig_name", label: "Original name", type: "text", get: f => f.orig_name || "" },
+  { key: "source", label: "Source", type: "enum", get: f => f.source || "",
+    options: () => state.sources.map(s => ({ value: s, label: s })) },
+  { key: "kind", label: "Type", type: "enum", get: f => f.kind || "",
+    options: [{ value: "image", label: "image" }, { value: "video", label: "video" },
+              { value: "other", label: "other" }] },
+  { key: "ext", label: "Ext", type: "text", get: f => f.ext || "" },
+  { key: "mime", label: "MIME", type: "text", get: f => f.mime || "" },
+  { key: "size", label: "Size", type: "num", get: f => fmtSize(f.size), sortRaw: true,
+    filterBareOp: "min", filterPh: "≥ KB · >1mb · 100kb-2mb" },
+  { key: "width", label: "Width", type: "num", get: f => f.width || "" },
+  { key: "height", label: "Height", type: "num", get: f => f.height || "" },
+  { key: "duration", label: "Duration", type: "num", get: f => fmtDur(f.duration),
+    sortRaw: true, filterBareOp: "min", filterPh: "≥ sec · >0:30 · 1:00-5:00" },
+  { key: "created_dt", label: "Captured (EXIF)", type: "text", get: f => f.created_dt || "",
+    filterPh: "2024-06" },
+  { key: "ctime", label: "FS created", type: "epoch", get: f => fmtEpoch(f.ctime) },
+  { key: "mtime", label: "FS written", type: "epoch", get: f => fmtEpoch(f.mtime) },
+  { key: "atime", label: "FS accessed", type: "epoch", get: f => fmtEpoch(f.atime) },
+  { key: "ingested_at", label: "Ingested", type: "epoch", get: f => fmtEpoch(f.ingested_at) },
+  { key: "md5", label: "MD5", type: "text", mono: true, get: f => f.md5 || "" },
+  { key: "sha1", label: "SHA-1", type: "text", mono: true, get: f => shortHash(f.sha1) },
+  { key: "sha256", label: "SHA-256", type: "text", mono: true, get: f => shortHash(f.sha256) },
+  { key: "phash", label: "pHash", type: "text", mono: true, get: f => f.phash || "" },
+  { key: "camera", label: "Camera", type: "text", get: f => f.camera || "" },
+  { key: "gps_lat", label: "GPS lat", type: "num", get: f => f.gps_lat ?? "",
+    filterContains: true, filterPh: "45.4 · >40 · set" },
+  { key: "gps_lon", label: "GPS lon", type: "num", get: f => f.gps_lon ?? "",
+    filterContains: true, filterPh: "-1.9 · <10 · set" },
+  { key: "faces", label: "Faces", type: "num", get: f => f.faces || 0, filterPh: ">0 · 1-3 · none" },
+  { key: "skin_ratio", label: "Skin ratio", type: "num",
+    get: f => f.skin_ratio == null ? "" : (f.skin_ratio * 100).toFixed(0) + "%", sortRaw: true,
+    filterScale: 0.01, filterBareOp: "min", filterPh: "≥ % · >30 · 10-50" },
+  { key: "category", label: "Category", type: "enum", cat: true,
+    get: f => catName(f.category),
+    options: () => state.cats.slice().sort((a, b) => a.position - b.position)
+      .map(c => ({ value: c.code, label: c.name })) },
+  { key: "triage", label: "Triage", type: "text", get: f => f.triage || "" },
+  { key: "notes", label: "Notes", type: "text", get: f => f.notes || "" },
+  { key: "tags", label: "Tags", type: "text", get: f => (f.tags || []).join(", ") },
+  { key: "hashset_hit", label: "Hash set", type: "text", get: f => f.hashset_hit || "" },
+  { key: "hashset_kind", label: "Hash kind", type: "enum", get: f => f.hashset_kind || "",
+    options: [{ value: "known", label: "known" }, { value: "known-good", label: "known-good" },
+              { value: "other", label: "other" }] },
+  { key: "hashset_cat", label: "Hash cat", type: "num", get: f => f.hashset_cat ?? "" },
+  { key: "stack_id", label: "Exact stack", type: "num", get: f => f.stack_id ?? "" },
+  { key: "vstack_id", label: "Visual stack", type: "num", get: f => f.vstack_id ?? "" },
+  { key: "cluster_id", label: "Cluster", type: "num", get: f => f.cluster_id ?? "" },
+  { key: "media_id", label: "VIC MediaID", type: "num", get: f => f.media_id ?? "" },
+  { key: "error", label: "Error", type: "text", get: f => f.error || "" },
+];
+const colId = d => d.alt || d.key || "thumb";
+const DEFAULT_LIST_COLS = ["thumb", "name", "diskname", "orig_path", "kind", "ext", "size",
+  "created_dt", "ctime", "mtime", "atime", "camera", "faces", "skin_ratio", "gps_lat", "gps_lon",
+  "category", "md5", "hashset_hit", "tags", "notes", "error"];
+
+function visibleDefs() {
+  const on = state.listCols || new Set(DEFAULT_LIST_COLS);
+  return LIST_DEFS.filter(d => on.has(colId(d)));
+}
+const LIST_PREFS_V = 5;   // bump when DEFAULT_LIST_COLS gains a column
+function persistListPrefs() {
+  try {
+    localStorage.setItem("gleapp.list", JSON.stringify({
+      v: LIST_PREFS_V,
+      view: state.view,
+      cols: [...(state.listCols || new Set(DEFAULT_LIST_COLS))],
+      sortCol: state.sortCol, sortDir: state.sortDir,
+      colFilters: state.colFilters,
+      colWidths: state.colWidths,
+    }));
+  } catch (e) {}
+}
+function restoreListPrefs() {
+  try {
+    const s = JSON.parse(localStorage.getItem("gleapp.list") || "{}");
+    if (s.view === "list") state.view = "list";
+    state.listCols = new Set(s.cols && s.cols.length ? s.cols : DEFAULT_LIST_COLS);
+    if (state.listCols.has("rel_path")) {          // migrate pre-"Name" prefs
+      state.listCols.delete("rel_path");
+      ["name", "diskname", "path"].forEach(k => state.listCols.add(k));
+    }
+    if ((s.v || 0) < LIST_PREFS_V) {               // one-time: refresh to new defaults
+      state.listCols.delete("relpath");            // "Relative path" -> "File path"
+      if ((s.v || 0) < 4) {                        // "File path" now = the VIC JSON path
+        state.listCols.delete("path");
+        state.listCols.add("orig_path");
+      }
+      DEFAULT_LIST_COLS.forEach(k => state.listCols.add(k));
+      persistListPrefs();
+    }
+    if (["rel_path", "orig_name"].includes(s.sortCol)) state.sortCol = "name";
+    else if (["path", "orig_path"].includes(s.sortCol)) state.sortCol = "file_path";
+    else if (s.sortCol) { state.sortCol = s.sortCol; state.sortDir = s.sortDir || "asc"; }
+    // v5: column-filter storage shape changed (date columns now hold {from,to})
+    if (s.colFilters && (s.v || 0) >= 5) state.colFilters = s.colFilters;
+    if (s.colWidths) state.colWidths = s.colWidths;
+  } catch (e) { state.listCols = new Set(DEFAULT_LIST_COLS); }
+  $("#vGrid").classList.toggle("on", state.view !== "list");
+  $("#vList").classList.toggle("on", state.view === "list");
+  $("#btnCols").style.display = state.view === "list" ? "" : "none";
+  $("#btnClearColFilters").style.display = state.view === "list" ? "" : "none";
+  $("#sortWrap").style.display = state.view === "list" ? "none" : "";
+  updateClearFiltersBtn();
+}
+
+/* string -> number for a numeric column's filter box. Size understands
+   b/kb/mb/gb (bare number = KB, since the column never shows raw bytes);
+   a column with filterScale (e.g. Skin ratio, shown as %) is scaled. */
+function numConv(def) {
+  if (def.key === "size") return s => {
+    const m = String(s).trim().match(/^(-?\d+(?:\.\d+)?)\s*(b|k|kb|m|mb|g|gb)?$/i);
+    if (!m) return null;
+    const u = (m[2] || "kb").toLowerCase().replace(/^([kmg])$/, "$1b");
+    return Math.round(parseFloat(m[1]) * ({ b: 1, kb: 1024, mb: 1048576, gb: 1073741824 }[u]));
+  };
+  if (def.key === "duration") return s => {           // "1:30" or bare seconds
+    s = String(s).trim();
+    const m = s.match(/^(\d+):([0-5]?\d(?:\.\d+)?)$/);
+    if (m) return parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+    const n = parseFloat(s);
+    return isNaN(n) ? null : n;
+  };
+  const scale = def.filterScale || 1;
+  return s => { const n = parseFloat(String(s).trim()); return isNaN(n) ? null : n * scale; };
+}
+
+/* epoch (seconds, UTC) for a wall-clock "YYYY-MM-DD" start/end of day in the
+   chosen display timezone — so a date range matches what the column shows.
+   FS/ingest times are stored UTC; the columns render them in state.tz. */
+function zonedDayEpoch(dateStr, endOfDay) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr || "");
+  if (!m) return null;
+  const [Y, Mo, D] = [+m[1], +m[2], +m[3]];
+  const hh = endOfDay ? 23 : 0, mm = endOfDay ? 59 : 0, ss = endOfDay ? 59 : 0;
+  const tz = state.tz && state.tz !== "UTC" ? state.tz : "UTC";
+  let guess = Date.UTC(Y, Mo - 1, D, hh, mm, ss);
+  if (tz === "UTC") return Math.floor(guess / 1000);
+  try {
+    // correct the guess by the tz's offset at that instant (1 pass is exact
+    // except inside a DST transition hour, which is fine for range filtering)
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit",
+      day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    const p = {};
+    dtf.formatToParts(new Date(guess)).forEach(x => { p[x.type] = x.value; });
+    const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+    return Math.floor((guess - (asUTC - guess)) / 1000);
+  } catch (_) {
+    return Math.floor(guess / 1000);
+  }
+}
+
+/* [{col,op,val}] clauses for a date column, from the two calendar inputs */
+function epochClauses(key, from, to) {
+  const cl = [];
+  if (from) { const v = zonedDayEpoch(from, false); if (v != null) cl.push({ col: key, op: "min", val: v }); }
+  if (to)   { const v = zonedDayEpoch(to, true);    if (v != null) cl.push({ col: key, op: "max", val: v }); }
+  return cl;
+}
+
+/* build the [{col,op,val}] clause list for one text/num column's raw string
+   (enum uses op:eq directly; epoch uses epochClauses) */
+function parseColFilter(def, raw) {
+  raw = (raw || "").trim();
+  if (!raw) return [];
+  const key = def.filterKey || def.key;
+  if (def.type === "enum") return [{ col: key, op: "eq", val: raw }];
+  if (/^(set|any|\*)$/i.test(raw)) return [{ col: key, op: "set" }];
+  if (/^(none|empty|null)$/i.test(raw)) return [{ col: key, op: "notset" }];
+  if (def.type === "num") {
+    const conv = numConv(def);
+    // range: "a .. b" / "a to b" / "a-b"
+    let m = raw.match(/^(.+?)\s*(?:\.\.|—|–|\bto\b|-)\s*(.+)$/i);
+    if (m) {
+      const a = conv(m[1]), b = conv(m[2]);
+      if (a != null && b != null)
+        return [{ col: key, op: "min", val: Math.min(a, b) },
+                { col: key, op: "max", val: Math.max(a, b) }];
+    }
+    // explicit comparator
+    m = raw.match(/^(>=|<=|>|<|=)\s*(.+)$/);
+    if (m && conv(m[2]) != null) {
+      const op = { ">": "gt", ">=": "min", "<": "lt", "<=": "max", "=": "eq" }[m[1]];
+      return [{ col: key, op, val: conv(m[2]) }];
+    }
+    // a partial number in a decimal column (GPS) -> substring match
+    if (def.filterContains) return [{ col: key, op: "contains", val: raw }];
+    // bare number
+    const n = conv(raw);
+    if (n != null) return [{ col: key, op: def.filterBareOp || "eq", val: n }];
+    return [];
+  }
+  // text
+  return [{ col: key, op: "contains", val: raw }];
+}
+
+const COL_DEFAULT_W = { thumb: 46, num: 90, epoch: 155, enum: 130, text: 200 };
+const colWidth = d => state.colWidths[colId(d)]
+  || (d.thumb ? COL_DEFAULT_W.thumb : COL_DEFAULT_W[d.type] || 160);
+
+function lvFilterCell(d) {
+  if (d.thumb || !d.key) return "<th></th>";
+  const cid = colId(d);
+  const st = state.colFilters[cid] || {};
+  if (d.type === "enum") {
+    const opts = (typeof d.options === "function" ? d.options() : d.options) || [];
+    const cur = st.raw || "";
+    return `<th><select data-cid="${cid}"><option value="">–</option>` +
+      opts.map(o => `<option value="${esc(o.value)}" ${String(o.value) === String(cur) ? "selected" : ""}>${esc(o.label)}</option>`).join("") +
+      `</select></th>`;
+  }
+  if (d.type === "epoch") {
+    const r = (st.raw && typeof st.raw === "object") ? st.raw : {};
+    return `<th class="lvdate">` +
+      `<input type="date" data-cid="${cid}" data-part="from" value="${esc(r.from || "")}" title="from">` +
+      `<input type="date" data-cid="${cid}" data-part="to" value="${esc(r.to || "")}" title="to">` +
+      `</th>`;
+  }
+  const ph = d.filterPh || (d.type === "num" ? ">100 · 5-9 · none" : "contains…");
+  const cur = (typeof st.raw === "string") ? st.raw : "";
+  return `<th><input data-cid="${cid}" class="${cur ? "on" : ""}" value="${esc(cur)}" placeholder="${esc(ph)}"></th>`;
+}
+
+// keep the header/filter row alive across data reloads (rebuilding it on every
+// keystroke is what made typing jump / reverse characters) — only the <tbody>
+// is replaced unless the visible column set actually changes.
+function renderList(files) {
+  const g = $("#grid");
+  const defs = visibleDefs();
+  const sig = defs.map(colId).join("|");
+  let tbl = g.querySelector("table.lv");
+
+  if (!tbl || g.dataset.lvsig !== sig) {
+    g.innerHTML = "";
+    tbl = document.createElement("table");
+    tbl.className = "lv";
+    let total = 0;
+    const cols = defs.map(d => {
+      const w = colWidth(d); total += w;
+      return `<col data-cid="${colId(d)}" style="width:${w}px">`;
+    }).join("");
+    tbl.style.width = total + "px";
+    const head = defs.map(d => {
+      const sortable = d.key && !d.thumb;
+      const sk = d.filterKey || d.key;
+      return `<th class="${sortable ? "sortable" : ""}" data-k="${sk}" data-cid="${colId(d)}">` +
+        `<span class="lbl">${esc(d.label)}<span class="ar" data-k="${sk}"></span></span>` +
+        `<span class="rz" data-cid="${colId(d)}" title="Drag to resize · double-click to reset"></span></th>`;
+    }).join("");
+    const filt = defs.map(lvFilterCell).join("");
+    tbl.innerHTML = `<colgroup>${cols}</colgroup><thead>` +
+      `<tr class="lvhead">${head}</tr><tr class="lvfilt">${filt}</tr></thead><tbody></tbody>`;
+    g.appendChild(tbl);
+    g.dataset.lvsig = sig;
+    wireListHeader();
+  }
+  updateSortArrows();
+
+  const tb = document.createElement("tbody");
+  files.forEach(f => tb.appendChild(lvRowEl(f, defs)));
+  tbl.querySelector("tbody").replaceWith(tb);
+
+  let cnt = g.querySelector(".lvcount");
+  if (!files.length) {
+    if (!cnt) { cnt = document.createElement("div"); cnt.className = "lvcount"; g.appendChild(cnt); }
+    cnt.textContent = "No files match.";
+  } else if (cnt) { cnt.remove(); }
+}
+
+function updateSortArrows() {
+  $("#grid").querySelectorAll("tr.lvhead th .ar").forEach(ar => {
+    const k = ar.dataset.k;
+    ar.textContent = (k && state.sortCol === k)
+      ? (state.sortDir === "desc" ? " ▼" : " ▲") : "";
+  });
+}
+
+function lvRowEl(f, defs) {
+  defs = defs || visibleDefs();
+  const tr = document.createElement("tr");
+  tr.className = "lvrow" + (state.sel.has(f.id) ? " sel" : "") + (state.focus === f.id ? " focus" : "");
+  tr.dataset.id = f.id;
+  tr.innerHTML = defs.map(d => {
+    if (d.thumb) {
+      return f.thumb
+        ? `<td class="lvthumb"><img loading="lazy" src="/thumb/${f.thumb}" alt=""></td>`
+        : `<td class="lvthumb"><div class="nt">${esc((f.ext || "?").replace(".", "").toUpperCase())}</div></td>`;
+    }
+    let v = d.get(f);
+    v = v == null ? "" : String(v);
+    let cls = d.mono ? "mono" : "";
+    let style = "";
+    if (d.cat) {
+      cls += " catcell";
+      style = ` style="border-left-color:${catColor(f.category)}"`;
+    }
+    return `<td class="${cls.trim()}"${style} title="${esc(v)}">${esc(v)}</td>`;
+  }).join("");
+  return tr;
+}
+
+let listHeaderWired = false;
+function wireListHeader() {
+  const g = $("#grid");
+  g.querySelectorAll("tr.lvhead th.sortable").forEach(th => {
+    th.onclick = e => {
+      if (e.target.classList.contains("rz")) return;   // ignore the resize handle
+      const k = th.dataset.k;
+      if (state.sortCol === k) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+      else { state.sortCol = k; state.sortDir = "asc"; }
+      persistListPrefs();
+      reload();
+    };
+  });
+
+  // drag a column border to widen/narrow it; double-click resets to default
+  const tbl = g.querySelector("table.lv");
+  g.querySelectorAll("tr.lvhead th .rz").forEach(rz => {
+    const cid = rz.dataset.cid;
+    const col = g.querySelector(`col[data-cid="${cssEsc(cid)}"]`);
+    rz.addEventListener("click", e => e.stopPropagation());
+    rz.addEventListener("dblclick", e => {
+      e.stopPropagation();
+      delete state.colWidths[cid];
+      const def = LIST_DEFS.find(d => colId(d) === cid);
+      const old = col.getBoundingClientRect().width;
+      const w = colWidth(def);
+      col.style.width = w + "px";
+      tbl.style.width = Math.round(tbl.getBoundingClientRect().width + (w - old)) + "px";
+      persistListPrefs();
+    });
+    rz.addEventListener("mousedown", e => {
+      e.preventDefault(); e.stopPropagation();
+      const startX = e.clientX;
+      const startW = col.getBoundingClientRect().width;
+      const startTblW = tbl.getBoundingClientRect().width;
+      rz.classList.add("drag");
+      document.body.classList.add("colresize");
+      const move = ev => {
+        const w = Math.max(40, Math.round(startW + ev.clientX - startX));
+        col.style.width = w + "px";
+        // keep the fixed-layout table wide enough for the new column width
+        tbl.style.width = Math.round(startTblW + (w - startW)) + "px";
+      };
+      const up = () => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        rz.classList.remove("drag");
+        document.body.classList.remove("colresize");
+        const w = parseInt(col.style.width, 10);
+        if (w) state.colWidths[cid] = w;
+        persistListPrefs();
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  });
+  // the header row survives data reloads now, so a filter edit only swaps <tbody>
+  const apply = debounce(() => {
+    persistListPrefs();
+    state.page = 1;
+    load({ keepScroll: true });
+  }, 300);
+  // date-range (calendar) filters — read both from/to inputs on any edit
+  g.querySelectorAll("tr.lvfilt input[type=date]").forEach(inp => {
+    const cid = inp.dataset.cid;
+    const def = LIST_DEFS.find(d => colId(d) === cid);
+    if (!def) return;
+    const update = () => {
+      const parts = inp.closest("th").querySelectorAll("input[type=date]");
+      const from = parts[0] ? parts[0].value : "";
+      const to = parts[1] ? parts[1].value : "";
+      const clauses = epochClauses(def.key, from, to);
+      if (clauses.length) state.colFilters[cid] = { raw: { from, to }, clauses };
+      else delete state.colFilters[cid];
+      updateClearFiltersBtn();
+      apply();
+    };
+    inp.addEventListener("change", update);
+    inp.addEventListener("input", update);
+  });
+  // text / number / enum filters
+  g.querySelectorAll("tr.lvfilt input:not([type=date]), tr.lvfilt select").forEach(inp => {
+    const cid = inp.dataset.cid;
+    const def = LIST_DEFS.find(d => colId(d) === cid);
+    if (!def) return;
+    const ev = inp.tagName === "SELECT" ? "change" : "input";
+    inp.addEventListener(ev, () => {
+      const raw = inp.value.trim();
+      const clauses = parseColFilter(def, raw);
+      if (raw && clauses.length) state.colFilters[cid] = { raw, clauses };
+      else delete state.colFilters[cid];
+      if (inp.tagName === "INPUT") inp.classList.toggle("on", !!raw);
+      updateClearFiltersBtn();
+      apply();
+    });
+  });
+}
+
+/* Columns ▾ menu */
+function toggleColMenu() {
+  const m = $("#colMenu");
+  if (m.style.display === "block") { m.style.display = "none"; return; }
+  const on = state.listCols || new Set(DEFAULT_LIST_COLS);
+  m.innerHTML =
+    `<div class="mrow"><button data-all="1">All</button>` +
+    `<button data-all="0">Defaults</button>` +
+    `<button data-rzw="1" title="Reset all column widths">Reset widths</button></div>` +
+    LIST_DEFS.filter(d => !d.thumb).map(d => {
+      const cid = colId(d);
+      return `<label><input type="checkbox" data-cid="${cid}" ${on.has(cid) ? "checked" : ""}> ${esc(d.label)}</label>`;
+    }).join("");
+  const b = $("#btnCols").getBoundingClientRect();
+  m.style.left = b.left + "px";
+  m.style.top = (b.bottom + 4) + "px";
+  m.style.display = "block";
+  m.querySelectorAll("input[data-cid]").forEach(cb => cb.onchange = () => {
+    const s = state.listCols || new Set(DEFAULT_LIST_COLS);
+    cb.checked ? s.add(cb.dataset.cid) : s.delete(cb.dataset.cid);
+    s.add("thumb");
+    state.listCols = s;
+    persistListPrefs();
+    renderList(state.files);
+  });
+  m.querySelectorAll("button[data-all]").forEach(btn => btn.onclick = () => {
+    state.listCols = new Set(btn.dataset.all === "1"
+      ? LIST_DEFS.map(colId) : DEFAULT_LIST_COLS);
+    persistListPrefs();
+    toggleColMenu(); toggleColMenu();      // rebuild
+    renderList(state.files);
+  });
+  m.querySelector("button[data-rzw]").onclick = () => {
+    state.colWidths = {};
+    persistListPrefs();
+    renderList(state.files);
+  };
+}
+
+function setView(v) {
+  if (state.view === v) return;
+  state.view = v;
+  $("#vGrid").classList.toggle("on", v === "grid");
+  $("#vList").classList.toggle("on", v === "list");
+  $("#btnCols").style.display = v === "list" ? "" : "none";
+  $("#btnClearColFilters").style.display = v === "list" ? "" : "none";
+  $("#sortWrap").style.display = v === "list" ? "none" : "";
+  $("#colMenu").style.display = "none";
+  updateClearFiltersBtn();
+  persistListPrefs();
+  reload();
+}
+
+function updateClearFiltersBtn() {
+  const n = Object.keys(state.colFilters || {}).length;
+  const b = $("#btnClearColFilters");
+  if (!b) return;
+  b.disabled = !n;
+  b.textContent = n ? `Clear column filters (${n})` : "Clear column filters";
+}
+
+function clearListFilters() {
+  if (!Object.keys(state.colFilters || {}).length) return;
+  state.colFilters = {};
+  // wipe the filter-row widgets in place
+  $("#grid").querySelectorAll("tr.lvfilt input, tr.lvfilt select").forEach(el => {
+    el.value = "";
+    el.classList.remove("on");
+  });
+  updateClearFiltersBtn();
+  persistListPrefs();
+  state.page = 1;
+  load({ keepScroll: true });
+  toast("Column filters cleared");
+}
+
+$("#vGrid").onclick = () => setView("grid");
+$("#vList").onclick = () => setView("list");
+$("#btnCols").onclick = toggleColMenu;
+$("#btnClearColFilters").onclick = clearListFilters;
+document.addEventListener("click", e => {
+  if (!e.target.closest("#colMenu") && !e.target.closest("#btnCols"))
+    $("#colMenu").style.display = "none";
+});
 
 /* ---------- video scrubbing ---------- */
 function enableScrub(el, f) {
@@ -235,16 +828,27 @@ function enableScrub(el, f) {
 
 /* ---------- selection / focus ---------- */
 function toggleSel(id, additive, range) {
-  if (range && state.lastClick != null) {
-    const ids = state.files.map(f => f.id);
-    let a = ids.indexOf(state.lastClick), b = ids.indexOf(id);
-    if (a > b)[a, b] = [b, a];
+  const ids = state.files.map(f => f.id);
+  if (range && (state.lastClick != null || state.focus != null)) {
+    // shift-click: (re)select the contiguous range from the anchor to here.
+    // Replaces the selection unless ctrl is also held; the anchor stays put
+    // so you can keep adjusting the range.
+    const anchor = state.lastClick != null ? state.lastClick : state.focus;
+    let a = ids.indexOf(anchor), b = ids.indexOf(id);
+    if (a < 0) a = b;
+    if (a > b) [a, b] = [b, a];
+    if (!additive) state.sel.clear();
     for (let i = a; i <= b; i++) state.sel.add(ids[i]);
-  } else if (additive) {
+    setFocus(id);
+    syncSel();
+    return;
+  }
+  if (additive) {                       // ctrl/⌘-click: toggle this one
     state.sel.has(id) ? state.sel.delete(id) : state.sel.add(id);
-  } else {
+  } else {                              // plain click: select only this one
     const only = state.sel.size === 1 && state.sel.has(id);
-    state.sel.clear(); if (!only) state.sel.add(id);
+    state.sel.clear();
+    if (!only) state.sel.add(id);
   }
   state.lastClick = id;
   setFocus(id);
@@ -252,13 +856,13 @@ function toggleSel(id, additive, range) {
 }
 function setFocus(id) {
   state.focus = id;
-  document.querySelectorAll(".tile.focus").forEach(t => t.classList.remove("focus"));
-  const t = document.querySelector(`.tile[data-id="${id}"]`);
+  document.querySelectorAll(".tile.focus, .lvrow.focus").forEach(t => t.classList.remove("focus"));
+  const t = document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`);
   if (t) t.classList.add("focus");
   if (state.metaOpen) showMeta(id);
 }
 function syncSel() {
-  document.querySelectorAll(".tile").forEach(t =>
+  document.querySelectorAll(".tile, .lvrow").forEach(t =>
     t.classList.toggle("sel", state.sel.has(+t.dataset.id)));
   $("#selCount").textContent = state.sel.size;
   $("#selbar").style.display = state.sel.size ? "flex" : "none";
@@ -306,15 +910,29 @@ async function categorize(ids, cat) {
   await save("/api/categorize", { ids, category: cat });
   ids.forEach(id => { const f = state.files.find(x => x.id === id); if (f) f.category = cat; });
   refreshTiles(ids);
-  if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
   toast(`${cat ? catName(cat) : "Uncategorized"} → ${ids.length} file(s)`);
+  // working the Uncategorized backlog: move the cursor on to the next file
+  // (the categorized tiles stay put until you hit Refresh)
+  if (cat !== 0 && $("#fcat").value === "0") advancePast(ids);
+  else if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
 }
-async function review(ids, val = true) {
-  await save("/api/review", { ids, reviewed: val });
-  ids.forEach(id => { const f = state.files.find(x => x.id === id); if (f) f.reviewed = val ? 1 : 0; });
-  refreshTiles(ids);
-  if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
-  toast(`${val ? "Reviewed" : "Unreviewed"} → ${ids.length}`);
+
+/* put focus on the first file after the ones just categorized */
+function advancePast(justDone) {
+  const order = state.files.map(f => f.id);
+  const done = new Set(justDone);
+  let last = -1;
+  order.forEach((id, i) => { if (done.has(id)) last = i; });
+  const next = last + 1;
+  if (next >= order.length) {
+    const pages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    if (!state.similarOf && state.page < pages) return gotoPage(state.page + 1);
+    state.sel.clear(); state.focus = null; syncSel();
+    return;
+  }
+  const id = order[next];
+  state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
+  document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 async function tagIds(ids, preset) {
   const t = preset ?? prompt("Add tag(s), comma separated:");
@@ -360,17 +978,21 @@ async function showMeta(id) {
   const rows = [
     ["Source", f.source], ["Type", f.kind],
     ["Original name", f.orig_name || ""],
-    ["Original path", f.orig_path || ""],
+    ["File path", f.orig_path || ""],
     ["MIME", f.mime || ""],
     ["VIC MediaID", f.media_id ?? ""],
     ["VIC flags", flags],
     ["Size", fmtSize(f.size)],
     ["Dimensions", f.width ? `${f.width}×${f.height}` : ""],
     ["Duration", f.duration ? fmtDur(f.duration) : ""],
-    ["Captured", f.created_dt || ""], ["Camera", f.camera || ""],
+    ["Captured (EXIF, camera local)", f.created_dt || ""],
+    ["FS created", fmtEpoch(f.ctime)],
+    ["FS written", fmtEpoch(f.mtime)],
+    ["FS accessed", fmtEpoch(f.atime)],
+    ["Camera", f.camera || ""],
     ["Faces", f.faces || 0], ["Skin ratio", f.skin_ratio ?? ""],
-    ["Reviewed", f.reviewed ? `yes — ${f.reviewed_by || ""}` : "no"],
-    ["Known hash", f.hashset_hit || ""],
+    ["Known hash", f.hashset_hit
+      ? f.hashset_hit + (f.hashset_kind ? ` (${f.hashset_kind})` : "") : ""],
     ["Exact copies", f.stack && f.stack.length > 1 ? `${f.stack.length}` : "none"],
     ["Visually similar", f.vstack && f.vstack.length > 1 ? `${f.vstack.length} files` : "none"],
     ["Similar-group", f.cluster_id ? `#${f.cluster_id} (${f.cluster_size})` : "—"],
@@ -400,9 +1022,9 @@ async function showMeta(id) {
           ${esc(catName(f.category))}</span></div>
       <div class="row" id="mCats"></div>
       <div class="row">
-        <button class="btn sm" id="mRev">${f.reviewed ? "Unmark reviewed" : "Mark reviewed"}</button>
         <button class="btn sm" id="mSim">Find similar</button>
         <button class="btn sm" id="mTag">Add tag</button>
+        <button class="btn sm" id="mHex">Hex view</button>
       </div>
       <div>${(f.tags || []).map(t =>
         `<span class="pill">${esc(t)} <b data-t="${esc(t)}">×</b></span>`).join("")}</div>
@@ -436,9 +1058,9 @@ async function showMeta(id) {
     + `<button class="btn sm" data-c="0">Clear</button>`;
   $("#mCats").querySelectorAll("[data-c]").forEach(b =>
     b.onclick = () => categorize([id], +b.dataset.c));
-  $("#mRev").onclick = () => review([id], !f.reviewed);
   $("#mSim").onclick = () => showSimilar(id);
   $("#mTag").onclick = () => tagIds([id]);
+  $("#mHex").onclick = () => openHex(id);
   if ($("#mFull")) $("#mFull").onclick = () => openViewer(id);
   if ($("#mVstack")) $("#mVstack").onclick = () => {
     state.vstack = f.vstack_id; state.page = 1; load();
@@ -475,9 +1097,30 @@ async function showMeta(id) {
 }
 
 /* ---------- full-size viewer ---------- */
+/* view-only brightness/shadow lift — a display filter on the on-screen image;
+   it never touches the file, thumbnail, hashes or anything stored. */
+const _enh = { on: false, amt: 55 };
+try { Object.assign(_enh, JSON.parse(localStorage.getItem("gleapp.viewenh") || "{}")); } catch (e) {}
+
+function _applyEnh() {
+  const t = Math.max(0, Math.min(100, _enh.amt)) / 100;
+  const gamma = (1 - 0.72 * t).toFixed(3);   // <1 lifts shadows/midtones
+  const slope = (1 + 0.55 * t).toFixed(3);   // a little extra gain on top
+  ["vEnhG_R", "vEnhG_G", "vEnhG_B"].forEach(k => $("#" + k).setAttribute("exponent", gamma));
+  ["vEnhL_R", "vEnhL_G", "vEnhL_B"].forEach(k => $("#" + k).setAttribute("slope", slope));
+  $("#vEnhOn").checked = _enh.on;
+  $("#vEnhAmt").value = _enh.amt;
+  $("#vEnhVal").textContent = _enh.amt;
+  const img = $("#vWrap").querySelector("img");
+  if (img) img.classList.toggle("enh", _enh.on);
+  try { localStorage.setItem("gleapp.viewenh", JSON.stringify(_enh)); } catch (e) {}
+}
+
 function openViewer(id, ts) {
   const f = state.files.find(x => x.id === id) || {};
   const w = $("#vWrap");
+  const isImg = f.kind !== "video";
+  $("#vBar").classList.toggle("show", isImg);
   if (f.kind === "video") {
     w.innerHTML = `<video src="/media/${id}" controls autoplay></video>`;
     if (ts) w.querySelector("video").currentTime = ts;
@@ -489,10 +1132,63 @@ function openViewer(id, ts) {
          innerHTML:'This file can\\'t be displayed<br><small>GPU texture / proprietary format — try the original file</small>'}))">`;
   }
   $("#viewer").style.display = "block";
+  if (isImg) _applyEnh();
 }
 function closeViewer() { $("#viewer").style.display = "none"; $("#vWrap").innerHTML = ""; }
 $("#vClose").onclick = closeViewer;
 $("#viewer").addEventListener("click", e => { if (e.target.id === "viewer") closeViewer(); });
+$("#vEnhOn").onchange = () => { _enh.on = $("#vEnhOn").checked; _applyEnh(); };
+$("#vEnhAmt").oninput = () => { _enh.amt = +$("#vEnhAmt").value; _enh.on = true; _applyEnh(); };
+
+/* ---------- hex viewer ---------- */
+const HEX_PAGE = 2048;
+async function openHex(id, offset = 0) {
+  const d = await api(`/api/file/${id}/hex?offset=${Math.max(0, offset)}&length=${HEX_PAGE}`)
+    .catch(() => ({ error: true }));
+  if (!d || d.error || d.id === null) return toast(d && d.message || "Can't read this file");
+  d.fileId = id;
+  state.hex = d;
+  renderHex(d);
+  $("#hexDlg").style.display = "block";
+}
+function renderHex(d) {
+  $("#hexTitle").textContent = "Hex — " + d.name;
+  const last = Math.max(0, d.size - HEX_PAGE);
+  $("#hexNav").textContent =
+    `${d.offset.toLocaleString()}–${Math.min(d.size, d.offset + d.bytes.length / 2).toLocaleString()}`
+    + ` of ${d.size.toLocaleString()} bytes`;
+  $("#hexPrev").disabled = d.offset <= 0;
+  $("#hexNext").disabled = d.offset >= last;
+  const b = d.bytes, rows = [];
+  for (let i = 0; i < b.length; i += 32) {
+    const off = (d.offset + i / 2).toString(16).padStart(8, "0");
+    const pairs = (b.slice(i, i + 32).match(/../g) || []);
+    const hex = pairs.map((p, j) => (j === 8 ? " " : "") + p).join(" ").padEnd(48);
+    const asc = pairs.map(p => {
+      const c = parseInt(p, 16); return c >= 32 && c < 127 ? String.fromCharCode(c) : ".";
+    }).join("");
+    rows.push(`${off}  ${hex}  |${asc}|`);
+  }
+  $("#hexBody").textContent = rows.join("\n") || "(empty file)";
+  $("#hexBody").scrollTop = 0;
+}
+function hexStep(delta) {
+  if (!state.hex) return;
+  const last = Math.max(0, state.hex.size - HEX_PAGE);
+  openHex(state.hex.fileId, Math.min(last, Math.max(0, state.hex.offset + delta * HEX_PAGE)));
+}
+$("#hexPrev").onclick = () => hexStep(-1);
+$("#hexNext").onclick = () => hexStep(1);
+$("#hexClose").onclick = () => $("#hexDlg").style.display = "none";
+$("#hexDlg").addEventListener("click", e => {
+  if (e.target.id === "hexDlg") $("#hexDlg").style.display = "none";
+});
+$("#hexJump").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || !state.hex) return;
+  const v = $("#hexJump").value.trim().replace(/^0x/i, "");
+  let o = /^[0-9]+$/.test($("#hexJump").value.trim()) ? parseInt(v, 10) : parseInt(v, 16);
+  if (!isNaN(o)) openHex(state.hex.fileId, o);
+});
 
 /* ---------- context menu ---------- */
 function openCtx(x, y, ids) {
@@ -505,12 +1201,11 @@ function openCtx(x, y, ids) {
     <button data-a="similar">\u{1F50D} Find similar images</button>
     <button data-a="meta">ℹ Show details</button>
     <button data-a="full">⤢ View full size</button>
+    <button data-a="hex">\u{1F524} Hex view</button>
     <div class="sep"></div>
     ${catBtns}
     <button data-a="c0"><span class="dot" style="background:#3a3f4b"></span>Clear category${many} <span class="muted">0</span></button>
     <div class="sep"></div>
-    <button data-a="rev">✓ Mark reviewed${many}</button>
-    <button data-a="unrev">Mark not reviewed${many}</button>
     <button data-a="tag">\u{1F3F7} Add tag${many}</button>
     <div class="sep"></div>
     <button data-a="md5">#️⃣ Export MD5s${many}</button>
@@ -529,29 +1224,43 @@ $("#ctx").addEventListener("click", e => {
   if (a === "similar") return showSimilar(ids[0]);
   if (a === "meta") { toggleMeta(true); return setFocus(ids[0]); }
   if (a === "full") return openViewer(ids[0]);
+  if (a === "hex") return openHex(ids[0]);
   if (a === "mediafile") return window.open("/media/" + ids[0], "_blank");
   if (a === "md5") return exportMd5(ids);
   if (a[0] === "c") return categorize(ids, +a.slice(1));
-  if (a === "rev") return review(ids, true);
-  if (a === "unrev") return review(ids, false);
   if (a === "tag") return tagIds(ids);
 });
 
 /* ---------- category editor ---------- */
 function renderCatEd() {
   const rows = state.cats.filter(c => c.code !== 0).sort((a, b) => a.position - b.position);
-  $("#catRows").innerHTML = rows.map(c => `
+  const custom = rows.filter(c => !c.locked);
+  $("#catRows").innerHTML = rows.map(c => c.locked ? `
+    <div class="cat locked" data-code="${c.code}">
+      <span class="grip" title="Project VIC preset — locked">🔒</span>
+      <span class="dot" style="background:${c.color}"></span>
+      <span class="lockname">${esc(c.name)}</span>
+      <span class="muted vcode">VIC ${c.code}</span>
+    </div>` : `
     <div class="cat" draggable="true" data-code="${c.code}">
       <span class="grip">☰</span>
-      <span class="dot" style="background:${c.color}"></span>
+      <input type="color" value="${esc(c.color || "#8b93a3")}" title="Category color">
       <input type="text" value="${esc(c.name)}" placeholder="Category ${c.code} (unnamed)">
-      <button class="btn sm danger" data-del="${c.code}">Delete</button>
-    </div>`).join("") || `<div class="muted">No categories yet — add one below.</div>`;
+      <button class="btn sm" data-del="${c.code}">Delete</button>
+    </div>`).join("");
 
-  $("#catRows").querySelectorAll("input").forEach(inp => {
+  $("#catRows").querySelectorAll(".cat:not(.locked) input[type=text]").forEach(inp => {
     inp.addEventListener("change", async () => {
       const code = +inp.closest(".cat").dataset.code;
       await save("/api/categories/" + code, { name: inp.value.trim() }, "PATCH");
+      await refreshCats(); renderCatEd(); refreshAllTiles();
+      if (state.metaOpen && state.focus != null) showMeta(state.focus);
+    });
+  });
+  $("#catRows").querySelectorAll(".cat:not(.locked) input[type=color]").forEach(inp => {
+    inp.addEventListener("change", async () => {
+      const code = +inp.closest(".cat").dataset.code;
+      await save("/api/categories/" + code, { color: inp.value }, "PATCH");
       await refreshCats(); renderCatEd(); refreshAllTiles();
       if (state.metaOpen && state.focus != null) showMeta(state.focus);
     });
@@ -567,9 +1276,9 @@ function renderCatEd() {
     await refreshCats(); renderCatEd(); refreshAllTiles();
   });
 
-  // drag reorder
+  // drag reorder (the examiner's own categories only; presets are fixed)
   let dragCode = null;
-  $("#catRows").querySelectorAll(".cat").forEach(row => {
+  $("#catRows").querySelectorAll(".cat:not(.locked)").forEach(row => {
     row.addEventListener("dragstart", () => { dragCode = +row.dataset.code; row.classList.add("drag"); });
     row.addEventListener("dragend", () => row.classList.remove("drag"));
     row.addEventListener("dragover", e => e.preventDefault());
@@ -577,7 +1286,7 @@ function renderCatEd() {
       e.preventDefault();
       const target = +row.dataset.code;
       if (dragCode == null || dragCode === target) return;
-      const order = rows.map(c => c.code).filter(c => c !== dragCode);
+      const order = custom.map(c => c.code).filter(c => c !== dragCode);
       order.splice(order.indexOf(target), 0, dragCode);
       await save("/api/categories/reorder", { codes: order });
       await refreshCats(); renderCatEd();
@@ -592,16 +1301,16 @@ $("#catAdd").onclick = async () => {
   await refreshCats(); renderCatEd();
 };
 
-/* ---------- grid events ---------- */
+/* ---------- grid / list events ---------- */
 $("#grid").addEventListener("click", e => {
-  const t = e.target.closest(".tile"); if (!t) return;
+  const t = e.target.closest(".tile, .lvrow"); if (!t) return;
   toggleSel(+t.dataset.id, e.ctrlKey || e.metaKey, e.shiftKey);
 });
 $("#grid").addEventListener("dblclick", e => {
-  const t = e.target.closest(".tile"); if (t) openViewer(+t.dataset.id);
+  const t = e.target.closest(".tile, .lvrow"); if (t) openViewer(+t.dataset.id);
 });
 $("#grid").addEventListener("contextmenu", e => {
-  const t = e.target.closest(".tile"); if (!t) return;
+  const t = e.target.closest(".tile, .lvrow"); if (!t) return;
   e.preventDefault();
   const id = +t.dataset.id;
   const ids = state.sel.has(id) && state.sel.size > 1 ? [...state.sel] : [id];
@@ -626,14 +1335,20 @@ function moveFocus(delta) {
   }
   const id = ids[i];
   state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
-  document.querySelector(`.tile[data-id="${id}"]`)?.scrollIntoView({ block: "nearest" });
+  document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 document.addEventListener("keydown", e => {
   if (/input|textarea|select/i.test(e.target.tagName)) return;
   if (e.key === "Escape") {
     closeCtx(); closeViewer();
     $("#catEd").style.display = "none"; $("#reportDlg").style.display = "none";
+    $("#helpDlg").style.display = "none"; $("#hexDlg").style.display = "none";
+    $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
+    $("#stashWipeDlg").style.display = "none";
     return;
+  }
+  if (e.key === "?" && !$("#helpDlg").style.display.includes("block")) {
+    e.preventDefault(); openHelp();
   }
   if (e.key === "PageDown") { e.preventDefault(); return gotoPage(state.page + 1); }
   if (e.key === "PageUp") { e.preventDefault(); return gotoPage(state.page - 1); }
@@ -642,15 +1357,26 @@ document.addEventListener("keydown", e => {
     e.preventDefault();
     return gotoPage(Math.ceil(state.total / state.pageSize));
   }
-  if (e.key === "ArrowRight") { e.preventDefault(); return moveFocus(1); }
-  if (e.key === "ArrowLeft") { e.preventDefault(); return moveFocus(-1); }
+  if (state.view === "list") {
+    // list is a vertical stack: ↑/↓ move between rows, ←/→ scroll the columns
+    if (e.key === "ArrowDown") { e.preventDefault(); return moveFocus(1); }
+    if (e.key === "ArrowUp") { e.preventDefault(); return moveFocus(-1); }
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      $("#main").scrollBy({ left: e.key === "ArrowRight" ? 180 : -180, behavior: "smooth" });
+      return;
+    }
+  } else {
+    if (e.key === "ArrowRight") { e.preventDefault(); return moveFocus(1); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); return moveFocus(-1); }
+  }
   const ids = selIds();
   if (e.key >= "1" && e.key <= "9") {
     const c = activeCats()[+e.key - 1];
     if (c && ids.length) categorize(ids, c.code);
   } else if (e.key === "0" && ids.length) categorize(ids, 0);
-  else if (e.key.toLowerCase() === "r" && ids.length) review(ids, true);
   else if (e.key.toLowerCase() === "f" && ids.length) showSimilar(ids[0]);
+  else if (e.key.toLowerCase() === "h" && ids.length) openHex(ids[0]);
   else if (e.key.toLowerCase() === "i") toggleMeta();
   else if (e.key.toLowerCase() === "a") {
     e.preventDefault(); state.files.forEach(f => state.sel.add(f.id)); syncSel();
@@ -658,8 +1384,8 @@ document.addEventListener("keydown", e => {
 });
 
 /* ---------- filter wiring ---------- */
-["#fq", "#fkind", "#fcat", "#frev", "#fsrc", "#fclu", "#ffaces", "#fgps",
- "#fhit", "#ferr", "#fskin", "#fcollapse", "#fsort"].forEach(s => {
+["#fq", "#fkind", "#fcat", "#fsrc", "#fclu", "#fdup", "#ffaces", "#fgps",
+ "#fhit", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fsort"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
@@ -668,6 +1394,17 @@ $("#ftile").addEventListener("input", () => {
   document.documentElement.style.setProperty("--tile", $("#ftile").value + "px");
   try { localStorage.setItem("gleapp.tile", $("#ftile").value); } catch (e) {}
 });
+
+/* thumbnail Fit (whole image) vs Fill (crop to square) */
+function setImgFit(mode) {
+  const fit = mode !== "fill";
+  $("#grid").classList.toggle("fit", fit);
+  $("#vFit").classList.toggle("on", fit);
+  $("#vFill").classList.toggle("on", !fit);
+  try { localStorage.setItem("gleapp.imgfit", fit ? "fit" : "fill"); } catch (e) {}
+}
+$("#vFit").onclick = () => setImgFit("fit");
+$("#vFill").onclick = () => setImgFit("fill");
 $("#fpagesize").addEventListener("change", () => {
   state.pageSize = +$("#fpagesize").value || 200;
   try { localStorage.setItem("gleapp.pagesize", state.pageSize); } catch (e) {}
@@ -675,29 +1412,215 @@ $("#fpagesize").addEventListener("change", () => {
 });
 $("#simBack").onclick = () => { state.vstack = null; load(); };
 $("#btnMeta").onclick = () => toggleMeta();
+/* ---------- help / manual ---------- */
+let helpLoaded = false;
+async function openHelp() {
+  const dlg = $("#helpDlg");
+  dlg.style.display = "block";
+  if (!helpLoaded) {
+    try {
+      $("#helpDoc").innerHTML = await fetch("/static/help.html").then(r => r.text());
+      helpLoaded = true;
+    } catch (e) {
+      $("#helpDoc").innerHTML = "<p>Could not load the manual.</p>";
+    }
+  }
+  $("#helpDoc").scrollTop = 0;
+}
+$("#btnHelp").onclick = openHelp;
+$("#btnHelpLauncher").onclick = openHelp;      // same manual, from the launcher
+$("#helpClose").onclick = () => $("#helpDlg").style.display = "none";
+$("#helpDlg").addEventListener("click", e => {
+  if (e.target.id === "helpDlg") $("#helpDlg").style.display = "none";
+});
+
+/* ---------- live processing bar + auto-refresh ---------- */
+let liveTimer = null, liveTick = 0;
+function stopLive() {
+  if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
+}
+function showProc(txt, pct, cls) {
+  const bar = $("#procBar");
+  bar.style.display = "flex";
+  bar.className = cls || "";
+  $("#procTxt").textContent = txt;
+  $("#procFill").style.width = (pct == null ? 8 : pct) + "%";
+  $("#procPct").textContent = pct == null ? "" : pct + "%";
+}
+$("#procDismiss").onclick = () => { $("#procBar").style.display = "none"; };
+
+/* Poll the running job: keep the bottom bar current and, every few ticks,
+   pull newly-thumbnailed files into the grid without disturbing the view. */
+async function liveJob() {
+  stopLive();
+  let j;
+  try { j = await api("/api/job"); }
+  catch (e) { liveTimer = setTimeout(liveJob, 1500); return; }
+
+  if (j.stage === "error") {
+    showProc("Processing failed: " + (j.error || "unknown error"), 100, "err");
+    $("#procDismiss").style.display = "";
+    await load({ keepScroll: true }).catch(() => {});
+    return;
+  }
+  if (!j.running || j.stage === "done") {
+    showProc("Processing complete", 100);
+    $("#procPct").textContent = "";
+    await refreshContext().catch(() => {});
+    await load({ keepScroll: true }).catch(() => {});
+    setTimeout(() => { $("#procBar").style.display = "none"; }, 4000);
+    toast("Processing complete" + (j.stats && j.stats.processed
+      ? ` — ${j.stats.processed.toLocaleString()} files` : ""));
+    return;
+  }
+
+  const pct = j.total ? Math.round(100 * j.done / j.total) : null;
+  const label = j.stage === "ingest"
+    ? (j.message || "Registering files…")
+    : `${j.message || "Processing"} ${j.total ? `— ${j.done.toLocaleString()}/${j.total.toLocaleString()}` : ""}`;
+  showProc(label, pct);
+
+  liveTick++;
+  // refresh the grid every ~5s (every 5th poll) so thumbnails appear as they land
+  if (liveTick % 5 === 0) {
+    await load({ keepScroll: true }).catch(() => {});
+    if (liveTick % 15 === 0) await refreshContext().catch(() => {});
+  }
+  liveTimer = setTimeout(liveJob, 1000);
+}
+
+/* re-pull the bits of /api/context that change while a job runs */
+async function refreshContext() {
+  const c = await api("/api/context");
+  if (c.needs_case) return;
+  state.cats = c.categories || [];
+  try { await refreshCats(); } catch (e) {}
+  updateScreenInfo(c.screening);
+  updateKnownHash(c.known_hash);
+  const src = $("#fsrc"), have = new Set([...src.options].map(o => o.value));
+  (c.sources || []).forEach(s => {
+    if (!have.has(s)) src.insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`);
+  });
+  const clu = $("#fclu"), haveC = new Set([...clu.options].map(o => o.value));
+  (c.clusters || []).forEach(cl => {
+    if (!haveC.has(String(cl.id)))
+      clu.insertAdjacentHTML("beforeend", `<option value="${cl.id}">#${cl.id} (${cl.n})</option>`);
+  });
+  if (c.errors > 0) {
+    $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
+    $("#btnRetryErr").style.display = "";
+    $("#btnRetryErr").textContent = `Retry ${c.errors.toLocaleString()} failed files`;
+  }
+}
+
+$("#btnClearFilters").onclick = () => {
+  $("#fq").value = "";
+  $("#fkind").value = "";
+  $("#fcat").value = "any";
+  $("#fsrc").value = "";
+  $("#fclu").value = "";
+  $("#fdup").value = "";
+  ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
+  $("#fcollapse").checked = true;
+  $("#fskin").value = 0; $("#skinv").textContent = "0";
+  $("#fsort").value = "path";
+  state.vstack = null; state.similarOf = null;
+  $("#simBanner").style.display = "none";
+  // also drop the list-view per-column filters
+  state.colFilters = {};
+  $("#grid").querySelectorAll("tr.lvfilt input, tr.lvfilt select").forEach(el => {
+    el.value = ""; el.classList.remove("on");
+  });
+  updateClearFiltersBtn();
+  persistListPrefs();
+  reload();
+  toast("Filters cleared");
+};
+$("#btnRefresh").onclick = () => {
+  const n = state.total;
+  state.sel.clear();
+  load().then(() => {
+    const gone = n - state.total;
+    toast(gone > 0 ? `Refreshed — ${gone} file(s) dropped out of view` : "View refreshed");
+  });
+};
 
 $("#selbar").addEventListener("click", e => {
   const b = e.target.closest("[data-cat]");
   if (b) categorize([...state.sel], +b.dataset.cat);
 });
-$("#selRev").onclick = () => review([...state.sel], true);
 $("#selTag").onclick = () => tagIds([...state.sel]);
 $("#selClear").onclick = () => { state.sel.clear(); syncSel(); };
 /* ---------- export / report dialog ---------- */
+let rptLogo = null;   // data: URI of the chosen agency logo, or null
+
 async function openReportDlg() {
   const s = await api("/api/stats").catch(() => ({}));
   const cats = Object.entries(s.by_category || {})
     .filter(([k]) => +k !== 0).reduce((a, [, v]) => a + v, 0);
   $("#scAll").textContent = s.total ? `(${s.total.toLocaleString()})` : "";
   $("#scCat").textContent = `(${cats.toLocaleString()})`;
-  $("#scRev").textContent = `(${(s.reviewed || 0).toLocaleString()})`;
+  $("#scUncat").textContent = s.total
+    ? `(${((s.total || 0) - cats).toLocaleString()})` : "";
   $("#scSel").textContent = `(${state.sel.size})`;
   const selRadio = document.querySelector('input[name=rscope][value=selected]');
   selRadio.disabled = state.sel.size === 0;
   if (state.sel.size) selRadio.checked = true;
   $("#rfmtVic").style.display = $("#btnVic").style.display === "none" ? "none" : "block";
+
+  const p = await api("/api/report/prefs").catch(() => ({}));
+  const h = p.header || {};
+  $("#rhAgency").value = h.agency || "";
+  $("#rhCase").value = h.case_number || "";
+  $("#rhItem").value = h.item_number || "";
+  $("#rhExaminer").value = h.examiner || "";
+  $("#rhNotes").value = h.notes || "";
+  setRptLogo(h.logo || null);
+  $("#rhFull").checked = p.full_images !== false;
+  $("#rhVideo").checked = p.full_videos !== false;
+  const chosen = new Set(p.fields || ["name", "created_dt", "md5"]);
+  $("#rptFields").innerHTML = (p.field_options || []).map(o =>
+    `<label><input type="checkbox" class="rfld" value="${esc(o.key)}"${
+      chosen.has(o.key) ? " checked" : ""}> ${esc(o.label)}</label>`).join("");
+
+  const byCat = s.by_category || {};
+  $("#rscopeCats").innerHTML = [{ code: 0, name: "Uncategorized" }]
+    .concat(state.cats.filter(c => c.code !== 0).sort((a, b) => a.position - b.position))
+    .map(c => `<label><input type="checkbox" class="rscat" value="${c.code}">
+      ${esc(c.name || "Category " + c.code)}
+      <span class="muted">(${(byCat[c.code] || 0).toLocaleString()})</span></label>`).join("");
+  syncRptScope();
+  syncRptHtmlOpts();
   $("#reportDlg").style.display = "block";
 }
+function syncRptScope() {
+  const on = document.querySelector('input[name=rscope][value=categories]').checked;
+  $("#rscopeCats").style.display = on ? "" : "none";
+}
+function setRptLogo(uri) {
+  rptLogo = (typeof uri === "string" && uri.startsWith("data:image/")) ? uri : null;
+  const prev = $("#rhLogoPrev"), clr = $("#rhLogoClear");
+  prev.style.display = clr.style.display = rptLogo ? "" : "none";
+  if (rptLogo) prev.src = rptLogo;
+}
+function syncRptHtmlOpts() {
+  const on = $("#reportDlg").querySelector('.rfmt[value=html]').checked;
+  $("#rptHtmlOpts").style.display = on ? "" : "none";
+}
+$("#rhLogoFile").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (f.size > 3_000_000) return toast("Logo too large — pick an image under 3 MB");
+  const rd = new FileReader();
+  rd.onload = () => setRptLogo(rd.result);
+  rd.readAsDataURL(f);
+});
+$("#rhLogoClear").onclick = () => { $("#rhLogoFile").value = ""; setRptLogo(null); };
+$("#reportDlg").addEventListener("change", e => {
+  if (e.target.classList.contains("rfmt")) syncRptHtmlOpts();
+  if (e.target.name === "rscope") syncRptScope();
+});
+
 function closeReportDlg() { $("#reportDlg").style.display = "none"; }
 $("#btnReport").onclick = openReportDlg;
 $("#reportCancel").onclick = closeReportDlg;
@@ -710,6 +1633,21 @@ $("#reportGo").onclick = async () => {
   if (!fmt.length) return toast("Pick at least one format");
   const body = { format: fmt, scope };
   if (scope === "selected") body.ids = [...state.sel];
+  if (scope === "categories") {
+    body.categories = [...document.querySelectorAll(".rscat:checked")].map(c => +c.value);
+    if (!body.categories.length) return toast("Pick at least one category");
+  }
+  body.report_header = {
+    agency: $("#rhAgency").value.trim(),
+    case_number: $("#rhCase").value.trim(),
+    item_number: $("#rhItem").value.trim(),
+    examiner: $("#rhExaminer").value.trim(),
+    notes: $("#rhNotes").value.trim(),
+    logo: rptLogo || "",
+  };
+  body.fields = [...document.querySelectorAll(".rfld:checked")].map(c => c.value);
+  body.full_images = $("#rhFull").checked;
+  body.full_videos = $("#rhVideo").checked;
   closeReportDlg();
   const r = await api("/api/report", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -730,6 +1668,69 @@ async function exportMd5(ids) {
 }
 $("#selMd5").onclick = () => exportMd5([...state.sel]);
 
+/* ---------- display timezone ---------- */
+const OTHER_TZ = "__other__";
+function setupTz(c) {
+  state.tz = c.timezone || "UTC";
+  const sel = $("#ftz");
+  const opts = (c.timezone_options && c.timezone_options.length)
+    ? c.timezone_options.slice()
+    : [{ value: "UTC", label: "UTC" }];
+  let device = "";
+  try { device = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) {}
+  if (device && device !== "UTC" && !opts.some(o => o.value === device))
+    opts.push({ value: device, label: device + " (this device)" });
+  if (state.tz !== "UTC" && !opts.some(o => o.value === state.tz))
+    opts.push({ value: state.tz, label: state.tz });
+  sel.innerHTML = opts.map(o =>
+    `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("")
+    + `<option value="${OTHER_TZ}">Other (type IANA name)…</option>`;
+  sel.value = state.tz;
+}
+async function applyTz(tz) {
+  const r = await api("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ timezone: tz })
+  });
+  if (r.error) { toast(r.message || "Unknown timezone"); $("#ftz").value = state.tz; return; }
+  state.tz = r.timezone;
+  _tzFmtFor = null;                       // force the Intl formatter to rebuild
+  if (![...$("#ftz").options].some(o => o.value === state.tz)) {
+    $("#ftz").insertAdjacentHTML("beforeend",
+      `<option value="${esc(state.tz)}">${esc(state.tz)}</option>`);
+  }
+  $("#ftz").value = state.tz;
+  toast("Times shown in " + (r.label || state.tz));
+  await load({ keepScroll: true });
+  if (state.metaOpen && state.focus != null) showMeta(state.focus);
+}
+$("#ftz").addEventListener("change", () => {
+  const v = $("#ftz").value;
+  if (v === OTHER_TZ) {
+    const name = prompt("IANA timezone name (e.g. Europe/Berlin, America/Bogota):", state.tz);
+    $("#ftz").value = state.tz;
+    if (name) applyTz(name.trim());
+    return;
+  }
+  applyTz(v);
+});
+
+/* ---------- known-hash lists ---------- */
+function updateKnownHash(kh) {
+  if (!kh) return;
+  $("#goodCount").textContent = kh.known_good
+    ? `(${kh.known_good.toLocaleString()})` : "";
+  const store = (kh.global_entries || 0).toLocaleString();
+  const names = (kh.global_sets || []).map(s => s.name).join(", ");
+  $("#rehashInfo").textContent = kh.global_entries
+    ? `Global store: ${store} hashes${names ? " — " + names : ""}`
+    : "No global hash sets imported. Use: gleapp hashset --global <file>";
+  const st = kh.stash;
+  $("#stashInfo").textContent = st && st.total
+    ? `🔒 Hash stash: ${st.total.toLocaleString()} MD5(s) — click to manage`
+    : "🔒 Hash stash: empty — click to add your category 1–3 hashes";
+}
+
 /* ---------- face / skin screening ---------- */
 function updateScreenInfo(scr) {
   if (!scr) return;
@@ -748,13 +1749,32 @@ function updateScreenInfo(scr) {
     btn.textContent = "Re-run screening";
   }
 }
-function pollJobInline(label, done) {
+/* Poll the shared background job and mirror its progress into a
+   section-local status line + mini bar, so each action reports where it
+   lives: "Retry failed files" under Other, "Re-scan for duplicates" under
+   Display, screening under Screening. */
+function trackJob(infoSel, barSel, label, done) {
+  const info = $(infoSel);
+  const bar = barSel ? $(barSel) : null;
+  if (bar) { bar.style.display = "block"; bar.querySelector("i").style.width = "0"; }
+  const finish = (ok, j) => {
+    if (bar) bar.style.display = "none";
+    if (done) done(ok, j || {});
+  };
   const poll = async () => {
-    const j = await api("/api/job");
-    if (j.stage === "error") { toast(label + " error: " + j.error); return done && done(false); }
-    if (j.stage === "done" || !j.running) return done && done(true, j);
-    $("#screenInfo").textContent = j.total
-      ? `${j.message || label} ${j.done}/${j.total}` : (j.message || label);
+    let j;
+    try { j = await api("/api/job"); }
+    catch (e) { return setTimeout(poll, 900); }
+    if (j.stage === "error") {
+      info.textContent = `${label} failed: ${j.error || "unknown error"}`;
+      return finish(false, j);
+    }
+    if (j.stage === "done" || !j.running) return finish(true, j);
+    const pct = j.total ? Math.round(100 * j.done / j.total) : 0;
+    info.textContent = j.total
+      ? `${j.message || label} — ${j.done.toLocaleString()}/${j.total.toLocaleString()} (${pct}%)`
+      : `${j.message || label}…`;
+    if (bar) bar.querySelector("i").style.width = (j.total ? pct : 12) + "%";
     setTimeout(poll, 900);
   };
   poll();
@@ -764,31 +1784,43 @@ $("#btnRetryErr").onclick = async () => {
   if (r.error) return toast(r.message || "Could not start");
   $("#btnRetryErr").disabled = true;
   toast(`Retrying ${r.count} failed files…`);
-  pollJobInline("Retrying failed files", (ok, j) => {
+  trackJob("#retryInfo", "#retryProg", "Retrying failed files", (ok, j) => {
     $("#btnRetryErr").disabled = false;
     if (ok) {
-      toast(`Recovered ${j.stats?.recovered ?? 0} of ${r.count} files`);
+      const fixed = j.stats?.recovered ?? 0;
+      $("#retryInfo").textContent = `Recovered ${fixed} of ${r.count} — reloading…`;
+      toast(`Recovered ${fixed} of ${r.count} files`);
       location.reload();
     }
+  });
+};
+$("#btnRehash").onclick = async () => {
+  const r = await api("/api/rehash", { method: "POST" });
+  if (r.error) return toast(r.message || "Could not start");
+  $("#btnRehash").disabled = true;
+  trackJob("#rehashInfo", "#rehashProg", "Re-checking known hashes", async (ok, j) => {
+    $("#btnRehash").disabled = false;
+    if (!ok) return;
+    const hits = j.stats?.hashset_hits ?? 0;
+    $("#rehashInfo").textContent = `${hits.toLocaleString()} known-hash hit(s)`;
+    toast(`Known-hash re-check done: ${hits.toLocaleString()} hit(s)`);
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+    load();
   });
 };
 $("#btnRedup").onclick = async () => {
   const r = await api("/api/redup", { method: "POST" });
   if (r.error) return toast(r.message || "Could not start");
   $("#btnRedup").disabled = true;
-  const poll = async () => {
-    const j = await api("/api/job");
-    if (j.stage === "error") { toast("Re-scan error: " + j.error); $("#btnRedup").disabled = false; return; }
-    if (j.stage === "done" || !j.running) {
-      $("#btnRedup").disabled = false;
-      toast(`Re-scan done: ${j.stats?.visual_stacks ?? 0} visual stacks`);
+  trackJob("#redupInfo", "#redupProg", "Re-scanning for duplicates", (ok, j) => {
+    $("#btnRedup").disabled = false;
+    if (ok) {
+      const vs = j.stats?.visual_stacks ?? 0, cl = j.stats?.clusters ?? 0;
+      $("#redupInfo").textContent = `${vs} visual stacks · ${cl} near-dup clusters`;
+      toast(`Re-scan done: ${vs} visual stacks`);
       load();
-      return;
     }
-    $("#screenInfo").textContent = j.message || "working…";
-    setTimeout(poll, 800);
-  };
-  poll();
+  });
 };
 $("#btnScreen").onclick = async () => {
   if (!confirm("Run face + skin-tone screening over every thumbnail?\n"
@@ -796,36 +1828,193 @@ $("#btnScreen").onclick = async () => {
   const r = await api("/api/screen", { method: "POST" });
   if (r.error) return toast(r.message || "Could not start screening");
   $("#btnScreen").disabled = true;
-  const poll = async () => {
-    const j = await api("/api/job");
-    if (j.stage === "error") {
-      $("#screenInfo").textContent = "Screening error: " + (j.error || "");
-      $("#btnScreen").disabled = false; return;
-    }
-    if (j.stage === "done" || !j.running) {
-      $("#btnScreen").disabled = false;
+  trackJob("#screenInfo", "#screenProg", "Screening", async (ok) => {
+    $("#btnScreen").disabled = false;
+    if (!ok) return;                     // leave the failure text in place
+    try {
       const c = await api("/api/context");
       updateScreenInfo(c.screening);
-      toast("Screening complete");
-      load();
-      return;
-    }
-    const pct = j.total ? Math.round(100 * j.done / j.total) : 0;
-    $("#screenInfo").textContent = `Screening… ${j.done}/${j.total} (${pct}%)`;
-    setTimeout(poll, 1000);
-  };
-  poll();
+    } catch (e) {}
+    toast("Screening complete");
+    load();
+  });
 };
-$("#btnSnapshot").onclick = async () => {
-  const label = prompt("Optional label for this snapshot:", "") ?? "";
-  if (label === null) return;
-  const r = await save("/api/snapshot", { label: label.trim() || null });
-  if (!r.error) toast("Snapshot saved: " + r.name);
+/* ---------- snapshots ---------- */
+const _snapBytes = n => {
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"]; let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(1) + " " + u[i];
 };
+async function refreshSnapList() {
+  const box = $("#snapList");
+  box.textContent = "Loading…";
+  const rows = await api("/api/snapshots").catch(() => []);
+  if (!rows.length) { box.textContent = "No snapshots yet."; return; }
+  box.innerHTML = rows.map(s => {
+    const when = fmtEpoch(s.created);
+    const tag = s.auto ? `<span class="tagauto">auto</span>`
+      : s.label ? `<span class="tagauto" style="background:#2980b9;border-color:#2980b9;color:#fff">${esc(s.label)}</span>`
+      : `<span class="tagauto">manual</span>`;
+    return `<div class="snaprow">
+      <div><b>${when}</b> ${tag}<br><small>${esc(s.name)} · ${_snapBytes(s.size)}</small></div>
+      <button class="btn" data-snap="${esc(s.name)}">Restore</button>
+    </div>`;
+  }).join("");
+  box.querySelectorAll("button[data-snap]").forEach(b => {
+    b.onclick = () => restoreSnap(b.dataset.snap);
+  });
+}
+async function restoreSnap(name) {
+  if (!confirm(
+    "Restore this snapshot?\n\n" + name + "\n\n" +
+    "The current state is saved as a \"pre-restore\" snapshot first, so this is undoable. " +
+    "The case will reload.")) return;
+  const r = await save("/api/snapshot/restore", { name });
+  if (r.error) return toast("Restore failed: " + (r.message || "unknown error"));
+  toast("Snapshot restored — reloading");
+  setTimeout(() => location.reload(), 600);
+}
+function openSnapDlg() {
+  $("#snapLabel").value = "";
+  $("#snapDlg").style.display = "block";
+  refreshSnapList();
+}
+$("#snapSave").onclick = async () => {
+  const label = $("#snapLabel").value.trim();
+  const r = await save("/api/snapshot", { label: label || null });
+  if (r.error) return toast("Snapshot failed");
+  $("#snapLabel").value = "";
+  toast("Snapshot saved: " + r.name);
+  refreshSnapList();
+};
+$("#snapClose").onclick = () => $("#snapDlg").style.display = "none";
+$("#snapDlg").addEventListener("click", e => {
+  if (e.target.id === "snapDlg") $("#snapDlg").style.display = "none";
+});
+$("#btnSnapshot").onclick = openSnapDlg;
+
+/* ---------- local hash stash ---------- */
+const STASH_CAT_NAMES = { 1: "CAM", 2: "Child Exploitative", 3: "CGI / Animation" };
+function stashRows(byCat, catList) {
+  const cats = (catList || [1, 2, 3]).slice().sort();
+  let total = 0, html = "";
+  for (const c of cats) {
+    const n = byCat[c] || 0; total += n;
+    html += `<div><span class="dot" style="background:${catColor(c)}"></span>`
+      + `${esc(catName(c) || STASH_CAT_NAMES[c] || "Category " + c)}</div>`
+      + `<div class="n">${n.toLocaleString()}</div>`;
+  }
+  html += `<div class="tot">Total</div><div class="n tot">${total.toLocaleString()}</div>`;
+  return html;
+}
+let stashLastTotal = 0;
+async function refreshStashDlg() {
+  $("#stashCase").innerHTML = "<div class='muted'>Loading…</div><div></div>";
+  const d = await api("/api/stash").catch(() => null);
+  if (!d) { $("#stashCase").innerHTML = "<div>Couldn't read the stash.</div><div></div>"; return; }
+  stashLastTotal = d.stash.total || 0;
+  $("#stashCase").innerHTML = stashRows(d.case.by_category, d.case.categories);
+  $("#stashTotal").innerHTML = stashRows(d.stash.by_category, d.case.categories);
+  $("#stashAdd").disabled = !d.case.eligible;
+  $("#stashAdd").textContent = d.case.eligible
+    ? `Add this case's ${d.case.eligible.toLocaleString()} hash(es) to the stash`
+    : "No category 1–3 files in this case yet";
+  $("#stashClear").disabled = !d.stash.total;
+  $("#stashUpdated").textContent = d.stash.updated
+    ? "Stash last updated " + fmtEpoch(d.stash.updated)
+    : "The stash is empty.";
+  $("#stashPath").textContent = d.stash.path || "";
+  $("#stashShared").textContent = d.stash.shared ? " — shared location" : "";
+  $("#stashResetPath").style.display = d.stash.shared ? "" : "none";
+}
+async function stashRefreshAndSidebar() {
+  await refreshStashDlg();
+  try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+}
+function openStashDlg() { $("#stashDlg").style.display = "block"; refreshStashDlg(); }
+$("#btnStash").onclick = openStashDlg;
+$("#stashInfo").onclick = openStashDlg;
+$("#stashClose").onclick = () => $("#stashDlg").style.display = "none";
+$("#stashDlg").addEventListener("click", e => {
+  if (e.target.id === "stashDlg") $("#stashDlg").style.display = "none";
+});
+$("#stashAdd").onclick = async () => {
+  $("#stashAdd").disabled = true;
+  const r = await api("/api/stash/add", { method: "POST" });
+  if (r.error) { toast(r.message || "Could not update the stash"); return refreshStashDlg(); }
+  toast(`Stash: +${r.added.toLocaleString()} new (${r.submitted.toLocaleString()} submitted, `
+    + `${r.total.toLocaleString()} total)`);
+  stashRefreshAndSidebar();
+};
+$("#stashClear").onclick = () => {
+  $("#wipeCount").textContent = stashLastTotal.toLocaleString();
+  $("#wipeConfirm").checked = false;
+  $("#wipeGo").disabled = true;
+  $("#stashWipeDlg").style.display = "block";
+};
+$("#wipeConfirm").onchange = () => { $("#wipeGo").disabled = !$("#wipeConfirm").checked; };
+$("#wipeCancel").onclick = () => { $("#stashWipeDlg").style.display = "none"; };
+$("#stashWipeDlg").addEventListener("click", e => {
+  if (e.target.id === "stashWipeDlg") $("#stashWipeDlg").style.display = "none";
+});
+$("#wipeGo").onclick = async () => {
+  if (!$("#wipeConfirm").checked) return;
+  $("#wipeGo").disabled = true;
+  const r = await api("/api/stash/clear", { method: "POST" });
+  $("#stashWipeDlg").style.display = "none";
+  if (r.error) return toast(r.message || "Clear failed");
+  toast(`Stash cleared — ${(r.removed || 0).toLocaleString()} entries removed`);
+  stashRefreshAndSidebar();
+};
+async function stashExport(format) {
+  const r = await api("/api/stash/export", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ format })
+  });
+  if (r.error) return toast(r.message || "Export failed");
+  toast(`Stash written to ${r.written}`);
+}
+$("#stashExportDb").onclick = () => stashExport("db");
+$("#stashExportCsv").onclick = () => stashExport("csv");
+$("#stashMerge").onclick = async () => {
+  const p = await pick("file", "Path to a colleague's stash file (.gleapp or .csv):");
+  if (!p) return;
+  const r = await api("/api/stash/merge", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: p })
+  });
+  if (r.error) return toast(r.message || "Merge failed");
+  toast(`Merged — +${r.added.toLocaleString()} new, ${r.total.toLocaleString()} total`);
+  stashRefreshAndSidebar();
+};
+async function stashSetPath(p) {
+  const r = await api("/api/stash/path", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: p || "" })
+  });
+  if (r.error) return toast(r.message || "Could not switch stash file");
+  toast(p ? "Now using the shared stash file" : "Back to your own stash file");
+  stashRefreshAndSidebar();
+}
+$("#stashSetPath").onclick = async () => {
+  const p = await pick("file", "Path to the shared stash file (e.g. on a network drive):");
+  if (p) stashSetPath(p);
+};
+$("#stashResetPath").onclick = () => {
+  if (confirm("Switch back to your own per-user stash file?\n\n"
+    + "The shared file is left untouched; your local stash is used again "
+    + "(it may be empty or out of date — Merge the shared file in if you want).")) {
+    stashSetPath("");
+  }
+};
+
 $("#btnClose").onclick = async () => {
+  if (liveTimer) return toast("Processing is still running — let it finish first");
   if (pendingNoteFlush) { try { await pendingNoteFlush(); } catch (e) {} }
   setSaveState("saving");
-  await api("/api/case/close", { method: "POST" });
+  const r = await api("/api/case/close", { method: "POST" });
+  if (r && r.error) { setSaveState("saved"); return toast(r.message || "Could not close the case"); }
   location.reload();   // boot() sees no case -> shows the launcher
 };
 $("#btnVic").onclick = async () => {
@@ -848,7 +2037,7 @@ function fmtAgo(ts) {
   if (s < 86400) return Math.round(s / 3600) + "h ago";
   return Math.round(s / 86400) + "d ago";
 }
-async function pick(kind) {
+async function pick(kind, label) {
   if (Lr.native) {
     try {
       const r = await api("/api/pick", {
@@ -861,8 +2050,8 @@ async function pick(kind) {
       toast("File dialog unavailable — type the path instead");
     }
   }
-  return prompt(kind === "folder"
-    ? "Folder path:" : "Path to .json job file:") || null;
+  return prompt(label || (kind === "folder"
+    ? "Folder path:" : "Path to .json job file:")) || null;
 }
 function renderSources() {
   $("#srcList").innerHTML = Lr.sources.map((s, i) =>
@@ -903,21 +2092,21 @@ async function pollJob() {
   const pct = j.total ? Math.round(100 * j.done / j.total) : (j.running ? 5 : 0);
   $("#jobProg").style.display = "block";
   $("#jobProg").querySelector("i").style.width = pct + "%";
-  $("#jobMsg").textContent =
-    (j.stage === "process" && (!j.total || j.done < j.total))
-      ? `Processing ${j.done}/${j.total} (${pct}%)`
-      : (j.message || j.stage);
+  $("#jobMsg").textContent = j.message || j.stage;
   if (j.stage === "error") {
     $("#jobMsg").textContent = "Error: " + (j.error || "processing failed");
     $("#createGo").disabled = false;
     return;
   }
-  if (j.stage === "done") {
-    $("#jobMsg").textContent = "Done — opening case…";
-    setTimeout(() => location.reload(), 600);
+  // Open the gallery as soon as files exist — the user reviews already-processed
+  // files while the rest process, with a live progress bar at the bottom.
+  if (j.stage === "process" || j.stage === "done" ||
+      (j.stage === "ingest" && j.done > 0)) {
+    $("#jobMsg").textContent = "Opening case…";
+    setTimeout(() => location.reload(), 400);
     return;
   }
-  setTimeout(pollJob, 500);   // idle / starting / ingest / process
+  setTimeout(pollJob, 500);   // idle / starting / early ingest
 }
 $("#openBrowse").onclick = async () => { const p = await pick("folder"); if (p) $("#openPath").value = p; };
 $("#openGo").onclick = () => $("#openPath").value && openCase($("#openPath").value.trim());
@@ -972,24 +2161,29 @@ $("#createGo").onclick = async () => {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  const c = await api("/api/context");
+  let c;
+  try { c = await api("/api/context"); }
+  catch (e) { c = {}; }
   if (c.needs_case) { showLauncher(c); return; }
   $("#launcher").style.display = "none";
   $("#main").style.display = "";
   $("#caseName").textContent = "GLEAPP — " + (c.case || "case");
-  $("#examiner").textContent = c.examiner;
+  $("#examiner").textContent = c.examiner || "";
   document.title = "GLEAPP — " + (c.case || "");
   if (c.vic) $("#btnVic").style.display = "";
   updateScreenInfo(c.screening);
+  updateKnownHash(c.known_hash);
   if (c.errors > 0) {
     $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
     $("#btnRetryErr").style.display = "";
     $("#btnRetryErr").textContent = `Retry ${c.errors.toLocaleString()} failed files`;
   }
   state.cats = c.categories || [];
-  await refreshCats();
-  c.sources.forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
-  c.clusters.forEach(cl => $("#fclu").insertAdjacentHTML("beforeend",
+  state.sources = c.sources || [];
+  setupTz(c);
+  try { await refreshCats(); } catch (e) {}
+  (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+  (c.clusters || []).forEach(cl => $("#fclu").insertAdjacentHTML("beforeend",
     `<option value="${cl.id}">#${cl.id} (${cl.n})</option>`));
   try {
     if (localStorage.getItem("gleapp.meta") === "1") toggleMeta(true);
@@ -998,8 +2192,14 @@ $("#createGo").onclick = async () => {
     const tl = localStorage.getItem("gleapp.tile");
     if (tl) { $("#ftile").value = tl;
       document.documentElement.style.setProperty("--tile", tl + "px"); }
+    setImgFit(localStorage.getItem("gleapp.imgfit") || "fit");
   } catch (e) {}
+  restoreListPrefs();
   await load();
+
+  // a processing job is still running (we entered the gallery early) — show the
+  // live bottom bar and refresh the grid as thumbnails land
+  if (c.job && c.job.running) { liveTick = 0; liveJob(); }
 
   // reflect background auto-snapshots in the header tooltip
   let seenBackup = 0;

@@ -118,7 +118,13 @@ def import_hashset(
 
 
 def match_file(db: CaseDB, row, *, phash_threshold: int = 6) -> dict | None:
-    """Return {'name','kind','category','via'} for the first hit, else None."""
+    """Return {'name','kind','category','via'} for the first hit, else None.
+
+    Checks the case's own hash sets first, then the shared global store
+    (``gleapp.hashstore`` - where big reference sets like the NSRL RDS live).
+    """
+    from . import hashstore, stash
+
     for algo in ("sha256", "sha1", "md5"):
         val = row[algo] if algo in row.keys() else None
         if not val:
@@ -127,15 +133,25 @@ def match_file(db: CaseDB, row, *, phash_threshold: int = 6) -> dict | None:
         if hit:
             return {"name": hit["name"], "kind": hit["kind"],
                     "category": hit["category"], "via": algo}
+        if algo == "md5":
+            # the examiner's own stash takes precedence over reference sets
+            st = stash.lookup(val)
+            if st:
+                return {"name": stash.STASH_NAME, "kind": "known",
+                        "category": st["category"], "via": "md5-stash"}
+        g = hashstore.lookup(algo, val)
+        if g:
+            return g
 
     ph = row["phash"] if "phash" in row.keys() else None
     if ph:
         best = None
-        for e in db.conn.execute(
+        entries = list(db.conn.execute(
             "SELECT e.value v, e.category c, hs.name n, hs.kind k "
             "FROM hashset_entries e JOIN hashsets hs ON hs.id=e.hashset_id "
             "WHERE e.algo='phash'"
-        ):
+        )) + list(hashstore.iter_phash())
+        for e in entries:
             d = hamming(ph, e["v"])
             if d <= phash_threshold and (best is None or d < best[0]):
                 best = (d, {"name": e["n"], "kind": e["k"],

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -31,8 +31,9 @@ CREATE TABLE IF NOT EXISTS files (
     kind          TEXT,                   -- 'image' | 'video' | 'other'
     ext           TEXT,
     size          INTEGER,
-    mtime         REAL,                   -- filesystem modified time (epoch)
-    ctime         REAL,
+    mtime         REAL,                   -- filesystem modified / "written" time (epoch)
+    ctime         REAL,                   -- filesystem created time (epoch)
+    atime         REAL,                   -- filesystem last-accessed time (epoch)
     md5           TEXT,
     sha1          TEXT,
     sha256        TEXT,
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS files (
     width         INTEGER,
     height        INTEGER,
     duration      REAL,                   -- seconds, video only
-    created_dt    TEXT,                   -- best-guess capture time (ISO 8601)
+    created_dt    TEXT,                   -- capture time from EXIF/embedded metadata only (ISO 8601)
     gps_lat       REAL,
     gps_lon       REAL,
     camera        TEXT,
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS files (
     notes         TEXT,
     hashset_hit   TEXT,                   -- name of known-hash set matched, if any
     hashset_cat   INTEGER,               -- category asserted by that hash set
+    hashset_kind  TEXT,                   -- 'known' | 'known-good' | 'other'
     stack_id      INTEGER,                -- exact-duplicate stack (== files.id of stack head)
     vstack_id     INTEGER,                -- visual stack: "same picture to the eye" (== head id)
     cluster_id    INTEGER,                -- looser near-duplicate cluster id
@@ -121,15 +123,17 @@ CREATE TABLE IF NOT EXISTS audit (
     detail  TEXT
 );
 
--- Examiner-defined categories.  Code 0 is always "Uncategorized".
--- Categories start blank (name = '') and the examiner names them.
+-- Categories.  Codes 0-5 are locked Project VIC 2.0 (US) presets seeded in
+-- every case (see VIC_PRESETS); the examiner may add their own (code 6+) but
+-- cannot rename, recolor, reorder, hide or delete the presets.
 CREATE TABLE IF NOT EXISTS categories (
     code     INTEGER PRIMARY KEY,
     name     TEXT NOT NULL DEFAULT '',
     color    TEXT NOT NULL DEFAULT '#888888',
     notable  INTEGER NOT NULL DEFAULT 1,   -- treat as evidential in reports
     position INTEGER NOT NULL DEFAULT 0,   -- display order + 1-9 shortcut order
-    active   INTEGER NOT NULL DEFAULT 1    -- 0 = hidden from picker, label kept
+    active   INTEGER NOT NULL DEFAULT 1,   -- 0 = hidden from picker, label kept
+    locked   INTEGER NOT NULL DEFAULT 0    -- 1 = Project VIC preset, not editable
 );
 """
 
@@ -140,6 +144,18 @@ CATEGORY_PALETTE = [
 ]
 UNCATEGORIZED = {"code": 0, "name": "Uncategorized", "color": "#8b93a3",
                  "notable": 0, "position": 0, "active": 1}
+
+# Project VIC 2.0 (US) preset categories, locked in every case.
+# (code, name, color, notable)
+NONPERTINENT_CATEGORY = 5   # a known-good (NSRL) hash hit auto-lands here
+VIC_PRESETS = [
+    (0, "Uncategorized",                       "#8b93a3", 0),
+    (1, "CAM (Child Abuse Material)",           "#c0392b", 1),
+    (2, "Child Exploitative / Age Difficult",   "#f1c40f", 1),
+    (3, "CGI / Animation (Child Exploitative)", "#8e44ad", 1),
+    (4, "Comparison Images (Non-pertinent)",    "#2980b9", 0),
+    (5, "Non-pertinent",                        "#8bc34a", 0),
+]
 
 
 class CaseDB:
@@ -199,29 +215,48 @@ class CaseDB:
         for col, decl in (
             ("media_id", "INTEGER"), ("orig_name", "TEXT"),
             ("orig_path", "TEXT"), ("mime", "TEXT"), ("vic_flags", "TEXT"),
-            ("vstack_id", "INTEGER"),
+            ("vstack_id", "INTEGER"), ("hashset_kind", "TEXT"),
+            ("atime", "REAL"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
         # indexes on migrated columns - only creatable once the column exists
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_vstack ON files(vstack_id)")
+        cat_cols = {r["name"] for r in self.conn.execute(
+            "PRAGMA table_info(categories)")}
+        if "locked" not in cat_cols:
+            self.conn.execute(
+                "ALTER TABLE categories ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
 
     def _seed_categories(self) -> None:
-        """Ensure code 0 exists and any category code already used by a file has
-        at least a placeholder row (so pre-existing cases still render)."""
+        """Seed the locked Project VIC presets (codes 0-5) and give any category
+        code already used by a file at least a placeholder row.
+
+        Non-destructive for older cases: a preset slot the examiner has already
+        named is left alone as an unlocked custom category; only empty slots and
+        missing rows are filled and locked.
+        """
         with self.lock:
-            self.conn.execute(
-                "INSERT OR IGNORE INTO categories(code, name, color, notable, "
-                "position, active) VALUES(0, 'Uncategorized', ?, 0, 0, 1)",
-                (UNCATEGORIZED["color"],),
-            )
-            # tidy the old spelling on cases created before this change
-            self.conn.execute(
-                "UPDATE categories SET name='Uncategorized' "
-                "WHERE code=0 AND name='Uncategorised'"
-            )
+            for code, name, color, notable in VIC_PRESETS:
+                row = self.conn.execute(
+                    "SELECT name, locked FROM categories WHERE code=?", (code,)
+                ).fetchone()
+                if row is None:
+                    self.conn.execute(
+                        "INSERT INTO categories(code, name, color, notable, "
+                        "position, active, locked) VALUES(?,?,?,?,?,1,1)",
+                        (code, name, color, notable, code),
+                    )
+                elif row["locked"] or code == 0 or not (row["name"] or "").strip():
+                    # keep locked presets in sync with the canonical VIC scheme
+                    # (names/colors); an unnamed slot in an old case adopts it too
+                    self.conn.execute(
+                        "UPDATE categories SET name=?, color=?, notable=?, "
+                        "position=?, active=1, locked=1 WHERE code=?",
+                        (name, color, notable, code, code),
+                    )
             used = [
                 r["category"] for r in self.conn.execute(
                     "SELECT DISTINCT category FROM files "
@@ -282,6 +317,10 @@ class CaseDB:
             return code
 
     def update_category(self, code: int, **fields: Any) -> None:
+        row = self.get_category(code)
+        if row is not None and row["locked"]:
+            raise ValueError(f"category {code} ({row['name']}) is a locked "
+                             "Project VIC preset and cannot be changed")
         allowed = {"name", "color", "notable", "position", "active"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields or code == 0 and "active" in fields:
@@ -302,6 +341,10 @@ class CaseDB:
         If ``reassign`` is True, move those files to Uncategorized first."""
         if code == 0:
             return
+        row = self.get_category(code)
+        if row is not None and row["locked"]:
+            raise ValueError(f"category {code} ({row['name']}) is a locked "
+                             "Project VIC preset and cannot be deleted")
         with self.lock:
             if reassign:
                 self.conn.execute(
@@ -320,8 +363,16 @@ class CaseDB:
             self.conn.commit()
 
     def reorder_categories(self, codes: list[int]) -> None:
+        """Reposition the examiner's own categories.  Locked VIC presets keep
+        their fixed positions (0-5) and are ignored if passed in."""
         with self.lock:
-            for pos, code in enumerate(codes, start=1):
+            locked = {r["code"] for r in self.conn.execute(
+                "SELECT code FROM categories WHERE locked=1")}
+            pos = len(VIC_PRESETS)
+            for code in codes:
+                if code in locked:
+                    continue
+                pos += 1
                 self.conn.execute(
                     "UPDATE categories SET position=? WHERE code=?", (pos, code)
                 )
@@ -495,6 +546,9 @@ class CaseDB:
         hits = c.execute(
             "SELECT COUNT(*) n FROM files WHERE hashset_hit IS NOT NULL"
         ).fetchone()["n"]
+        known_good = c.execute(
+            "SELECT COUNT(*) n FROM files WHERE hashset_kind = 'known-good'"
+        ).fetchone()["n"]
         stacks = c.execute(
             "SELECT COUNT(DISTINCT stack_id) n FROM files WHERE stack_id IS NOT NULL"
         ).fetchone()["n"]
@@ -518,6 +572,7 @@ class CaseDB:
             "by_category": by_cat,
             "reviewed": reviewed,
             "hashset_hits": hits,
+            "known_good": known_good,
             "stacks": stacks,
             "visual_stacks": vstacks,
             "clusters": clusters,

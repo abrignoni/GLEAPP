@@ -11,7 +11,9 @@ The app can start with **no case open**: ``/api/context`` then reports
 
 from __future__ import annotations
 
+import json
 import mimetypes
+import sqlite3
 import threading
 import time
 import traceback
@@ -26,12 +28,71 @@ from ..pipeline import ingest_sources, process
 from ..similar import find_similar
 
 FIELDS = (
-    "id, rel_path, source, kind, ext, size, created_dt, md5, sha1, sha256, "
+    "id, path, rel_path, source, kind, ext, size, mtime, ctime, atime, ingested_at, "
+    "created_dt, md5, sha1, sha256, "
     "phash, width, height, duration, gps_lat, gps_lon, camera, faces, "
     "skin_ratio, category, triage, reviewed, reviewed_by, reviewed_at, notes, "
-    "hashset_hit, hashset_cat, stack_id, vstack_id, cluster_id, thumb, error, "
+    "hashset_hit, hashset_cat, hashset_kind, stack_id, vstack_id, cluster_id, thumb, error, "
     "media_id, orig_name, orig_path, mime, vic_flags"
 )
+
+# columns the details list-view may sort and filter on (must all be in FIELDS)
+LIST_COLS = {
+    "id", "path", "rel_path", "orig_name", "orig_path", "source", "kind", "ext",
+    "mime", "size", "mtime", "ctime", "atime", "created_dt", "ingested_at", "md5", "sha1",
+    "sha256", "phash", "width", "height", "duration", "camera", "gps_lat",
+    "gps_lon", "faces", "skin_ratio", "category", "triage", "notes",
+    "hashset_hit", "hashset_kind", "hashset_cat", "stack_id", "vstack_id",
+    "cluster_id", "media_id", "error", "reviewed",
+}
+
+
+# Virtual list-view columns that display a fallback chain, so filtering/sorting
+# must act on the same COALESCE expression the UI shows (e.g. a folder-ingest
+# file has no orig_name - the "Name" column shows its on-disk name instead).
+_COL_EXPR = {
+    "name":      "COALESCE(NULLIF(orig_name, ''), rel_path, path)",
+    "file_path": "COALESCE(NULLIF(orig_path, ''), path, rel_path)",
+}
+
+
+def _col_sql(col: str) -> str | None:
+    """The SQL expression to filter/sort a list-view column on, or None."""
+    if col in _COL_EXPR:
+        return _COL_EXPR[col]
+    return col if col in LIST_COLS else None
+
+
+def _col_filter_clause(col: str, op: str, val):
+    """One (sql, params) pair for a details-list column filter, or None."""
+    if col == "tags":
+        return ("id IN (SELECT file_id FROM tags WHERE tag LIKE ? ESCAPE '\\')",
+                [f"%{_like_escape(val)}%"])
+    expr = _col_sql(col)
+    if expr is None:
+        return None
+    if op == "contains":
+        return (f"{expr} LIKE ? ESCAPE '\\'", [f"%{_like_escape(val)}%"])
+    if op == "eq":
+        return (f"{expr} = ?", [val])
+    if op == "neq":
+        return (f"({expr} IS NULL OR {expr} != ?)", [val])
+    if op in ("min", "max", "gt", "lt"):
+        sym = {"min": ">=", "max": "<=", "gt": ">", "lt": "<"}[op]
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            return None
+        return (f"CAST({expr} AS REAL) {sym} ?", [num])
+    if op == "set":
+        return (f"({expr} IS NOT NULL AND {expr} != '')", [])
+    if op == "notset":
+        return (f"({expr} IS NULL OR {expr} = '')", [])
+    return None
+
+
+def _like_escape(s: str) -> str:
+    return str(s).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
@@ -161,6 +222,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     @app.post("/api/case/close")
     def case_close():
         """Snapshot + close the current case and return to the launcher."""
+        if state["job"]["running"]:
+            abort(409, description="a job is still running — let it finish first")
         _close_current()
         state["case"] = None
         state["last_backup"] = 0.0
@@ -311,6 +374,120 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         threading.Thread(target=_job, daemon=True).start()
         return jsonify({"ok": True, "count": n})
 
+    @app.post("/api/rehash")
+    def rehash():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        case = state["case"]
+        state["job"] = {"running": True, "stage": "process", "done": 0,
+                        "total": 0, "message": "Re-checking known hashes…",
+                        "stats": None, "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                from ..pipeline import rematch_hashes
+                hits = rematch_hashes(
+                    case, progress=lambda d, t: j.update(done=d, total=t))
+                j.update(running=False, stage="done",
+                         message=f"{hits} known-hash hit(s)",
+                         stats={"hashset_hits": hits})
+            except Exception as exc:  # noqa: BLE001
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.get("/api/hashsets")
+    def hashsets_list():
+        from .. import hashstore
+        return jsonify(hashstore.summary())
+
+    # ---- local hash stash (its own file - see gleapp/stash.py) -------
+    def _stash_candidates(case):
+        """This case's files eligible for the stash: (md5, category) in 1-3."""
+        from .. import stash
+        ph = ",".join("?" * len(stash.STASH_CATEGORIES))
+        return case.db.conn.execute(
+            f"SELECT md5, category FROM files WHERE category IN ({ph}) "
+            "AND md5 IS NOT NULL AND md5 != ''",
+            tuple(stash.STASH_CATEGORIES)).fetchall()
+
+    @app.get("/api/stash")
+    def stash_status():
+        from .. import stash
+        case = C()
+        cand = _stash_candidates(case)
+        by_cat = {}
+        for r in cand:
+            by_cat[r["category"]] = by_cat.get(r["category"], 0) + 1
+        return jsonify({
+            "stash": stash.summary(),
+            "case": {"eligible": len(cand), "by_category": by_cat,
+                     "categories": list(stash.STASH_CATEGORIES)},
+        })
+
+    @app.post("/api/stash/add")
+    def stash_add():
+        from .. import stash
+        case = C()
+        cand = _stash_candidates(case)
+        label = case.db.get_meta("case_name") or case.root.name
+        res = stash.add((r["md5"], r["category"], label) for r in cand)
+        case.db.audit_log(case.examiner, "stash_add",
+                          f"{res['submitted']} md5s (cat {stash.STASH_CATEGORIES}), "
+                          f"{res['added']} new; stash now {res['total']}")
+        return jsonify({"ok": True, **res})
+
+    @app.post("/api/stash/clear")
+    def stash_clear():
+        from .. import stash
+        n = stash.clear()
+        C().db.audit_log(C().examiner, "stash_clear", f"{n} entries removed")
+        return jsonify({"ok": True, "removed": n})
+
+    @app.post("/api/stash/path")
+    def stash_set_path():
+        from .. import stash
+        p = str((request.get_json(force=True) or {}).get("path", "")).strip()
+        try:
+            new = stash.set_path(p or None)
+        except OSError as exc:
+            abort(400, description=str(exc))
+        return jsonify({"ok": True, **stash.summary(), "path": str(new)})
+
+    @app.post("/api/stash/export")
+    def stash_export():
+        from .. import stash
+        body = request.get_json(silent=True) or {}
+        fmt = "csv" if body.get("format") == "csv" else "db"
+        out_dir = appconfig.data_dir() / "hashsets"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dest = out_dir / (f"hash-stash-{stamp}." + ("csv" if fmt == "csv" else "gleapp"))
+        try:
+            stash.export(dest)
+        except OSError as exc:
+            abort(500, description=str(exc))
+        return jsonify({"ok": True, **stash.summary(), "written": str(dest)})
+
+    @app.post("/api/stash/merge")
+    def stash_merge():
+        from .. import stash
+        src = str((request.get_json(force=True) or {}).get("path", "")).strip()
+        if not src or not Path(src).is_file():
+            abort(400, description=f"file not found: {src}")
+        try:
+            res = stash.merge(src)
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            abort(400, description=f"could not read {Path(src).name}: {exc}")
+        C().db.audit_log(C().examiner, "stash_merge",
+                         f"{Path(src).name}: +{res['added']} new, {res['total']} total")
+        return jsonify({"ok": True, **res})
+
     @app.post("/api/redup")
     def run_redup():
         if state["case"] is None:
@@ -396,6 +573,27 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             for k in C().db.keyframes_for(file_id)
         ])
 
+    @app.get("/api/file/<int:file_id>/hex")
+    def file_hex(file_id: int):
+        """A slice of the raw bytes of a file, hex-encoded, for the hex viewer."""
+        r = C().db.get_file(file_id)
+        if not r:
+            abort(404)
+        p = Path(r["path"])
+        if not p.exists():
+            abort(410, description="the original file is not on disk")
+        try:
+            size = p.stat().st_size
+            offset = max(0, int(request.args.get("offset", 0)))
+            length = min(max(16, int(request.args.get("length", 2048))), 65536)
+            with open(p, "rb") as fh:
+                fh.seek(min(offset, size))
+                data = fh.read(length)
+        except OSError as exc:
+            abort(500, description=str(exc))
+        return jsonify({"name": p.name, "size": size,
+                        "offset": min(offset, size), "bytes": data.hex()})
+
     # ---- listing / filtering --------------------------------
     @app.get("/api/files")
     def list_files():
@@ -413,18 +611,28 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             eq("source", q["source"])
         if q.get("category") not in (None, "", "any"):
             eq("category", int(q["category"]))
-        if q.get("reviewed") == "1":
-            where.append("reviewed = 1")
-        elif q.get("reviewed") == "0":
-            where.append("reviewed = 0")
         if q.get("stack"):
             eq("stack_id", int(q["stack"]))
         if q.get("cluster"):
             eq("cluster_id", int(q["cluster"]))
         if q.get("hashset") == "1":
             where.append("hashset_hit IS NOT NULL")
+        if q.get("hidegood") == "1":
+            where.append("(hashset_kind IS NULL OR hashset_kind != 'known-good')")
         if q.get("faces") == "1":
             where.append("faces > 0")
+        # "has duplicates": a real >=2 exact stack, a visual stack, or a
+        # near-dup cluster (vstack_id/cluster_id are only set for groups of >=2)
+        _exact_dup = ("stack_id IN (SELECT stack_id FROM files WHERE stack_id "
+                      "IS NOT NULL GROUP BY stack_id HAVING COUNT(*) > 1)")
+        _dup = {
+            "exact": _exact_dup,
+            "visual": "vstack_id IS NOT NULL",
+            "cluster": "cluster_id IS NOT NULL",
+            "any": f"(vstack_id IS NOT NULL OR cluster_id IS NOT NULL OR {_exact_dup})",
+        }.get(q.get("hasdup"))
+        if _dup:
+            where.append(_dup)
         if q.get("min_skin"):
             where.append("skin_ratio >= ?")
             params.append(float(q["min_skin"]))
@@ -446,30 +654,59 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 clause += " OR id IN (SELECT file_id FROM tags WHERE tag LIKE ?)"
                 where.append(f"({clause})")
                 params += [term] * (len(cols) + 1)
-        if q.get("dupes") == "collapse":
-            where.append("COALESCE(vstack_id, stack_id, id) = id")
+        collapse = q.get("dupes") == "collapse"
         if q.get("vstack"):
             where.append("vstack_id = ?")
             params.append(int(q["vstack"]))
 
-        sort = {
+        # details list-view: per-column filters (JSON: [{col,op,val}, …])
+        if q.get("colfilters"):
+            try:
+                for f in json.loads(q["colfilters"]):
+                    got = _col_filter_clause(f.get("col"), f.get("op"), f.get("val"))
+                    if got:
+                        where.append(got[0])
+                        params += got[1]
+            except (ValueError, TypeError):
+                pass
+
+        _legacy_sort = {
             "path": "rel_path", "date": "created_dt", "size": "size",
             "skin": "skin_ratio DESC", "faces": "faces DESC",
             "cluster": "cluster_id", "id": "id",
-        }.get(q.get("sort", "path"), "rel_path")
+        }
+        _sort_expr = _col_sql(q.get("sort", ""))
+        if _sort_expr is not None:
+            _dir = "DESC" if q.get("dir", "asc").lower() == "desc" else "ASC"
+            sort = f"{_sort_expr} {_dir}, id {_dir}"
+        else:
+            sort = _legacy_sort.get(q.get("sort", "path"), "rel_path")
 
         limit = min(int(q.get("limit", 500)), 5000)
         offset = int(q.get("offset", 0))
-        sql = f"SELECT {FIELDS} FROM files"
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += f" ORDER BY {sort} LIMIT ? OFFSET ?"
-        rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
 
-        count_sql = "SELECT COUNT(*) n FROM files"
-        if where:
-            count_sql += " WHERE " + " AND ".join(where)
-        total = case.db.conn.execute(count_sql, tuple(params)).fetchone()["n"]
+        if collapse:
+            # One row per visual group (exact stack / visual stack), and the
+            # representative is picked from the rows that already match the
+            # filters - so an attribute filter (Has GPS, faces, camera, ...)
+            # still surfaces a group when only a non-head member carries it.
+            grp = "COALESCE(vstack_id, stack_id, id)"
+            sql = (f"SELECT {FIELDS} FROM (SELECT {FIELDS}, ROW_NUMBER() OVER "
+                   f"(PARTITION BY {grp} ORDER BY id) AS _rn "
+                   f"FROM files{where_sql}) g WHERE g._rn = 1 "
+                   f"ORDER BY {sort} LIMIT ? OFFSET ?")
+            rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
+            total = case.db.conn.execute(
+                f"SELECT COUNT(DISTINCT {grp}) n FROM files{where_sql}",
+                tuple(params)).fetchone()["n"]
+        else:
+            sql = (f"SELECT {FIELDS} FROM files{where_sql} "
+                   f"ORDER BY {sort} LIMIT ? OFFSET ?")
+            rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
+            total = case.db.conn.execute(
+                f"SELECT COUNT(*) n FROM files{where_sql}",
+                tuple(params)).fetchone()["n"]
 
         # stack / visual-stack sizes for the ids on this page (two aggregate queries)
         def _counts(col: str, ids: set) -> dict:
@@ -551,7 +788,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             fields["notable"] = 1 if fields["notable"] else 0
         if "active" in fields:
             fields["active"] = 1 if fields["active"] else 0
-        case.db.update_category(code, **fields)
+        try:
+            case.db.update_category(code, **fields)
+        except ValueError as exc:
+            abort(400, description=str(exc))
         case.db.audit_log(case.examiner, "category_update", f"code={code} {fields}")
         return jsonify(categories.catmap(case.db).get(code, {}))
 
@@ -559,7 +799,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def categories_delete(code: int):
         case = C()
         reassign = request.args.get("reassign") == "1"
-        case.db.delete_category(code, reassign=reassign)
+        try:
+            case.db.delete_category(code, reassign=reassign)
+        except ValueError as exc:
+            abort(400, description=str(exc))
         case.db.audit_log(case.examiner, "category_delete",
                           f"code={code} reassign={reassign}")
         return jsonify({"ok": True})
@@ -634,6 +877,21 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             return jsonify({"needs_case": True,
                             "recent": appconfig.recent_cases(),
                             "native": state["native"]})
+        try:
+            return jsonify(_context_payload(case))
+        except Exception:  # noqa: BLE001 - a broken stat query must not blank the UI
+            app.logger.exception("context payload failed")
+            return jsonify({
+                "needs_case": False, "native": state["native"],
+                "case": case.db.get_meta("case_name"), "case_dir": str(case.root),
+                "examiner": case.examiner, "sources": [], "clusters": [],
+                "categories": list(categories.catmap(case.db).values()),
+                "stats": {}, "vic": None, "errors": 0,
+                "known_hash": {}, "screening": {},
+                "timezone": appconfig.get_timezone(), "timezone_options": [],
+            })
+
+    def _context_payload(case) -> dict:
         srcs = [r["source"] for r in case.db.conn.execute(
             "SELECT DISTINCT source FROM files WHERE source IS NOT NULL ORDER BY source")]
         clusters = [
@@ -656,30 +914,78 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         ).fetchone()
         n_err = case.db.conn.execute(
             "SELECT COUNT(*) n FROM files WHERE error IS NOT NULL").fetchone()["n"]
-        return jsonify({
+        from .. import hashstore, stash
+        cst = case.db.stats()
+        try:
+            hstore = hashstore.summary()
+        except Exception:  # noqa: BLE001 - never let a bad store break the app
+            hstore = {"sets": [], "entries": 0}
+        try:
+            stash_sum = stash.summary()
+        except Exception:  # noqa: BLE001
+            stash_sum = {"total": 0, "by_category": {}, "updated": None,
+                         "path": "", "shared": False}
+        from .. import timeutil
+        return {
             "needs_case": False,
             "native": state["native"],
+            "job": dict(state["job"]),
+            "timezone": case.db.get_meta("display_tz") or appconfig.get_timezone(),
+            "timezone_options": [{"value": v, "label": lbl}
+                                 for v, lbl in timeutil.COMMON_ZONES],
             "case": case.db.get_meta("case_name"),
             "case_dir": str(case.root),
             "examiner": case.examiner,
             "sources": srcs,
             "clusters": clusters,
             "categories": list(categories.catmap(case.db).values()),
-            "stats": case.db.stats(),
+            "stats": cst,
             "vic": vic,
             "errors": n_err,
+            "known_hash": {
+                "hits": cst.get("hashset_hits", 0),
+                "known_good": cst.get("known_good", 0),
+                "global_sets": hstore["sets"],
+                "global_entries": hstore["entries"],
+                "stash": stash_sum,
+            },
             "screening": {
-                "done": case.db.get_meta("screened_at") is not None,
+                # screened_at is set by a screening pass or by an ingest with
+                # screening on; fall back to "any file carries a skin_ratio",
+                # which self-heals cases processed before that meta was written.
+                "done": (case.db.get_meta("screened_at") is not None
+                         or bool(case.db.conn.execute(
+                             "SELECT 1 FROM files WHERE skin_ratio IS NOT NULL LIMIT 1"
+                         ).fetchone())),
                 "backend": detect.face_backend(),
                 "with_faces": scr["wf"] or 0,
                 "with_skin": scr["ws"] or 0,
                 "screenable": scr["n"] or 0,
             },
-        })
+        }
 
     @app.get("/api/stats")
     def stats():
         return jsonify(C().db.stats())
+
+    @app.post("/api/settings")
+    def settings_update():
+        """Currently just the display timezone (applied to shown epoch times,
+        never to EXIF/Captured). Persisted per case and as the app-wide default."""
+        from .. import timeutil
+        body = request.get_json(silent=True) or {}
+        if "timezone" in body:
+            tz = str(body.get("timezone") or "UTC").strip() or "UTC"
+            if not timeutil.is_known(tz):
+                abort(400, description=f"unknown timezone: {tz}")
+            case = state["case"]
+            if case is not None:
+                case.db.set_meta("display_tz", "" if tz == "UTC" else tz)
+                case.db.audit_log(case.examiner, "set_timezone", tz)
+            appconfig.set_timezone(tz)
+            return jsonify({"ok": True, "timezone": tz,
+                            "label": timeutil.label(tz)})
+        return jsonify({"ok": True})
 
     def _scope_where(body: dict) -> tuple[str, str]:
         """(where_sql, human_label) for a report/export scope selection."""
@@ -693,11 +999,44 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             return "category != 0", "categorized only"
         if scope == "uncategorized":
             return "category = 0", "uncategorized only"
-        if scope == "reviewed":
-            return "reviewed = 1", "reviewed only"
+        if scope == "categories":
+            codes = sorted({int(x) for x in (body.get("categories") or [])})
+            if not codes:
+                abort(400, description="no categories selected")
+            names = ", ".join(categories.label(C().db, c) for c in codes)
+            return f"category IN ({','.join(map(str, codes))})", names
         if scope == "where" and body.get("where"):
             return str(body["where"]), "custom filter"
         return "", "all files"
+
+    _REPORT_HEADER_KEYS = ("agency", "logo", "case_number", "item_number",
+                           "examiner", "notes")
+
+    @app.get("/api/report/prefs")
+    def report_prefs():
+        """Saved report header + per-image field selection for this case."""
+        case = C()
+        raw = case.db.get_meta("report_header")
+        header = {}
+        if raw:
+            try:
+                header = json.loads(raw)
+            except ValueError:
+                header = {}
+        header.setdefault("examiner", case.examiner)
+        raw_f = case.db.get_meta("report_fields")
+        try:
+            fields = json.loads(raw_f) if raw_f else None
+        except ValueError:
+            fields = None
+        return jsonify({
+            "header": header,
+            "fields": fields or report.DEFAULT_REPORT_FIELDS,
+            "field_options": [{"key": k, "label": v[0]}
+                              for k, v in report._FIELD_DEFS.items()],
+            "full_images": case.db.get_meta("report_full_images") != "0",
+            "full_videos": case.db.get_meta("report_full_videos") != "0",
+        })
 
     @app.post("/api/report")
     def make_report():
@@ -706,17 +1045,43 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         fmts = body.get("format", ["html", "csv", "json"])
         where, label = _scope_where(body)
         out = case.report_dir
+
+        rh = body.get("report_header")
+        header = None
+        if isinstance(rh, dict):
+            header = {k: rh[k] for k in _REPORT_HEADER_KEYS if rh.get(k)} or None
+        fields = body.get("fields") or None
+        full_images = body.get("full_images", True)
+        full_videos = body.get("full_videos", True)
+        if header is not None:  # remember for next time (logo can be large - cap it)
+            store = dict(header)
+            if isinstance(store.get("logo"), str) and len(store["logo"]) > 4_000_000:
+                store.pop("logo", None)
+            case.db.set_meta("report_header", json.dumps(store))
+        if fields:
+            case.db.set_meta("report_fields",
+                             json.dumps([f for f in fields
+                                         if f in report._FIELD_DEFS]))
+        case.db.set_meta("report_full_images", "1" if full_images else "0")
+        case.db.set_meta("report_full_videos", "1" if full_videos else "0")
+
+        tz = case.db.get_meta("display_tz") or appconfig.get_timezone()
+
         tag = "" if not where else "_" + {
-            "categorized only": "categorized", "uncategorized only": "uncategorized",
-            "reviewed only": "reviewed",
+            "categorized only": "categorized",
+            "uncategorized only": "uncategorized",
         }.get(label, "selection")
         made = []
         if "csv" in fmts:
-            made.append(str(report.export_csv(case, out / f"report{tag}.csv", where)))
+            made.append(str(report.export_csv(case, out / f"report{tag}.csv", where, tz=tz)))
         if "json" in fmts:
-            made.append(str(report.export_json(case, out / f"report{tag}.json", where)))
+            made.append(str(report.export_json(case, out / f"report{tag}.json", where,
+                                               header=header)))
         if "html" in fmts:
-            made.append(str(report.export_html(case, out / f"report{tag}.html", where)))
+            made.append(str(report.export_html(
+                case, out / f"report{tag}.html", where,
+                header=header, fields=fields, scope_label=label,
+                full_images=full_images, full_videos=full_videos, tz=tz)))
         if "kml" in fmts:
             made.append(str(report.export_kml(case, out / f"geolocation{tag}.kml", where)))
         if "md5" in fmts:
@@ -766,6 +1131,39 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         case.db.audit_log(case.examiner, "snapshot", snap.name)
         return jsonify({"ok": True, **snap.__dict__})
 
+    @app.post("/api/snapshot/restore")
+    def snapshot_restore():
+        import shutil
+        case = C()
+        if state["job"]["running"]:
+            abort(409, description="finish the running job first")
+        name = str((request.get_json(force=True) or {}).get("name", ""))
+        try:
+            src = backup.snapshot_path(case, name)
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        root = case.root
+        # 1. safety net - the current state becomes a snapshot, so this is undoable
+        try:
+            backup.snapshot(case, "pre-restore")
+        except Exception:  # noqa: BLE001
+            pass
+        # 2. close the live DB, swap the file in, reopen
+        case.close()
+        state["case"] = None
+        try:
+            for ext in ("-wal", "-shm"):
+                (root / f"case.gleapp{ext}").unlink(missing_ok=True)
+            shutil.copy2(src, root / "case.gleapp")
+        except OSError as exc:
+            state["case"] = open_case(root)      # put the case back as it was
+            abort(500, description=f"could not replace the case file: {exc}")
+        state["case"] = open_case(root)
+        state["last_backup"] = 0.0
+        state["case"].db.audit_log(state["case"].examiner,
+                                   "restore_snapshot", name)
+        return jsonify({"ok": True, "restored": name})
+
     return app
 
 
@@ -775,7 +1173,10 @@ def _run_job(state: dict, sources, opts: dict) -> None:
     job.update(running=True, stage="ingest", done=0, total=0,
                message="Scanning sources…", stats=None, error=None)
     try:
-        n = ingest_sources(case, sources)
+        n = ingest_sources(
+            case, sources,
+            progress=lambda k: job.update(done=k, message=f"Registering files… {k:,}"),
+        )
         if n:
             # now that the case has content, it's worth remembering
             appconfig.push_recent(str(case.root),

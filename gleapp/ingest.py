@@ -82,6 +82,7 @@ class Discovered:
     size: int
     mtime: float
     ctime: float
+    atime: float = 0.0
 
 
 def scan(
@@ -123,6 +124,7 @@ def scan(
                 size=st.st_size,
                 mtime=st.st_mtime,
                 ctime=st.st_ctime,
+                atime=st.st_atime,
             )
 
 
@@ -139,4 +141,5 @@ def _one(fp: Path, root: Path) -> Iterator[Discovered]:
         size=st.st_size,
         mtime=st.st_mtime,
         ctime=st.st_ctime,
+        atime=st.st_atime,
     )

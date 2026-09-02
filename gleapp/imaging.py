@@ -226,8 +226,65 @@ _MAGIC = [
 ]
 
 
+def _incomplete_image(path: str | Path) -> str | None:
+    """Recognise a file that carries a real image header but no usable pixel
+    data - e.g. the 80-odd-byte header-only PNG stubs in Snapchat's
+    ``SCContent`` cache. Returns a plain-English reason, or None."""
+    try:
+        p = Path(path)
+        sz = p.stat().st_size
+        with open(p, "rb") as fh:
+            head = fh.read(65536)
+            if sz > 65536:
+                fh.seek(-4, 2)
+                tail = fh.read(4)
+            else:
+                tail = head[-4:]
+    except OSError:
+        return None
+    if sz == 0:
+        return "Empty file (0 bytes) - nothing was recovered"
+    for magic, label in _BLOB_MAGICS:
+        if head.startswith(magic):
+            return f"{label} ({sz:,} bytes)"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        if head[12:16] != b"IHDR":
+            return f"PNG signature only - the file is not a valid image ({sz:,} bytes)"
+        if b"IDAT" not in head:
+            return f"Truncated PNG - file header only, no image data ({sz:,} bytes)"
+        if tail != b"\xaeB`\x82":        # CRC of the trailing IEND chunk
+            return f"Truncated PNG - image data is cut off ({sz:,} bytes)"
+    elif head[:3] == b"\xff\xd8\xff":
+        if tail[-2:] != b"\xff\xd9":
+            return f"Truncated / corrupt JPEG - no end-of-image marker ({sz:,} bytes)"
+    elif head[:6] in (b"GIF87a", b"GIF89a"):
+        if tail[-1:] != b"\x3b":
+            return f"Truncated GIF ({sz:,} bytes)"
+    return None
+
+
+# Files that carry a media magic but hold no decodable media - e.g. Snapchat's
+# encrypted content cache and MPEG audio-frame fragments left by streamed video.
+_BLOB_MAGICS = [
+    (bytes.fromhex("a8b713e83741c3b6"),
+     "Proprietary app-asset container (AR/makeup-filter texture) - not a standard image"),
+    (b"\xff\xf3\x84\xc4\x00\x00\x00\x00",
+     "Audio-frame fragment - no video/image content"),
+    (b"\x1f\x8b\x08",
+     "Gzip-compressed data (web cache) - not a decodable image"),
+]
+
+
 def describe_failure(path: str | Path, exc: Exception) -> str:
     """A useful error string for a file that wouldn't decode."""
+    es = str(exc)
+    if "Security limit exceeded" in es or "exceeds the maximum image size" in es:
+        # libheif produced a frame far bigger than the container declared - the
+        # HEIC is malformed (a classic decompression-bomb shape), not a bug here.
+        return "Malformed HEIC/HEIF - declared and decoded image sizes disagree"
+    reason = _incomplete_image(path)
+    if reason:
+        return reason
     try:
         with open(path, "rb") as fh:
             head = fh.read(12)

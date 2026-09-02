@@ -24,7 +24,9 @@ datas = [
 binaries = []
 hiddenimports = ["clr", "gleapp.desktop", "gleapp.web.app", "gleapp.projectvic",
                  "gleapp._vidworker", "gleapp._texworker", "gleapp.imaging",
-                 "texture2ddecoder", "liblzfse", "zstandard", "gleapp.lzc"]
+                 "texture2ddecoder", "liblzfse", "zstandard", "gleapp.lzc",
+                 "gleapp.hashstore", "gleapp.hashdb", "gleapp.stash",
+                 "gleapp.timeutil", "tzdata"]
 
 # Bundle libraries that ship data / native bits PyInstaller can't infer.
 for mod in ("webview", "cv2", "imagehash", "PIL", "pillow_heif",
@@ -38,6 +40,7 @@ for mod in ("webview", "cv2", "imagehash", "PIL", "pillow_heif",
         print(f"[gleapp.spec] skip collect_all({mod}): {exc}")
 
 datas += collect_data_files("scipy", includes=["**/*.dll", "**/*.pyd"])
+datas += collect_data_files("tzdata")   # IANA tz database for zoneinfo on Windows
 
 block_cipher = None
 

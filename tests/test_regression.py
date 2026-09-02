@@ -26,9 +26,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module", autouse=True)
 def _isolate_cfg(tmp_path_factory):
+    from gleapp import hashstore
     old = os.environ.get("GLEAPP_CONFIG_DIR")
     os.environ["GLEAPP_CONFIG_DIR"] = str(tmp_path_factory.mktemp("regcfg"))
+    hashstore.close()
     yield
+    hashstore.close()
     if old is None:
         os.environ.pop("GLEAPP_CONFIG_DIR", None)
     else:
@@ -126,6 +129,34 @@ def test_exact_and_visual_grouping(processed):
     assert not n1["vstack_id"], "near-dup should cluster, not visual-stack"
 
 
+def test_has_duplicates_filter(processed):
+    """The sidebar 'Duplicates' dropdown -> /api/files?hasdup=..."""
+    from gleapp.web.app import create_app
+    case, _manifest, _by_rel, _stats = processed
+    app = create_app(None)
+    app.config["STATE"]["case"] = case          # reuse the open connection
+    cl = app.test_client()
+
+    def rels(kind: str) -> set:
+        j = cl.get(f"/api/files?hasdup={kind}&limit=5000").get_json()
+        return {f["rel_path"].replace("\\", "/") for f in j["files"]}
+
+    exact = rels("exact")
+    assert {"duplicates/orig.jpg", "duplicates/exact_copy.jpg"} <= exact
+    assert "duplicates/near_orig.jpg" not in exact
+    assert "duplicates/vis_orig.jpg" not in exact
+
+    visual = rels("visual")
+    assert {"duplicates/vis_orig.jpg", "duplicates/vis_recompressed.jpg"} <= visual
+
+    cluster = rels("cluster")
+    assert {"duplicates/near_orig.jpg", "duplicates/near_edit.jpg"} <= cluster
+
+    anyd = rels("any")
+    assert exact <= anyd and visual <= anyd and cluster <= anyd
+    assert "featureless/solid_red.png" not in anyd   # distinct file, no dupes
+
+
 def test_featureless_images_do_not_group(processed):
     _case, _manifest, by_rel, _stats = processed
     for rel in ("featureless/gradient_red.jpg", "featureless/gradient_blue.jpg",
@@ -142,6 +173,10 @@ def test_corrupt_media_errs_without_crashing(processed):
     assert _row(by_rel, "corrupt/truncated.mp4")["error"]
     assert _row(by_rel, "corrupt/not_an_image.png")["error"]
     assert _row(by_rel, "corrupt/empty.jpg")["error"]
+    # header-only stub (Snapchat SCContent style) gets a plain-English reason,
+    # not a raw "UnidentifiedImageError"
+    hdr = _row(by_rel, "corrupt/header_only.png")["error"]
+    assert hdr and "truncated png" in hdr.lower() and "Error" not in hdr
     # ... while the good video right next to it still worked
     assert _row(by_rel, "video/clip_ok.mp4")["thumb"]
 
