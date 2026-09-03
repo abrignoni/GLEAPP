@@ -90,7 +90,9 @@ def export_json(case: Case, dest: str | Path, where: str = "",
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "report_header": {k: v for k, v in (header or {}).items() if k != "logo"},
         "stats": case.db.stats(),
-        "files": _rows(case, where),
+        # files.path is where the bytes sat on this machine; rel_path, orig_path and
+        # file_path say where the file was within the evidence, and that is what leaves.
+        "files": [{k: v for k, v in d.items() if k != "path"} for d in _rows(case, where)],
     }
     dest.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return dest
@@ -194,14 +196,15 @@ def _disp_name(d: dict) -> str:
 
 
 def _disp_path(d: dict) -> str:
-    """Where the file lived on the device (Project VIC MediaFiles.FilePath),
-    else - for a plain folder ingest only - the path within that source.
-    Never the local folder a VIC export was unpacked into."""
+    """Where the file lived on the device (Project VIC MediaFiles.FilePath, an
+    archive member's path), else - for a plain folder ingest - the path within that
+    source. Never a location on the machine the case was made on: not the folder a
+    VIC export was unpacked into, not the evidence folder, not the case folder."""
     if d.get("orig_path"):
         return d["orig_path"]
     if d.get("media_id"):          # a VIC file with no MediaFiles path
         return ""
-    return d.get("path") or d.get("rel_path") or ""
+    return d.get("rel_path") or Path(d.get("path") or "").name
 
 
 # key -> (label, value fn, is_monospace).  The report dialog offers exactly
