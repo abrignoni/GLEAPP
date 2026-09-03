@@ -235,18 +235,22 @@ continue. Turning off screening in the launcher roughly halves the time.
 
 ## Known-hash lists
 
-Import into **this case** (`gleapp -c CASE hashset FILE`) or the **global store**
-shared by every case (`gleapp hashset --global FILE`). Formats auto-detected:
+Import into **this case** (sidebar **Hash sets → Import hash set…**, or
+`gleapp -c CASE hashset FILE`) or the **global store** shared by every case
+(sidebar **Hash sets → Reference data → Add a set**, or
+`gleapp hashset --global FILE`). Formats auto-detected:
 
 * **Project VIC JSON** – objects with `MD5` / `SHA1` / `SHA256` and optional `Category`.
 * **CAID / other JSON** – same idea; `PhotoDNA`/`PDNA`/`PHash` → `phash` entries.
 * **CSV / text** – `hash` per line, or `hash,category` per line. Algorithm inferred
   from hash length (32→md5, 40→sha1, 64→sha256).
 * **SQLite database** – any table/view with `md5` / `sha1` / `sha256` columns.
-  For the **NSRL RDS**: `--schema`/`--full` builds a `.db` from the published
-  dump, and `--base`/`--delta` merges a quarterly delta onto the previous full
-  set before importing. `--algos` limits which hashes to store; `--list` /
-  `--rm ID` manage the global store.
+  For the **NSRL RDS**: import the yearly full `.db` directly; a quarterly
+  `_delta.sql` merges onto the previous full `.db` before importing (the merge
+  uses the `sqlite3` CLI if present, otherwise a built-in fallback, so it works
+  from the frozen app). `--schema`/`--full` builds a `.db` from `.sql` dumps.
+  Limit which hashes to store (MD5 alone roughly halves the store). `--list` /
+  `--rm ID` (or the sidebar list) manage the global store.
 
 `--kind known` flags matches as notable; `--kind known-good` marks benign files
 (NSRL etc.) — a hit auto-categorizes an uncategorized file **Non-pertinent** and

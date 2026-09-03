@@ -165,17 +165,19 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#stashDlg,#stashWipeDlg,#hashImportDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
-  #hashImportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
-  #hashImportDlg h2{margin:0 0 4px;font-size:15px}
-  #hashImportDlg .field{margin-top:10px}
-  #hashImportDlg .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
-  #hashImportDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
-  #hashImportDlg .kindrow label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);margin:3px 0}
-  #caseSets .cs{display:flex;align-items:center;gap:5px;padding:2px 0}
-  #caseSets .cs b{color:var(--danger)}
-  #caseSets .cs .x{cursor:pointer;color:var(--muted);font-weight:700}
-  #caseSets .cs .x:hover{color:var(--danger)}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #hashImportDlg .box,#refDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #hashImportDlg h2,#refDlg h2{margin:0 0 4px;font-size:15px}
+  #hashImportDlg .field,#refDlg .field{margin-top:10px}
+  #hashImportDlg .field label,#refDlg .field>label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+  #hashImportDlg input[type=text],#refDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
+  #hashImportDlg .kindrow label,#refDlg .refmode label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);margin:3px 0}
+  #refDlg select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
+  #caseSets .cs,#refList .cs{display:flex;align-items:center;gap:5px;padding:3px 0}
+  #caseSets .cs b,#refList .cs b{color:var(--danger)}
+  #caseSets .cs .x,#refList .cs .x{cursor:pointer;color:var(--muted);font-weight:700}
+  #caseSets .cs .x:hover,#refList .cs .x:hover{color:var(--danger)}
+  .linkish:hover{text-decoration:underline}
   #stashWipeDlg{z-index:80}
   #snapDlg .box,#stashDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #snapDlg h2,#stashDlg h2{margin:0 0 8px;font-size:15px}
@@ -321,8 +323,10 @@
     <label><input type="checkbox" id="fhit"> Any known-hash hit</label>
     <label><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
     <div id="rehashInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-    <div id="stashInfo" class="muted" style="font-size:11px;margin-top:3px;cursor:pointer" title="Open the local hash stash"></div>
     <div class="prog jobbar" id="rehashProg" style="display:none"><i></i></div>
+    <div id="refInfo" class="muted linkish" style="font-size:11px;margin-top:6px;cursor:pointer" title="Manage the shared NSRL / reference-hash store"></div>
+    <div class="prog jobbar" id="refProg" style="display:none"><i></i></div>
+    <div id="stashInfo" class="muted" style="font-size:11px;margin-top:6px;cursor:pointer" title="Open the local hash stash"></div>
     <h3>Duplicates</h3>
     <select id="fdup">
       <option value="">Any file</option>
@@ -570,6 +574,69 @@
     <span style="flex:1"></span>
     <button class="btn" id="hiCancel">Cancel</button>
     <button class="btn" id="hiGo">Import &amp; flag</button>
+  </div>
+</div></div>
+
+<div id="refDlg"><div class="box">
+  <h2>Reference data</h2>
+  <div class="muted" style="font-size:12px">
+    Large known-hash sets — the <b>NSRL RDS</b>
+    (<a href="https://www.nsrl.nist.gov/" target="_blank" rel="noopener">nsrl.nist.gov</a>
+    &rarr; Download RDS) or similar — shared by every case. Not copied into any case.
+  </div>
+
+  <div id="refList" style="font-size:12px;margin-top:12px"></div>
+
+  <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Add a set</div>
+    <div class="refmode" style="display:flex;gap:14px">
+      <label><input type="radio" name="refMode" value="full" checked> Full release <span class="muted">(.db)</span></label>
+      <label><input type="radio" name="refMode" value="delta"> Quarterly delta <span class="muted">(.sql)</span></label>
+    </div>
+    <div class="field">
+      <label id="refFileLbl">Database file</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="text" id="refPath" style="flex:1">
+        <button class="btn sm" id="refBrowse">Choose…</button>
+      </div>
+    </div>
+    <div class="field" id="refBaseRow" style="display:none">
+      <label>Previous full <code>.db</code> the delta applies onto</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="text" id="refBase" style="flex:1">
+        <button class="btn sm" id="refBaseBrowse">Choose…</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="refName" placeholder="e.g. NSRL Modern 2026.03.1">
+    </div>
+    <div class="field" style="display:flex;gap:14px;flex-wrap:wrap">
+      <label style="flex:1;min-width:180px">Treat matches as
+        <select id="refKind" style="width:100%;margin-top:2px">
+          <option value="known-good">Benign — NSRL / known-good</option>
+          <option value="known">Notable — HASH badge</option>
+          <option value="other">Flag only</option>
+        </select>
+      </label>
+      <label style="flex:1;min-width:180px">Store
+        <select id="refAlgos" style="width:100%;margin-top:2px">
+          <option value="md5">MD5 only (recommended)</option>
+          <option value="md5,sha1,sha256">MD5 + SHA-1 + SHA-256</option>
+          <option value="sha256">SHA-256 only (minimal DB)</option>
+        </select>
+      </label>
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:8px">
+      Runs in the background — a full NSRL set is tens of millions of hashes.
+      Progress shows under <b>Hash sets</b>.
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:14px;display:flex;gap:6px">
+    <span style="flex:1"></span>
+    <button class="btn" id="refCancel">Close</button>
+    <button class="btn" id="refGo">Import</button>
   </div>
 </div></div>
 
