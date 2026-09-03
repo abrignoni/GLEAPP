@@ -5,15 +5,12 @@ name: Test Cases
 # on. Platform coverage is windows_smoke.yml's job and version coverage is
 # python_runtime_contract.yml's; neither replaces this one.
 
+# The pull_request trigger deliberately carries no paths: filter. These checks are
+# required for merging, and a required check that never runs never reports, which
+# blocks the pull request permanently rather than passing it. Path filtering and
+# required status are incompatible; the filter stays only on the advisory lint job.
 on:
   pull_request:
-    paths:
-      - 'gleapp/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'requirements.txt'
-      - 'pyproject.toml'
-      - '.github/workflows/test_cases.yml'
   push:
     branches:
       - main

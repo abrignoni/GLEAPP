@@ -16,15 +16,12 @@ name: Windows Smoke Test
 # and the runner has no C toolchain configured by default, so preferring wheels keeps
 # this job from failing on a source build rather than on GLEAPP's own code.
 
+# The pull_request trigger deliberately carries no paths: filter. These checks are
+# required for merging, and a required check that never runs never reports, which
+# blocks the pull request permanently rather than passing it. Path filtering and
+# required status are incompatible; the filter stays only on the advisory lint job.
 on:
   pull_request:
-    paths:
-      - 'gleapp/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'requirements.txt'
-      - 'pyproject.toml'
-      - '.github/workflows/windows_smoke.yml'
   workflow_dispatch:
 
 permissions:
@@ -48,6 +45,23 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --prefer-binary -r requirements.txt
           python -m pip install --prefer-binary pytest piexif
+
+      # hashstore shells out to the sqlite3 CLI to apply an NSRL delta, and that is
+      # the one external binary GLEAPP needs. Windows does not ship it, so
+      # test_build_db_and_apply_delta skipped here while running everywhere else,
+      # leaving the only code path with an outside dependency unexercised on the
+      # platform GLEAPP ships on.
+      - name: Install the sqlite3 CLI
+        run: |
+          choco install sqlite --no-progress -y
+          echo "C:\ProgramData\chocolatey\bin" >> $env:GITHUB_PATH
+
+      # A skipped test still reports green, so an install that lands somewhere off
+      # PATH would quietly restore the skip and look identical to success. Assert
+      # through the same shutil.which call the test itself guards on.
+      - name: Confirm sqlite3 reached PATH
+        run: |
+          python -c "import shutil, sys; p = shutil.which('sqlite3'); print('sqlite3 ->', p); sys.exit(0 if p else 1)"
 
       - name: Import every gleapp module on Windows
         run: python tools/ci_import_smoke.py
