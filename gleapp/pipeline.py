@@ -111,8 +111,9 @@ def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, scre
             return _process_one_at(thumb_dir, row, str(local), force=force,
                                    keyframes=keyframes, screen=screen)
     except archive.ArchiveUnavailable as exc:
+        why = imaging.scrub_local_paths(str(exc), rec["path"] if rec else None)
         return {"id": fid, "status": "error", "keyframes": [],
-                "fields": {"error": f"source archive unavailable: {exc}"[:300]}}
+                "fields": {"error": f"source archive unavailable: {why}"[:300]}}
 
 
 def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
@@ -405,9 +406,12 @@ def _process_videos(case: Case, vids, *, force, keyframes, screen, workers, writ
                                                    local=p))
                 for r in rows:
                     if r["id"] in failed:
+                        rec = recs.get(r["source"])
+                        why = imaging.scrub_local_paths(failed[r["id"]],
+                                                        rec["path"] if rec else None)
                         write({"id": r["id"], "status": "error", "keyframes": [],
-                               "fields": {"error": f"source archive unavailable: "
-                                                   f"{failed[r['id']]}"[:300]}})
+                               "fields": {"error": f"source archive unavailable: {why}"
+                                          [:300]}})
 
     with ThreadPoolExecutor(max_workers=min(max(2, workers), 4)) as ex:
         list(ex.map(do_chunk, chunks))
