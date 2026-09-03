@@ -33,7 +33,7 @@ FIELDS = (
     "phash, width, height, duration, gps_lat, gps_lon, camera, faces, "
     "skin_ratio, category, triage, reviewed, reviewed_by, reviewed_at, notes, "
     "hashset_hit, hashset_cat, hashset_kind, stack_id, vstack_id, cluster_id, thumb, error, "
-    "media_id, orig_name, orig_path, mime, vic_flags"
+    "media_id, orig_name, orig_path, mime, vic_flags, alt_paths"
 )
 
 # columns the details list-view may sort and filter on (must all be in FIELDS)
@@ -753,6 +753,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             _rp = "CASE WHEN media_id IS NULL THEN rel_path END"
             cols = (f"COALESCE(NULLIF(orig_name, ''), {_rp})",
                     f"COALESCE(NULLIF(orig_path, ''), {_rp})",
+                    "alt_paths",            # the other storage views a file sat under
                     "camera", "notes", "mime", "source", "created_dt",
                     "reviewed_by", "hashset_hit", "error",
                     "md5", "sha1", "sha256", "phash")

@@ -129,6 +129,50 @@ written to. An extraction surfaces app streaming caches, ExoPlayer `.exo` fragme
 the like, which are not standalone videos; the pipeline reports them with its existing
 messages rather than silently dropping them.
 
+## One file under several Android storage views is one row, not three exact copies
+
+Android exposes an app's data directory through several mount points and a full file
+system extraction records each: `data/data/<pkg>`, `data/user/<user>/<pkg>` and
+`data_mirror/data_ce/<volume>/<user>/<pkg>` for credential encrypted storage,
+`data/user_de/<user>/<pkg>` and `data_mirror/data_de/...` for device encrypted storage,
+and `data/media/<user>`, `storage/emulated/<user>` and `mnt/user/<user>/emulated/<user>`
+for the shared storage a user sees as the SD card. Left alone, one photo became three
+rows and three "exact copies" that read as duplication. `gleapp/storage_views.py` ports
+ALEAPP's `storagePathViews` table (credential and device encrypted storage never collapse
+together; the Android user id is part of the key) and adds the shared-storage views. A
+mirrored group whose copies agree on size, and on CRC where the archive records one,
+registers once under the preferred spelling with the others on the row as `alt_paths`,
+shown in the details pane as "Also under" and covered by search; a group whose copies
+differ registers in full. A zip is planned from its directory before anything is copied;
+a tar can only be read once, so its rows are collapsed after the pass and any staged
+copies of the dropped spellings deleted. The case's `meta` records `mirrored` and
+`views_differ` per source.
+
+Measured across every registered Android zip, media members by extension: 18 of 20
+images carry no mirrors at all, and on the two that do they are most of the media.
+`pixel3_a12` held 10,908 members under 4,318 logical paths, 3,270 groups mirrored three
+ways, 3,256 agreeing by CRC and 14 not (write-ahead logs and files being written during
+the extraction, the same cause ALEAPP measured). `samsunga53_a14` held 5,503 under 1,305,
+every one of its 1,303 mirrored groups agreeing, including the three shared-storage
+views. The emulator tar `emu_a15_oss_v1` registered 2,389 media of which 900 sat under
+`data_mirror`, and 1,832 of them stacked as exact duplicates before the collapse. Two
+other images carry `data/user/N` beside `data/data` with no mirrors: those are a second
+user's files, which the key keeps apart.
+
+Measured end to end, same options, before and after the collapse (rows include the
+extension-less members the sniff finds, which is why they exceed the by-extension
+counts above; the exact-duplicate rows left afterwards are the same bytes at genuinely
+different paths, such as an app cache holding a copy of a photo):
+
+| image | rows before | exact-duplicate rows | rows after | exact-duplicate rows | folded | groups kept apart |
+|---|---:|---:|---:|---:|---:|---:|
+| `pixel3_a12` (zip) | 53,174 | 34,978 | 19,926 | 1,826 | 33,248 | 782 |
+| `samsunga53_a14` (zip) | 15,587 | 11,125 | 6,392 | 1,950 | 9,195 | 24 |
+| `emu_a15_oss_v1` (tar) | 2,389 | 1,832 | 933 | 376 | 1,456 | 0 |
+
+Rows before minus folded equals rows after on all three, which is the arithmetic check
+that nothing else moved.
+
 ## Pillow below 10.2 corrupts JPEG output on macOS arm64, at random
 
 `requirements.txt` and `pyproject.toml` floor Pillow at 10.2. Measured on 2026-09-03 with

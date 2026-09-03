@@ -978,10 +978,18 @@ async function showMeta(id) {
   // device path for a VIC file; the on-disk path for a folder ingest;
   // never the local folder a VIC export was unpacked into
   const dispPath = f.orig_path || (f.media_id ? "" : (f.path || f.rel_path)) || "";
+  // an Android extraction can hold one file under several storage views; the
+  // kept spelling is the file path and the others are listed here
+  let alsoAt = "";
+  try {
+    const ap = f.alt_paths ? JSON.parse(f.alt_paths) : null;
+    if (ap && ap.length) alsoAt = ap.join("   ·   ");
+  } catch (e) {}
   const rows = [
     ["Source", f.source], ["Type", f.kind],
     ["Original name", f.orig_name || ""],
     ["File path", dispPath],
+    ["Also under", alsoAt],
     ["Stored at", f.orig_path && f.path && f.path !== f.orig_path ? f.path : ""],
     ["MIME", f.mime || ""],
     ["VIC MediaID", f.media_id ?? ""],
