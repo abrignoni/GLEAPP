@@ -18,10 +18,12 @@ Accepted inputs (``import_path`` auto-detects):
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -383,14 +385,62 @@ def _import_entries(name: str, source: str, kind: str, entries) -> tuple[int, in
     return hs_id, _finalize(hs_id)
 
 
-def _sqlite3_cli() -> str:
-    exe = shutil.which("sqlite3")
-    if not exe:
-        raise RuntimeError(
-            "the 'sqlite3' command-line tool is required to apply an NSRL delta; "
-            "install it (https://sqlite.org/download.html) or merge the delta "
-            "yourself per the RDSv3 doc, then pass the resulting .db")
-    return exe
+def _sqlite3_cli() -> str | None:
+    """Path to a ``sqlite3`` command-line tool, or None.
+
+    A frozen build carries no CLI, so a copy dropped next to ``GLEAPP.exe``
+    (or under its ``_internal`` folder) is used before anything on PATH. When
+    nothing is found, ``_run_scripts`` falls back to a pure-Python executor.
+    """
+    if getattr(sys, "frozen", False):
+        name = "sqlite3.exe" if os.name == "nt" else "sqlite3"
+        here = Path(sys.executable).resolve().parent
+        for cand in (here / name, here / "_internal" / name):
+            if cand.is_file():
+                return str(cand)
+    return shutil.which("sqlite3")
+
+
+def _run_sql_python(db_path: Path, script: str | Path) -> None:
+    """Apply a ``.sql`` script with the stdlib ``sqlite3`` module.
+
+    Streams the file one statement at a time (NSRL RDSv3 dumps and deltas run
+    to hundreds of MB), tracking single-quoted strings so an apostrophe in a
+    file path or package name doesn't split a statement. The script's own
+    ``BEGIN``/``COMMIT`` are honoured (autocommit connection).
+    """
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    try:
+        conn.execute("PRAGMA journal_mode = OFF")
+        conn.execute("PRAGMA synchronous = OFF")
+        cur = conn.cursor()
+        stmt: list[str] = []
+        in_str = False
+        with open(script, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                stmt.append(line)
+                i = 0
+                while i < len(line):
+                    ch = line[i]
+                    if ch == "'":
+                        if in_str and i + 1 < len(line) and line[i + 1] == "'":
+                            i += 2
+                            continue
+                        in_str = not in_str
+                    elif not in_str and line[i:i + 2] == "--":
+                        break                       # line comment
+                    i += 1
+                if not in_str and line.rstrip().endswith(";"):
+                    sql = "".join(stmt).strip()
+                    stmt.clear()
+                    if sql:
+                        cur.execute(sql)
+        tail = "".join(stmt).strip()
+        if tail:
+            cur.execute(tail)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _run_scripts(db_path: Path, scripts, *, fresh: bool) -> Path:
@@ -398,18 +448,21 @@ def _run_scripts(db_path: Path, scripts, *, fresh: bool) -> Path:
     if fresh:
         db_path.unlink(missing_ok=True)
     for script in scripts:
-        with open(script, "rb") as fh:      # stream (scripts can be multi-GB)
-            proc = subprocess.run([exe, "-bail", str(db_path)], stdin=fh,
-                                  capture_output=True)
-        if proc.returncode != 0:
-            raise RuntimeError(f"sqlite3 failed on {Path(script).name}:\n"
-                               + proc.stderr.decode("utf-8", "replace").strip())
+        if exe:
+            with open(script, "rb") as fh:      # stream (scripts can be large)
+                proc = subprocess.run([exe, "-bail", str(db_path)], stdin=fh,
+                                      capture_output=True, check=False)
+            if proc.returncode != 0:
+                raise RuntimeError(f"sqlite3 failed on {Path(script).name}:\n"
+                                   + proc.stderr.decode("utf-8", "replace").strip())
+        else:
+            _run_sql_python(db_path, script)
     return db_path
 
 
 def build_db(*sql_files: str | Path, out_db: str | Path) -> Path:
-    """Build a fresh SQLite ``.db`` by piping ``.sql`` scripts through the CLI
-    in order (schema first, then full data)."""
+    """Build a fresh SQLite ``.db`` from ``.sql`` scripts in order (schema
+    first, then full data), via the ``sqlite3`` CLI if present, else stdlib."""
     return _run_scripts(Path(out_db), sql_files, fresh=True)
 
 
@@ -423,7 +476,6 @@ def apply_delta(base_db: str | Path, delta_sql: str | Path,
     base_db, delta_sql = Path(base_db), Path(delta_sql)
     out = Path(out_db) if out_db else base_db.with_name(
         delta_sql.stem.replace("_delta", "") + ".db")
-    _sqlite3_cli()
     out.unlink(missing_ok=True)
     shutil.copy2(base_db, out)
     try:

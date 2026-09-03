@@ -213,6 +213,13 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                     file_types=("Extraction archive (*.zip;*.tar;*.tgz;*.tar.gz)",
                                 "All files (*.*)"),
                 )
+            elif kind == "hashdb":
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=(
+                        "Reference data (*.db;*.sqlite;*.sqlite3;*.sql)",
+                        "All files (*.*)"),
+                )
             else:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
@@ -480,6 +487,84 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             _rematch_job(case, f"Updating flags after removing {removed}…")
             rematched = True
         return jsonify({"ok": True, "name": removed, "rematched": rematched})
+
+    # ---- global reference store (NSRL RDS and other large sets) -------
+    @app.post("/api/hashset/global/import")
+    def hashset_global_import():
+        """Import a reference set into the shared global store, in the
+        background: an NSRL RDS ``.db``, a ``.sql`` dump, or a quarterly
+        ``_delta.sql`` merged onto the previous full ``.db`` (``base``)."""
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        from .. import hashstore
+        data = request.get_json(force=True) or {}
+        src = str(data.get("path", "")).strip().strip('"')
+        base = str(data.get("base", "")).strip().strip('"')
+        schema = str(data.get("schema", "")).strip().strip('"')
+        kind = data.get("kind") if data.get("kind") in (
+            "known", "known-good", "other") else "known-good"
+        algos = tuple(a for a in (data.get("algos") or ["md5"])
+                      if a in ("md5", "sha1", "sha256")) or ("md5",)
+        if not src or not Path(src).is_file():
+            abort(400, description=f"file not found: {src or '(none)'}")
+        is_delta = bool(base) or src.lower().endswith("_delta.sql")
+        if is_delta and not (base and Path(base).is_file()):
+            abort(400, description="a quarterly delta needs the previous full "
+                  ".db in the 'base' field")
+        if schema and not Path(schema).is_file():
+            abort(400, description=f"schema file not found: {schema}")
+        name = str(data.get("name", "")).strip() or Path(src).stem
+        case = state["case"]
+        state["job"] = {"running": True, "stage": "process", "done": 0,
+                        "total": 0, "stats": None, "error": None,
+                        "message": f"Importing {name} into the reference store…"}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                path = src
+                if schema:
+                    j.update(message=f"Building a database from {Path(src).name}…")
+                    path = str(hashstore.build_db(
+                        schema, src, out_db=Path(src).with_suffix(".db")))
+                elif is_delta:
+                    j.update(message=f"Merging {Path(src).name} onto "
+                             f"{Path(base).name}…")
+                    path = str(hashstore.apply_delta(base, src))
+                _hs, added = hashstore.import_path(
+                    path, name=name, kind=kind, algos=algos,
+                    progress=lambda seen, add: j.update(
+                        done=add, message=f"{name}: {add:,} hashes stored "
+                        f"({seen:,} rows scanned)"))
+                hits = 0
+                if case is not None:
+                    from ..pipeline import rematch_hashes
+                    hits = rematch_hashes(
+                        case, progress=lambda d, t: j.update(
+                            done=d, total=t,
+                            message="Re-checking case files against known hashes…"))
+                j.update(running=False, stage="done",
+                         stats={"entries": added, "hashset_hits": hits},
+                         message=f"{name}: {added:,} hashes imported"
+                         + (f" — {hits} case hit(s)" if case is not None else ""))
+            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True, "name": name})
+
+    @app.post("/api/hashset/global/remove")
+    def hashset_global_remove():
+        from .. import hashstore
+        hs_id = int((request.get_json(force=True) or {}).get("id", 0))
+        hashstore.delete_set(hs_id)
+        rematched = False
+        if state["case"] is not None and not state["job"]["running"]:
+            _rematch_job(state["case"],
+                         "Updating flags after removing a reference set…")
+            rematched = True
+        return jsonify({"ok": True, "rematched": rematched})
 
     # ---- local hash stash (its own file - see gleapp/stash.py) -------
     def _stash_candidates(case):

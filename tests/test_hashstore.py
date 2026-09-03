@@ -101,29 +101,79 @@ def test_global_store_matches_across_a_case(tmp_path):
         c.close()
 
 
-def test_build_db_and_apply_delta(tmp_path):
-    """The NSRL workflow helpers: build a .db from .sql, then merge a delta."""
-    if shutil.which("sqlite3") is None:
+@pytest.mark.parametrize("force_python", [False, True])
+def test_build_db_and_apply_delta(tmp_path, monkeypatch, force_python):
+    """The NSRL workflow helpers: build a .db from .sql, then merge a delta.
+
+    Runs both with the ``sqlite3`` CLI (when present) and with the pure-Python
+    fallback a frozen build relies on.
+    """
+    if force_python:
+        monkeypatch.setattr(hashstore, "_sqlite3_cli", lambda: None)
+    elif shutil.which("sqlite3") is None:
         pytest.skip("sqlite3 CLI not on PATH")
 
     schema = tmp_path / "s.schema.sql"
     schema.write_text("CREATE TABLE METADATA (metadata_id INTEGER PRIMARY KEY, "
-                      "bytes INTEGER, md5 TEXT, sha1 TEXT, sha256 TEXT);\n")
+                      "file_name TEXT, bytes INTEGER, md5 TEXT, sha1 TEXT, "
+                      "sha256 TEXT);\n")
     full = tmp_path / "s.sql"
+    # the file_name carries an apostrophe and a semicolon: the pure-Python
+    # statement splitter must not break the statement on either.
     full.write_text("BEGIN TRANSACTION;\nINSERT INTO METADATA VALUES"
-                    "(1,10,'{m}','{s1}','{s2}');\nCOMMIT;\n".format(
-                        m="a" * 32, s1="b" * 40, s2="c" * 64))
+                    "(1,'O''Brien; and co',10,'{m}','{s1}','{s2}');\nCOMMIT;\n"
+                    .format(m="a" * 32, s1="b" * 40, s2="c" * 64))
     db = hashstore.build_db(schema, full, out_db=tmp_path / "s.db")
     assert db.exists()
 
     delta = tmp_path / "s_delta.sql"
     delta.write_text("BEGIN TRANSACTION;\nINSERT INTO METADATA VALUES"
-                     "(2,20,'{m}','{s1}','{s2}');\nCOMMIT;\n".format(
+                     "(2,'x',20,'{m}','{s1}','{s2}');\nCOMMIT;\n".format(
                          m="d" * 32, s1="e" * 40, s2="f" * 64))
     merged = hashstore.apply_delta(db, delta, out_db=tmp_path / "s2.db")
     _, n = hashstore.import_sqlite(merged, name="merged", kind="known")
     assert n == 6                                   # 2 rows x 3 algos
     assert hashstore.lookup("sha256", "f" * 64) is not None
+
+
+def test_global_import_endpoint(tmp_path):
+    """The GUI path: POST a reference .db, wait for the background job, and it
+    lands in the shared store (and re-flags the open case)."""
+    import time
+
+    from gleapp.web.app import create_app
+
+    src = tmp_path / "rds.db"
+    _nsrl_like(src, [(1, "AppIcon.png", 512, "aa", "1" * 32, "2" * 40, "3" * 64)])
+
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "c"), "name": "R"})
+    case = app.config["STATE"]["case"]
+    fid = case.db.upsert_file("/x/icon.png", kind="image",
+                              md5="1" * 32, sha256="3" * 64)
+    case.db.commit()
+
+    r = cl.post("/api/hashset/global/import", json={
+        "path": str(src), "name": "NSRL test", "kind": "known-good",
+        "algos": ["md5", "sha256"]})
+    assert r.status_code == 200
+
+    for _ in range(60):
+        j = cl.get("/api/job").get_json()
+        if not j["running"] and j["stage"] in ("done", "error"):
+            break
+        time.sleep(0.2)
+    assert j["stage"] == "done", j
+
+    assert any(s["name"] == "NSRL test" for s in hashstore.summary()["sets"])
+    assert hashstore.lookup("md5", "1" * 32)["kind"] == "known-good"
+    assert case.db.get_file(fid)["hashset_hit"] == "NSRL test"
+
+    # remove it again through the endpoint
+    hs_id = next(s["id"] for s in hashstore.summary()["sets"])
+    assert cl.post("/api/hashset/global/remove", json={"id": hs_id}).status_code == 200
+    assert hashstore.summary()["sets"] == []
 
 
 def test_rematch_clears_stale_hits(tmp_path):

@@ -1357,6 +1357,7 @@ document.addEventListener("keydown", e => {
     $("#helpDlg").style.display = "none"; $("#hexDlg").style.display = "none";
     $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
     $("#stashWipeDlg").style.display = "none"; $("#hashImportDlg").style.display = "none";
+    $("#refDlg").style.display = "none";
     return;
   }
   if (e.key === "?" && !$("#helpDlg").style.display.includes("block")) {
@@ -1719,11 +1720,7 @@ function updateKnownHash(kh) {
   $("#goodCount").textContent = kh.known_good
     ? `(${kh.known_good.toLocaleString()})` : "";
   renderCaseSets(kh.case_sets);
-  const store = (kh.global_entries || 0).toLocaleString();
-  const names = (kh.global_sets || []).map(s => s.name).join(", ");
-  $("#rehashInfo").textContent = kh.global_entries
-    ? `Global store: ${store} hashes${names ? " — " + names : ""}`
-    : "Global store empty (NSRL etc. — add via CLI).";
+  renderRefStore(kh.global_sets, kh.global_entries || 0);
   const st = kh.stash;
   $("#stashInfo").textContent = st && st.total
     ? `🔒 Hash stash: ${st.total.toLocaleString()} MD5(s) — click to manage`
@@ -1901,6 +1898,103 @@ $("#hiGo").onclick = async () => {
     reload();
   });
 };
+
+/* ---------- global reference store (NSRL RDS etc.) ---------- */
+function renderRefStore(sets, total) {
+  sets = sets || [];
+  const info = $("#refInfo");
+  if (info) info.textContent = sets.length
+    ? `Reference data: ${total.toLocaleString()} hashes · ${sets.length} set${sets.length === 1 ? "" : "s"} ▸`
+    : "Reference data: none — add NSRL ▸";
+
+  const list = $("#refList");
+  if (!list) return;
+  list.innerHTML = sets.length
+    ? sets.map(s =>
+        `<div class="cs" data-id="${s.id}">` +
+        `<span style="flex:1" title="${esc(s.source || "")}">${esc(s.name)}</span>` +
+        `<span class="muted">${(s.count || 0).toLocaleString()}</span>` +
+        `<span class="x" title="Remove from the shared store">✕</span></div>`).join("")
+    : `<span class="muted">Nothing imported yet.</span>`;
+  list.querySelectorAll(".cs .x").forEach(x => x.onclick = async () => {
+    const row = x.closest(".cs"), id = +row.dataset.id;
+    if (!confirm("Remove this reference set from the shared store?\n\nEvery case stops matching against it.")) return;
+    row.style.opacity = ".4";
+    const r = await api("/api/hashset/global/remove", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (r.error) { row.style.opacity = ""; return toast(r.message || "Could not remove"); }
+    toast("Reference set removed");
+    const after = async () => {
+      try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+      load();
+    };
+    if (r.rematched) trackJob("#rehashInfo", "#rehashProg", "Updating flags", after);
+    else after();
+  });
+}
+
+function refMode() {
+  return document.querySelector('input[name=refMode]:checked').value;
+}
+function syncRefDlg() {
+  const delta = refMode() === "delta";
+  $("#refBaseRow").style.display = delta ? "" : "none";
+  $("#refFileLbl").textContent = delta ? "Delta script (_delta.sql)" : "Database file";
+}
+async function browseRef(target) {
+  const p = await pick("hashdb", "Path to the reference database / delta script:");
+  if (!p) return;
+  $(target).value = p;
+  if (target === "#refPath" && !$("#refName").value.trim())
+    $("#refName").value = p.split(/[\\/]/).pop()
+      .replace(/\.(db|sqlite3?|sql)$/i, "").replace(/_delta$/i, "");
+}
+function openRefDlg() {
+  $("#refPath").value = ""; $("#refBase").value = ""; $("#refName").value = "";
+  $("#refPath").readOnly = $("#refBase").readOnly = !!Lr.native;
+  document.querySelector('input[name=refMode][value=full]').checked = true;
+  $("#refKind").value = "known-good";
+  $("#refAlgos").value = "md5";
+  $("#refGo").disabled = false;
+  syncRefDlg();
+  $("#refDlg").style.display = "block";
+}
+$("#refInfo").onclick = openRefDlg;
+document.querySelectorAll('input[name=refMode]').forEach(r => r.onchange = syncRefDlg);
+$("#refBrowse").onclick = () => browseRef("#refPath");
+$("#refBaseBrowse").onclick = () => browseRef("#refBase");
+$("#refCancel").onclick = () => $("#refDlg").style.display = "none";
+$("#refDlg").addEventListener("click", e => {
+  if (e.target.id === "refDlg") $("#refDlg").style.display = "none";
+});
+$("#refGo").onclick = async () => {
+  const path = $("#refPath").value.trim();
+  if (!path) return toast("Choose the reference file first");
+  const delta = refMode() === "delta";
+  const base = $("#refBase").value.trim();
+  if (delta && !base) return toast("A quarterly delta needs the previous full .db");
+  const algos = $("#refAlgos").value.split(",");
+  const kind = $("#refKind").value;
+  const name = $("#refName").value.trim();
+  $("#refGo").disabled = true;
+  const r = await api("/api/hashset/global/import", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, base: delta ? base : "", name, kind, algos }),
+  });
+  $("#refGo").disabled = false;
+  if (r.error) return toast(r.message || "Import failed");
+  $("#refDlg").style.display = "none";
+  toast(`Importing ${r.name} — this runs in the background`);
+  trackJob("#rehashInfo", "#refProg", "Importing reference data", async (ok, j) => {
+    if (!ok) return;
+    toast(j.message || "Reference data imported");
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+    load();
+  });
+};
+
 $("#btnRedup").onclick = async () => {
   const r = await api("/api/redup", { method: "POST" });
   if (r.error) return toast(r.message || "Could not start");

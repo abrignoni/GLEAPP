@@ -370,34 +370,29 @@ reprocess.
 
 ### The global store (NSRL and other large reference sets)
 
-The global store lives at `%LOCALAPPDATA%\GLEAPP\hashsets\` and is shared by
-every case. Importing into it is a command-line operation (the frozen app takes
-no sub-commands) — run it from the GLEAPP virtual environment. Accepted files: a
-SQLite `.db`, Project VIC JSON, CAID JSON, or a plain hash list.
+The global store lives at `%LOCALAPPDATA%\GLEAPP\hashsets\` (macOS
+`~/Library/Application Support/GLEAPP/hashsets/`, Linux
+`~/.config/GLEAPP/hashsets/`) and is shared by every case. It holds large
+reference sets like the NSRL RDS once, instead of copying them into every
+`case.gleapp`. Accepted inputs: a SQLite `.db`, an NSRL `.sql` dump or
+`_delta.sql`, a Project VIC JSON, a CAID export, or a plain hash list.
 
-```
-.venv\Scripts\gleapp hashset --global <file> --name "…" --kind <known|known-good|other>
-.venv\Scripts\gleapp hashset --list          # show what's imported
-.venv\Scripts\gleapp hashset --rm <id>       # remove a set
-```
+Manage it from the sidebar: **Hash sets → the "Reference data: … ▸" line**
+opens the **Reference data** dialog, which lists the imported sets (each with an
+**✕** to remove it — every case then stops matching against it) and an **Add a
+set** form below. The command line (`gleapp hashset --global …`, from a source
+install) does the same thing.
 
-Re-importing with the same `--name` replaces a set.
-
-### Setting up the NSRL RDS on your own machine
+### Setting up the NSRL RDS
 
 The **National Software Reference Library Reference Data Set (RDS)** is NIST's
 public catalogue of hashes of known software — operating systems, applications
 and their bundled files. Matching your evidence against it lets you *eliminate*
 the OS/app noise and concentrate on user content. GLEAPP does not ship it; you
-download it and import it once.
+download it from NIST and import it once.
 
-**1. Get the tool.** The NSRL import shells out to the `sqlite3` command-line tool
-for the SQL dumps and delta merges. Install it from
-<https://sqlite.org/download.html> and put `sqlite3` on your PATH.
-
-**2. Download from NIST.** RDS download page: <https://www.nsrl.nist.gov/> →
-"Download RDS" (files served from
-<https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/>). Four sets:
+**1. Download from NIST.** <https://www.nsrl.nist.gov/> → **Download RDS**
+(files at <https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/>). Four sets:
 
 | Set | Use for |
 |---|---|
@@ -406,40 +401,48 @@ for the SQL dumps and delta merges. Install it from
 | **iOS** | iOS app bundles and their contents |
 | **Legacy** | pre-2000 software — skip unless you work vintage systems |
 
-Each set publishes a **full** release once a year (March) —
-`RDS_YYYY.03.x_<set>.zip`, a large SQLite `.db` (tens of GB uncompressed) — and a
-**delta** every quarter — `RDS_YYYY.MM.x_<set>_delta.zip`, a `<set>_delta.sql` of
-the changes since the last full release. **Modern** also offers a much smaller
-*minimal* database (distinct SHA-256 only); import that with `--algos sha256`.
+Each set publishes a **full** SQLite `.db` once a year (March) —
+`RDS_YYYY.03.x_<set>.zip`, tens of GB unzipped — and a **quarterly delta** —
+`RDS_YYYY.MM.x_<set>_delta.zip`, a `<set>_delta.sql` of the changes since. Unzip
+what you download. **Modern** also offers a much smaller *minimal* database
+(distinct SHA-256 only) — for that, set **Store** to *SHA-256 only* in step 2.
 
-**3. First import — a full release.** Download and unzip the full set, then:
+**2. First import — a full release.** Sidebar → **Hash sets → Reference data …
+▸ → Add a set**:
 
-```
-.venv\Scripts\gleapp hashset --global "RDS_2026.03.1_modern.db" --name "NSRL Modern 2026.03.1" --kind known-good --algos md5
-```
+- leave **Full release** selected; **Choose…** the unzipped `.db`;
+- **Name** — auto-filled from the filename; edit to taste (e.g. `NSRL Modern 2026.03.1`);
+- **Treat matches as** — leave *Benign — NSRL / known-good*;
+- **Store** — leave *MD5 only* (every ingested file has one; roughly halves the
+  store vs. all three);
+- **Import**. It runs in the background — you can keep working; progress shows
+  under *Hash sets*. A full set is tens of millions of hashes and takes a while.
 
-`--algos md5` stores only MD5 — every file GLEAPP ingests has one, and it roughly
-halves the store versus all three hashes. The store lands in
-`%LOCALAPPDATA%\GLEAPP\hashsets\hashsets.gleapp`; the source `.db` can then live
-anywhere or be deleted — GLEAPP never reads it again. Repeat for Android / iOS.
+Repeat for Android / iOS. The source `.db` can then be moved or deleted — GLEAPP
+never reads it again — **except** keep it as the base for the next delta.
 
-**4. Quarterly update — a delta.** A delta must be applied onto the *previous
-full* `.db` for the same set. GLEAPP does the merge for you:
+**3. Quarterly update — a delta.** A delta is merged onto the *previous full*
+`.db` for the same set (the base is never modified). In **Add a set**:
 
-```
-.venv\Scripts\gleapp hashset --global --base "RDS_2026.03.1_modern.db" --delta "RDS_2026.06.1_modern_delta.sql" --name "NSRL Modern 2026.06.1" --kind known-good --algos md5
-```
+- choose **Quarterly delta**;
+- **Delta script** — the unzipped `<set>_delta.sql`;
+- **Previous full `.db`** — the one you kept from step 2;
+- **Name** it for the new quarter (e.g. `NSRL Modern 2026.06.1`), same choices, **Import**.
 
-This writes `RDS_2026.06.1_modern.db` next to the base (a copy + delta — the base
-is never modified), re-imports it, and — because the `--name` stem matches —
-replaces the previous NSRL Modern set. Keep the new `RDS_2026.06.1_modern.db`; it
-is the base for the September delta. Each year, download the new March full
-release and start the chain over.
+GLEAPP writes the merged `RDS_YYYY.MM.x_<set>.db` next to the base and imports it.
+Remove the previous quarter's set with its **✕**. Keep the new merged `.db` as
+the base for the next delta. Each year, download the new March full release and
+start over.
 
-**5. Use it.** Open a case and click **Re-check known hashes** (or re-run
+**4. Use it.** Open a case and click **Re-check** under *Hash sets* (or re-run
 Process). NSRL matches get the grey `NSRL` badge, are auto-categorized
 **Non-pertinent** if still uncategorized, and drop out of view when you tick
 **Hide known-NSRL**.
+
+> **Deltas and the `sqlite3` tool.** Merging a delta needs SQLite. GLEAPP uses a
+> built-in fallback, so it works from the frozen app with nothing installed; if
+> the `sqlite3` command-line tool is on your PATH (or sits next to `GLEAPP.exe`)
+> it's used instead and is faster on very large scripts.
 
 ## 12. Local hash stash
 
