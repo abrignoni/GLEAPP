@@ -24,15 +24,22 @@ button (top-right of the launcher, and in every case's header) opens this manual
   each shows its live file count.
 - **Open existing case** — point at a folder containing a `case.gleapp` file.
 - **New case** — give it a name, a folder (created if missing) and your examiner
-  name, then add one or more **evidence sources**:
-  - a **folder** — scanned recursively for media;
-  - a **JSON job spec** — a list of named sources;
-  - a **Project VIC 2.0 (US) JSON** — detected automatically; its media folder is
-    resolved next to the file, and existing MediaID / category / original path /
-    MIME / victim-offender flags are imported.
+  name, then add one or more **evidence sources** with the buttons under
+  *Evidence to ingest* (or paste a path and click **Add**):
+  - **Browse for folder** — scanned recursively for media;
+  - **Browse for extraction (zip / tar)** — a full file-system extraction
+    archive (`.zip`, `.tar`, `.tar.gz`); its media is read straight from the
+    archive unless you tick *Copy media out of extraction archives*, and a
+    compressed `.tar.gz` is always copied out;
+  - **Browse for JSON** — a GLEAPP job spec (a list of named sources) **or** a
+    **Project VIC 2.0 (US) JSON**, detected automatically; the VIC media folder
+    is resolved next to the file, and existing MediaID / category / original
+    path / MIME / victim-offender flags are imported.
 
-Ingest options: **Face / skin screening** (on by default; can be run later) and
-**video key frames per clip** (default 6). Click **Create case & ingest**.
+Ingest options: **Face / skin screening** (on by default; can be run later),
+**video key frames per clip** (default 6), and **Copy media out of extraction
+archives into the case** (off = the case stays small but the archive must stay
+put; on = the case is self-contained). Click **Create case & ingest**.
 
 **The gallery opens as soon as files are registered — you don't wait for
 processing to finish.** A progress bar along the bottom of the window shows the

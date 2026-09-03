@@ -41,18 +41,26 @@ case's header) opens this manual.</p>
   <li><strong>Open existing case</strong> — point at a folder that contains a
   <code>case.gleapp</code> file.</li>
   <li><strong>New case</strong> — give it a name, a folder (created if missing), and
-  your examiner name, then add one or more <strong>evidence sources</strong>:
+  your examiner name, then add one or more <strong>evidence sources</strong> with the
+  buttons under <em>Evidence to ingest</em> (or paste a path and click <strong>Add</strong>):
     <ul>
-      <li>a <strong>folder</strong> — scanned recursively for media;</li>
-      <li>a <strong>JSON job spec</strong> — a list of sources with names;</li>
-      <li>a <strong>Project VIC 2.0 (US) JSON</strong> — detected automatically; its
+      <li><strong>Browse for folder</strong> — scanned recursively for media;</li>
+      <li><strong>Browse for extraction (zip / tar)</strong> — a full file-system
+      extraction archive (<code>.zip</code>, <code>.tar</code>, <code>.tar.gz</code>);
+      its media is read straight from the archive unless you tick <em>Copy media out
+      of extraction archives</em>, and a compressed <code>.tar.gz</code> is always
+      copied out;</li>
+      <li><strong>Browse for JSON</strong> — a GLEAPP job spec (named sources) <strong>or</strong>
+      a <strong>Project VIC 2.0 (US) JSON</strong>, detected automatically; the VIC
       media folder is resolved next to the file, and existing MediaID / category /
       original path / MIME / victim-offender flags are imported.</li>
     </ul>
   </li>
 </ul>
 <p>Ingest options: <strong>Face / skin screening</strong> (on by default; can be run
-later instead) and <strong>video key frames per clip</strong> (default 6). Click
+later instead), <strong>video key frames per clip</strong> (default 6), and
+<strong>Copy media out of extraction archives into the case</strong> (off = the case
+stays small but the archive must stay put; on = the case is self-contained). Click
 <strong>Create case &amp; ingest</strong>.</p>
 <p><strong>The gallery opens as soon as files are registered — you don't wait for
 processing to finish.</strong> A progress bar along the bottom of the window

@@ -446,16 +446,18 @@
     <h2 style="margin-top:16px">Evidence to ingest</h2>
     <div class="srclist" id="srcList"></div>
     <div class="field">
-      <input type="text" id="srcTypePath" placeholder="paste a folder or .json path, then Add">
+      <input type="text" id="srcTypePath" placeholder="paste a folder, .json or archive path, then Add">
       <button class="btn" id="srcTypeAdd">Add</button>
     </div>
     <div class="field">
       <button class="btn" id="addFolder">+ Browse for folder</button>
+      <button class="btn" id="addArchive">+ Browse for extraction (zip / tar)</button>
       <button class="btn" id="addSpec">+ Browse for JSON (job or Project VIC)</button>
     </div>
     <div class="muted" style="font-size:11px;margin-top:2px">
-      A Project VIC <code>.json</code> is detected automatically — its media
-      folder is resolved next to the file.
+      An extraction archive (<code>.zip</code> / <code>.tar</code> / <code>.tar.gz</code>)
+      is read in place unless you tick the box below. A Project VIC <code>.json</code>
+      is detected automatically — its media folder is resolved next to the file.
     </div>
     <label style="margin-top:10px"><input type="checkbox" id="optScreen" checked> Face / skin screening</label>
     <label title="Off, an extraction archive (zip or tar) is read in place and the case stays small; the archive must stay where it is. On, the media is copied out so the case stands alone. A compressed tar is always copied out."><input type="checkbox" id="optStage"> Copy media out of extraction archives into the case</label>

@@ -130,6 +130,35 @@ def test_include_other_stages_non_media_too(tmp_path):
         c.close()
 
 
+def test_ingest_endpoint_accepts_an_archive_in_sources(tmp_path):
+    """The launcher's "Browse for extraction" button adds an archive to the
+    same `sources` list as a folder; the endpoint must ingest it as an archive."""
+    from gleapp.web.app import create_app
+
+    z = _build(tmp_path)
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "c"), "name": "A"})
+    r = cl.post("/api/case/ingest", json={
+        "spec": None,
+        "sources": [{"name": z.name, "path": str(z)}],
+        "options": {"screen": False, "keyframes": 0},
+    })
+    assert r.status_code == 200
+
+    for _ in range(80):
+        j = cl.get("/api/job").get_json()
+        if not j["running"] and j["stage"] in ("done", "error"):
+            break
+        time.sleep(0.25)
+    assert j["stage"] == "done", j
+
+    case = app.config["STATE"]["case"]
+    rows = case.db.iter_files()
+    assert rows and {r["source"] for r in rows} == {"EXTRACTION_FFS.zip"}
+    assert case.db.get_meta("archive:EXTRACTION_FFS.zip:root") == "Dump/"
+
+
 def test_common_root_needs_every_member_under_one_folder():
     assert archive.common_root(["Dump/a", "Dump/b/c"]) == "Dump/"
     assert archive.common_root(["Dump/a", "Other/b"]) == ""
