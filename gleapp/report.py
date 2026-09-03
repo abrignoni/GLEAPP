@@ -15,7 +15,7 @@ from . import categories, imaging, timeutil  # noqa: F401  (imaging: registers H
 from .case import Case
 
 _CSV_FIELDS = [
-    "id", "rel_path", "path", "source", "kind", "ext", "size",
+    "id", "file_path", "disk_name", "source", "kind", "ext", "size",
     "created_dt", "ctime", "mtime", "atime",
     "md5", "sha1", "sha256", "phash", "width", "height", "duration",
     "gps_lat", "gps_lon", "camera", "faces", "skin_ratio",
@@ -39,6 +39,8 @@ def _rows(case: Case, where: str = "") -> list[dict]:
         d = dict(r)
         d["category_label"] = categories.label(case.db, d.get("category") or 0)
         d["tags"] = case.db.tags_for(d["id"])
+        d["file_path"] = _disp_path(d)      # device path (VIC) or source path
+        d["disk_name"] = _disk_name(d)      # the on-disk (MD5) name
         out.append(d)
     return out
 
@@ -105,7 +107,7 @@ def export_kml(case: Case, dest: str | Path, where: str = "") -> Path:
     ]
     for d in pts:
         desc = (
-            f"{html.escape(d['rel_path'])}<br/>"
+            f"{html.escape(_disp_path(d))}<br/>"
             f"{html.escape(str(d.get('created_dt') or ''))}<br/>"
             f"Category: {html.escape(d['category_label'])}"
         )
@@ -154,12 +156,23 @@ def _disp_name(d: dict) -> str:
     return d.get("orig_name") or _disk_name(d) or f"file #{d.get('id')}"
 
 
+def _disp_path(d: dict) -> str:
+    """Where the file lived on the device (Project VIC MediaFiles.FilePath),
+    else - for a plain folder ingest only - the path within that source.
+    Never the local folder a VIC export was unpacked into."""
+    if d.get("orig_path"):
+        return d["orig_path"]
+    if d.get("media_id"):          # a VIC file with no MediaFiles path
+        return ""
+    return d.get("path") or d.get("rel_path") or ""
+
+
 # key -> (label, value fn, is_monospace).  The report dialog offers exactly
 # these; the examiner picks which appear under each image.
 _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "name":       ("File name",     lambda d: _disp_name(d), False),
     "disk_name":  ("Stored name",   lambda d: _disk_name(d), True),
-    "path":       ("Path",          lambda d: d.get("rel_path") or d.get("path") or "", False),
+    "path":       ("Path",          _disp_path, False),
     "orig_name":  ("Original name", lambda d: d.get("orig_name") or "", False),
     "orig_path":  ("Device path",   lambda d: d.get("orig_path") or "", False),
     "created_dt": ("Captured (EXIF)", lambda d: str(d.get("created_dt") or ""), False),
