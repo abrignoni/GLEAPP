@@ -1,0 +1,11 @@
+# Text files are LF in the repository and on checkout, matching iLEAPP and ALEAPP.
+# Binary assets are marked so normalization can never touch them.
+* text=auto eol=lf
+*.whl -text
+*.onnx -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.ico -text
+*.icns -text
