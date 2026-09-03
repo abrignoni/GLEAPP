@@ -41,7 +41,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     for s in sources:
         how = ""
         if s.kind == "archive":
-            how = "  [copied into the case]" if s.stage else "  [read from the zip on demand]"
+            how = "  [copied into the case]" if s.stage else "  [read from the archive on demand]"
         _p(f"  - {s.name}: {s.path}{how}")
     n = ingest_sources(case, sources)
     _p(f"Registered {n} files.")
@@ -208,7 +208,7 @@ def cmd_source(args: argparse.Namespace) -> int:
             if not rows:
                 _p("No archive sources in this case.")
             for s in rows:
-                _p(f"  {s['name']}: {s['files']:,} files, {s['mode']}, "
+                _p(f"  {s['name']}: {s['files']:,} files, {s['format']}, {s['mode']}, "
                    f"{s['status']}  {s['path']}")
             return 0
         if args.action == "relink":
@@ -224,7 +224,7 @@ def cmd_source(args: argparse.Namespace) -> int:
             _p(f"Copied {n:,} files into the case; {args.name} is self-contained now.")
             return 0
         n = archive.unstage_source(case, args.name)
-        _p(f"Removed {n:,} copies; {args.name} is read from the zip on demand again.")
+        _p(f"Removed {n:,} copies; {args.name} is read from the archive on demand again.")
         return 0
     except archive.ArchiveUnavailable as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -342,21 +342,23 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--no-screen", action="store_true", help="skip face/skin screening")
         sp.add_argument("--cluster-threshold", type=int, default=8)
 
-    s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction zip, or a JSON spec, then process")
-    s.add_argument("source", help="folder path, extraction .zip, OR .json spec file")
+    s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction archive "
+                                      "(zip or tar), or a JSON spec, then process")
+    s.add_argument("source", help="folder path, extraction .zip/.tar/.tar.gz, OR .json spec file")
     s.add_argument("--no-process", action="store_true", help="register files only")
     s.add_argument("--stage", action="store_true",
-                   help="copy the media out of an extraction zip into the case, so the "
-                        "case is self-contained (default: read it from the zip on demand)")
+                   help="copy the media out of an extraction archive into the case, so the "
+                        "case is self-contained (default: read it from the archive on demand; "
+                        "a compressed tar is always copied out)")
     add_proc_opts(s)
     s.set_defaults(func=cmd_ingest)
 
     s = sub.add_parser("source",
-                       help="extraction zips: list them, relink a moved zip, or copy one "
+                       help="extraction archives: list them, relink a moved one, or copy one "
                             "into the case (stage) and back (unstage)")
     s.add_argument("action", choices=["list", "relink", "stage", "unstage"])
     s.add_argument("name", nargs="?", help="source name, as shown by 'source list'")
-    s.add_argument("path", nargs="?", help="relink: where the zip is now")
+    s.add_argument("path", nargs="?", help="relink: where the archive is now")
     s.set_defaults(func=cmd_source)
 
     s = sub.add_parser("process", help="(re)run processing on the current case")
