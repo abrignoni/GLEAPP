@@ -42,6 +42,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pylint
           python -m pip install -r requirements.txt
+          # pylint resolves imports against this environment, and the test files
+          # import pytest. A new test file has no baseline in the merge-base
+          # comparison, so an import it cannot resolve counts as introduced and
+          # fails the job. Same dev extras test_cases.yml installs.
+          python -m pip install pytest piexif
 
       # NUL-delimited so a path containing a space cannot be split into two paths.
       - name: Lint the files this pull request changes
