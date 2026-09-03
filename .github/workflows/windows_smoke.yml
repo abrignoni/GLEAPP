@@ -5,10 +5,12 @@ name: Windows Smoke Test
 # CI jobs run on Linux, so without this job the platform the tool actually ships on is
 # the one platform nothing tests.
 #
-# This checks importability, not parsing correctness. That is a low bar and it still
-# catches a real class of break: backslash path separators, a case-sensitivity
-# assumption that only holds on Linux, and any module reaching for a POSIX-only name at
-# import time. All of those pass every Linux job and fail on a user's machine.
+# Two steps, in increasing strength. The import sweep catches breakage at import time:
+# a module reaching for a POSIX-only name, or a conditional import that resolves on one
+# OS and not the other. The test suite then catches behaviour, which is where the real
+# Windows differences live. Path separators, case-insensitive filesystems and text
+# encoding all pass on Linux and can still be wrong here, and reading a file with the
+# wrong encoding is the kind of defect that returns bad data rather than an error.
 #
 # --prefer-binary matters here. pyliblzfse publishes a Windows wheel but no Linux one,
 # and the runner has no C toolchain configured by default, so preferring wheels keeps
@@ -18,6 +20,7 @@ on:
   pull_request:
     paths:
       - 'gleapp/**'
+      - 'tests/**'
       - 'tools/**'
       - 'requirements.txt'
       - 'pyproject.toml'
@@ -44,6 +47,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --prefer-binary -r requirements.txt
+          python -m pip install --prefer-binary pytest piexif
 
       - name: Import every gleapp module on Windows
         run: python tools/ci_import_smoke.py
+
+      - name: Run test suite on Windows
+        run: python -m pytest tests -v
