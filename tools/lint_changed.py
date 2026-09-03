@@ -74,6 +74,27 @@ def main():
         print('No Python files changed.')
         return 0
 
+    # A root-level launcher that shares a package's name (gleapp.py beside gleapp/)
+    # cannot be handed to pylint together with that package's importers. Given the
+    # file on its command line, astroid registers it as module `gleapp` for the whole
+    # run, and every co-linted `from gleapp.x import y` then resolves into the
+    # three-line shim. Measured: 58 false no-name-in-module warnings on an untouched
+    # test file, and `# pylint: skip-file` does not prevent it, because the damage is
+    # in registration rather than checking. Python's own import system prefers the
+    # package, so this is a pylint-only collision. Drop such launchers from the set;
+    # a three-line shim has nothing for pylint to find anyway.
+    shadowing = sorted(
+        p for p in paths
+        if os.path.dirname(p) == ''
+        and os.path.isfile(os.path.join(os.path.splitext(p)[0], '__init__.py')))
+    if shadowing:
+        print('Not linting root launchers that share a package name: '
+              + ', '.join(shadowing) + '\n')
+        paths = [p for p in paths if p not in shadowing]
+        if not paths:
+            print('Only root launchers changed; nothing to lint.')
+            return 0
+
     print('Linting:\n' + '\n'.join(f'  {p}' for p in paths) + '\n')
     after = run_pylint('.', paths)
 
