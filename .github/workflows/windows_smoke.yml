@@ -16,15 +16,12 @@ name: Windows Smoke Test
 # and the runner has no C toolchain configured by default, so preferring wheels keeps
 # this job from failing on a source build rather than on GLEAPP's own code.
 
+# The pull_request trigger deliberately carries no paths: filter. These checks are
+# required for merging, and a required check that never runs never reports, which
+# blocks the pull request permanently rather than passing it. Path filtering and
+# required status are incompatible; the filter stays only on the advisory lint job.
 on:
   pull_request:
-    paths:
-      - 'gleapp/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'requirements.txt'
-      - 'pyproject.toml'
-      - '.github/workflows/windows_smoke.yml'
   workflow_dispatch:
 
 permissions:

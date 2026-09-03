@@ -13,15 +13,12 @@ name: Python Runtime Contract
 # If a version in this matrix is genuinely not supportable, the honest fix is to raise
 # requires-python in pyproject.toml, not to drop the version from here.
 
+# The pull_request trigger deliberately carries no paths: filter. These checks are
+# required for merging, and a required check that never runs never reports, which
+# blocks the pull request permanently rather than passing it. Path filtering and
+# required status are incompatible; the filter stays only on the advisory lint job.
 on:
   pull_request:
-    paths:
-      - 'gleapp/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'requirements.txt'
-      - 'pyproject.toml'
-      - '.github/workflows/python_runtime_contract.yml'
   workflow_dispatch:
 
 permissions:
