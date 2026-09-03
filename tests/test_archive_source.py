@@ -80,12 +80,14 @@ def test_a_zip_is_detected_before_the_folder_branch(tmp_path):
     assert parse_source_spec(plain)[0][0].kind == "folder"
 
 
-def test_media_is_staged_registered_and_processed(tmp_path):
+def test_media_is_staged_registered_and_processed_when_staged(tmp_path):
     z = _build(tmp_path)
     c = open_case(tmp_path / "case", create=True, examiner="t")
     try:
         sources, _ = parse_source_spec(z)
+        sources[0].stage = True                       # reference is the default; see test_archive_reference
         n = ingest_sources(c, sources)
+        assert c.db.get_meta("archive:EXTRACTION_FFS.zip:mode") == "staged"
         rows = {r["orig_path"]: r for r in c.db.iter_files()}
         assert n == 6 and len(rows) == 6, sorted(rows)
         assert "Dump/data/data/com.app/db/thing.db" not in rows       # not media, include_other off

@@ -124,9 +124,14 @@ python -m gleapp --case mycase ingest  C:\evidence\usb1
 #    ... or a JSON job describing several sources
 python -m gleapp --case mycase ingest  sample_evidence\ingest.json
 
-#    ... or a full-file-system extraction zip (Cellebrite, GrayKey, Magnet): the
-#    members are staged under the case and registered by their device paths
+#    ... or a full-file-system extraction zip (Cellebrite, GrayKey, Magnet). Its media
+#    is registered by device path and read from the zip on demand, so the case stays
+#    small and the zip has to stay where it is. Add --stage to copy the media into
+#    the case instead (self-contained, and as large as the media).
 python gleapp.py -c mycase ingest /path/to/EXTRACTION_FFS.zip
+python gleapp.py -c mycase source list                  # is the zip still where the case expects it?
+python gleapp.py -c mycase source relink EXTRACTION_FFS.zip /new/place/EXTRACTION_FFS.zip
+python gleapp.py -c mycase source stage  EXTRACTION_FFS.zip   # copy it in later; 'unstage' reverses
 # 2. (optional) load a known-hash list
 python -m gleapp --case mycase hashset  known_hashes.csv --name "Op-Foo known" --kind known
 
@@ -146,6 +151,8 @@ mycase/
   thumbs/           generated thumbnails + video key frames
   reports/          exported reports
   backups/          timestamped case snapshots (auto + manual)
+  staged/           media copied out of an extraction zip (only with --stage)
+  cache/            full-size copies the viewer pulled from a zip on demand (bounded)
 ```
 
 Re-running `ingest` / `process` skips already-processed files; add `--force` to redo.
@@ -172,7 +179,8 @@ The most recent 20 are kept. To roll back, close GLEAPP and copy a snapshot over
 ## Ingest JSON spec
 
 A path in `sources` may also be a full-file-system extraction zip; it is detected by
-extension or by its magic and ingested as an archive source, staged under the case.
+extension or by its magic and ingested as an archive source. Its media is read from the
+zip on demand unless the entry sets `"stage": true`, which copies it under the case.
 
 Pass a folder path **or** a `.json` file. Accepted shapes (keys case-insensitive):
 
@@ -246,9 +254,12 @@ gallery re-runs matching without a full reprocess.
 
 ```
 gleapp -c CASE  init      [--name NAME]
-gleapp -c CASE  ingest    SOURCE  [--no-process] [--force] [--workers N]
+gleapp -c CASE  ingest    SOURCE  [--no-process] [--stage] [--force] [--workers N]
                                  [--keyframes N] [--no-screen] [--cluster-threshold N]
 gleapp -c CASE  process   [same processing flags]
+gleapp -c CASE  source    list | relink NAME PATH | stage NAME | unstage NAME
+                          # extraction zips: where they are, move the record when a
+                          # zip moved, copy one into the case, or drop the copies
 gleapp -c CASE  hashset   FILE  [--name NAME] [--kind known|known-good|other]
 gleapp          hashset   [FILE] --global  [--kind …] [--table T] [--algos a,b]
                           [--schema S --full F] [--base B.db --delta D.sql]

@@ -63,7 +63,7 @@ Never publish an absolute path from the examiner's machine into a report or an e
 Use `os.path` and `pathlib`. A split on a hard-coded separator is the identity function on
 the other platform, and a derived column that always equals its input is the tell.
 
-## Full-file-system zips are staged flat and hashed, not mirrored
+## Full-file-system zips are read in place by default, and any copy is flat and hashed
 
 An extraction zip is a third source kind, `archive` (`gleapp/archive.py`). Members are
 enumerated from the central directory, which took 0.1 to 1.7 seconds on 12 to 14 GiB
@@ -71,18 +71,42 @@ images, and every extension-less member is sniffed from its first 16 bytes strai
 the archive, because that is where the media hides: on one Android image 1,085 members
 were media by extension and the sniff found 2,849 more.
 
-What is staged is what is registered. Media is staged under `<case>/staged/` as
-`<slug>/<2 hex>/<sha1 of the member path>.<ext>`; `path` is that file, `rel_path` is the
-member path with the single root folder stripped, `orig_path` the member path as stored.
+Two modes per source. **Reference**, the default, copies nothing out: a row's `path` is
+where a copy would go, and the bytes are pulled from the zip on demand, into
+`<case>/tmp/` while the pipeline works on a file and into `<case>/cache/` for the viewer
+(bounded at 2 GiB, oldest evicted, because a video is served in many range requests).
+**Staged** (`--stage`, the launcher checkbox, `"stage": true` in a job file) copies every
+registered member under `<case>/staged/`. Measured on one 15 GB Android image, same
+options: both modes registered 3,895 rows with identical hashes, perceptual hashes,
+thumbnails and 267 identical errors; the reference case was 55 MB and took 51 s, the
+staged case 524 MB and 2 min 57 s, the difference being the copy off an external drive.
+`gleapp source stage|unstage` converts a case either way; unstage refuses unless the zip
+still holds every registered member with the same size and CRC.
+
+A reference case depends on the zip staying readable where the case recorded it. Its
+path, size, mtime and per-row CRC-32 are recorded at ingest; `source_status` reports
+`ok`, `changed` or `missing`, the gallery shows a banner and a Relink button, and
+`gleapp source relink` or `POST /api/source/relink` accepts a new location only when
+every registered member is in it with the same size and CRC. A case whose zip has gone
+still opens: thumbnails, hashes, stacks and categories were computed at processing time,
+so only full-size bytes and export are lost until it is relinked, and each such file is
+reported with a `source archive unavailable` error rather than crashing the run.
+
+Copies are named `<slug>/<2 hex>/<sha1 of the member path>.<ext>` (`rel_path` is the
+member path with the single root folder stripped, `orig_path` the member path as stored).
 Flat and hashed for three measured reasons: this codebase has no Windows long-path
 handling and members nest 20 levels deep; case-variant names cannot collide on a
 case-insensitive volume; and a member name carrying control characters, which real iOS
-zips have, never reaches the filesystem. Timestamps come from the zip's extended field
-when present (every member on one Android image, none of the media on one iOS image)
-and the DOS date otherwise; the case's `meta` table records which, per source, along
-with the archive's own hash when a UFED `.ufd` sidecar sits beside it.
+zips have, never reaches the filesystem. On-demand copies land through a private temp
+name and `os.replace`, so a partial copy never sits at a final path. One `ZipFile` handle
+per archive per process is shared across threads (zipfile serialises reads on its own
+lock), since opening a 14 GiB zip re-reads its central directory. Timestamps come from
+the zip's extended field when present (every member on one Android image, none of the
+media on one iOS image) and the DOS date otherwise; the case's `meta` table records
+which, per source, along with the archive's own hash when a UFED `.ufd` sidecar sits
+beside it.
 
-Staged files are kept so the viewer can open them; deleting the case folder deletes
-them, and the source zip is never written to. An extraction surfaces app streaming
-caches, ExoPlayer `.exo` fragments and the like, which are not standalone videos; the
-pipeline reports them with its existing messages rather than silently dropping them.
+Deleting the case folder deletes every copy the case made, and the source zip is never
+written to. An extraction surfaces app streaming caches, ExoPlayer `.exo` fragments and
+the like, which are not standalone videos; the pipeline reports them with its existing
+messages rather than silently dropping them.
