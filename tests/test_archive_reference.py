@@ -290,3 +290,39 @@ def test_stage_reaches_the_source_from_json_and_the_cli(tmp_path):
     finally:
         c.close()
     assert cli_main(["-c", str(case_dir), "source", "list"]) == 0
+
+
+def test_gallery_endpoints_stage_and_unstage(tmp_path):
+    """The sidebar buttons call these: stage runs as a job the live bar can follow,
+    unstage is immediate and refused while the zip is missing."""
+    z = _build(tmp_path)
+    c, _ = _ingest(tmp_path, z, "case")
+    c.close()
+    client, state = _client(tmp_path / "case")
+    try:
+        r = client.post("/api/source/stage", json={"name": SRC})
+        assert r.status_code == 200
+        for _ in range(100):
+            j = client.get("/api/job").get_json()
+            if not j["running"]:
+                break
+            time.sleep(0.1)
+        assert j["stage"] == "done" and j["stats"] == {"staged": 3}, j
+        src = client.get("/api/sources").get_json()
+        assert [(s["mode"], s["status"]) for s in src] == [("staged", "ok")]
+        assert all(Path(r["path"]).is_file() for r in state["case"].db.iter_files())
+
+        archive.close_zips()
+        hidden = tmp_path / "hidden.zip"
+        shutil.move(str(z), str(hidden))
+        r = client.post("/api/source/unstage", json={"name": SRC})
+        assert r.status_code == 400 and "cannot open the source archive" in r.get_json()["message"]
+        assert all(Path(r["path"]).is_file() for r in state["case"].db.iter_files())
+        shutil.move(str(hidden), str(z))
+
+        r = client.post("/api/source/unstage", json={"name": SRC})
+        assert r.status_code == 200 and r.get_json()["removed"] == 3
+        assert [(s["mode"], s["status"]) for s in client.get("/api/sources").get_json()] == [("reference", "ok")]
+        assert not (tmp_path / "case" / "staged").exists()
+    finally:
+        state["close_current"]()
