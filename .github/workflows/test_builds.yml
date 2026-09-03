@@ -6,15 +6,23 @@ name: Test builds
 # build the Inno Setup installer and the macOS leg the .dmg, so phase 2 and the version
 # pass-through are exercised somewhere real on both. Artifacts are uploaded for inspection; nothing here is a release.
 #
-# Advisory rather than required, so a paths filter is fine here. Modeled on iLEAPP's
-# test_builds.yml.
+# Advisory rather than required, so a paths filter is fine here, and it deliberately
+# leaves gleapp/** out: a logic change inside an existing module almost never breaks the
+# frozen build, and the three legs together bill about 35 minutes per run while the repo
+# is private. Packaging and dependency changes are where frozen-build breaks come from,
+# and the weekly schedule covers the rest. Modeled on iLEAPP's test_builds.yml, which
+# is manual only.
 
 on:
   workflow_dispatch:
+  # A weekly build of main catches a frozen-build break that ordinary code introduces,
+  # a new import PyInstaller cannot see, without paying three PyInstaller runs on every
+  # pull request. Monday 06:00 UTC.
+  schedule:
+    - cron: '0 6 * * 1'
   pull_request:
     paths:
       - 'packaging/**'
-      - 'gleapp/**'
       - 'pyproject.toml'
       - 'requirements.txt'
       - '.github/workflows/test_builds.yml'

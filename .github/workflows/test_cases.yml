@@ -33,6 +33,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # This job is required and has no paths filter, so it runs on every pull request;
+      # the lint job only runs on Python changes and a CRLF README would walk past it.
+      - name: Every tracked text file is LF
+        run: bash tools/check_line_endings.sh
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
