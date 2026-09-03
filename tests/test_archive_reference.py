@@ -13,7 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 
 from gleapp import archive
 from gleapp.case import open_case, parse_source_spec
@@ -128,12 +128,14 @@ def test_reference_and_staged_cases_agree(tmp_path):
                         "width", "height", "crc32", "error"):
                 assert a[m][col] == b[m][col], (m, col)
         # Thumbnails are named by the row's absolute path, so two cases never share a
-        # name, and two JPEG encodes of the same pixels are not byte-stable (measured:
-        # Pillow 10.1.0 on macOS varied in the bottom partial block of a 48x36 image
-        # between runs), so compare what the thumbnail is, not its bytes.
+        # name; compare what the two thumbnails decode to. (Pillow 10.1.0 on macOS
+        # arm64 once made this look non-deterministic: its libjpeg-turbo 3.0.0 flushed
+        # the Huffman bit buffer on an uninitialised flag, which requirements.txt now
+        # floors out. Same pixels through a working encoder give the same bytes.)
         with Image.open(ref.thumb_dir / a[IMG]["thumb"]) as ta, \
                 Image.open(stg.thumb_dir / b[IMG]["thumb"]) as tb:
             assert ta.size == tb.size == (48, 36)
+            assert ImageChops.difference(ta.convert("RGB"), tb.convert("RGB")).getbbox() is None
         assert all(Path(r["path"]).is_file() for r in b.values())
         assert stg.db.get_meta(f"archive:{SRC}:mode") == "staged"
     finally:

@@ -186,6 +186,32 @@ def test_cgbi_png_pipeline_thumbnail(tmp_path):
     assert r.status_code == 200 and r.mimetype == "image/png"
 
 
+def test_thumbnail_encoder_is_deterministic(tmp_path):
+    """The JPEG encoder must write the same bytes for the same pixels every time, and
+    a flat white tile must decode white. Pillow 10.0.x and 10.1.0 wheels for macOS
+    arm64 bundle a libjpeg-turbo 3.0.0 whose Huffman encoder flushes its bit buffer
+    on an uninitialised flag, so roughly every other encode of a small image came out
+    corrupt (a 16x16 white tile decoded to a grey half and noise); requirements.txt
+    floors Pillow at 10.2, whose wheel carries the fixed 3.0.1. Forty encodes here
+    turn that coin flip into a certain failure on an affected build."""
+    from PIL import Image
+
+    from gleapp import media
+
+    tile = Image.new("RGB", (16, 16), (255, 255, 255))
+    outputs = set()
+    for i in range(40):
+        name = media.make_image_thumb(tmp_path / f"white{i}.png", tmp_path, img=tile)
+        assert name
+        data = (tmp_path / name).read_bytes()
+        outputs.add(data)
+        with Image.open(tmp_path / name) as thumb:
+            thumb.load()
+            assert thumb.size == (16, 16)
+            assert min(lo for lo, _hi in thumb.getextrema()) >= 250, i
+    assert len(outputs) == 1, f"{len(outputs)} distinct encodings of one 16x16 white tile"
+
+
 def test_hex_view_endpoint(tmp_path):
     from gleapp.web.app import create_app
 
