@@ -2237,12 +2237,14 @@ async function pick(kind, label) {
       toast("File dialog unavailable — type the path instead");
     }
   }
-  return prompt(label || (kind === "folder"
-    ? "Folder path:" : "Path to .json job file:")) || null;
+  return prompt(label || ({ folder: "Folder path:",
+    archive: "Path to the extraction archive (zip / tar):" }[kind]
+    || "Path to .json job file:")) || null;
 }
 function renderSources() {
+  const icon = { spec: "\u{1F4C4} ", archive: "\u{1F4E6} " };   // 📄  📦  📁
   $("#srcList").innerHTML = Lr.sources.map((s, i) =>
-    `<div class="s"><span>${s.kind === "spec" ? "\u{1F4C4} " : "\u{1F4C1} "}${esc(s.path)}</span>
+    `<div class="s"><span>${icon[s.kind] || "\u{1F4C1} "}${esc(s.path)}</span>
      <b data-rm="${i}" style="cursor:pointer;color:var(--danger)">×</b></div>`).join("");
   $("#srcList").querySelectorAll("[data-rm]").forEach(b =>
     b.onclick = () => { Lr.sources.splice(+b.dataset.rm, 1); renderSources(); });
@@ -2298,14 +2300,16 @@ async function pollJob() {
 $("#openBrowse").onclick = async () => { const p = await pick("folder"); if (p) $("#openPath").value = p; };
 $("#openGo").onclick = () => $("#openPath").value && openCase($("#openPath").value.trim());
 $("#newBrowse").onclick = async () => { const p = await pick("folder"); if (p) $("#newPath").value = p; };
+const ARCHIVE_RE = /\.(zip|tar|tgz|tbz2?|txz|tar\.(gz|bz2|xz))$/i;
 function addSource(p) {
   p = (p || "").trim().replace(/^["']|["']$/g, "");
   if (!p) return;
-  const kind = /\.json$/i.test(p) ? "spec" : "folder";
+  const kind = /\.json$/i.test(p) ? "spec" : ARCHIVE_RE.test(p) ? "archive" : "folder";
   if (!Lr.sources.some(s => s.path === p)) Lr.sources.push({ kind, path: p });
   renderSources();
 }
 $("#addFolder").onclick = async () => addSource(await pick("folder"));
+$("#addArchive").onclick = async () => addSource(await pick("archive"));
 $("#addSpec").onclick = async () => addSource(await pick("file"));
 $("#srcTypeAdd").onclick = () => { addSource($("#srcTypePath").value); $("#srcTypePath").value = ""; };
 $("#srcTypePath").addEventListener("keydown", e => {
@@ -2332,7 +2336,9 @@ $("#createGo").onclick = async () => {
   if (cr.error) return fail(cr.message || "Could not create case");
 
   const specs = Lr.sources.filter(s => s.kind === "spec").map(s => s.path);
-  const folders = Lr.sources.filter(s => s.kind === "folder")
+  // folders and archives both go through parse_source_spec server-side, which
+  // detects an archive from its bytes and ingests it as one.
+  const folders = Lr.sources.filter(s => s.kind === "folder" || s.kind === "archive")
     .map(s => ({ name: s.path.split(/[\\/]/).filter(Boolean).pop(), path: s.path }));
   $("#jobMsg").textContent = "Starting ingest…";
   const ing = await api("/api/case/ingest", {
