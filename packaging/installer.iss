@@ -1,9 +1,11 @@
 ; Inno Setup script for GLEAPP  (https://jrsoftware.org/isdl.php)
-;   iscc packaging\installer.iss
+;   python packaging\build.py installer      (passes /DAppVer from gleapp\__init__.py)
 ; Expects a one-folder PyInstaller build at dist\GLEAPP\
 
 #define AppName "GLEAPP"
-#define AppVer "0.1.0"
+#ifndef AppVer
+  #error Pass the version in with /DAppVer=<version>. packaging\build.py reads it from gleapp\__init__.py and does this for you.
+#endif
 #define AppPublisher "charpy4n6"
 #define AppExe "GLEAPP.exe"
 
@@ -22,6 +24,13 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequiredOverridesAllowed=dialog
+#ifdef SignToolName
+; Signs the installer and its uninstaller at compile time with the Sign Tool configured
+; under this name in Inno Setup (Tools > Configure Sign Tools). build.py installer
+; --sign-tool <name> passes it in. GLEAPP.exe inside must already be signed.
+SignTool={#SignToolName}
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
