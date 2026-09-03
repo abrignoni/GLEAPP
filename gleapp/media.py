@@ -9,7 +9,20 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
+from . import imaging
+
 THUMB_SIZE = (320, 320)
+
+
+def _flatten(im: Image.Image) -> Image.Image:
+    """RGB copy of ``im``, compositing any transparency onto white so a mostly
+    transparent asset (an app icon, a CgBI PNG) doesn't thumbnail to black."""
+    if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+        im = im.convert("RGBA")
+        bg = Image.new("RGB", im.size, (255, 255, 255))
+        bg.paste(im, mask=im.split()[-1])
+        return bg
+    return im.convert("RGB")
 
 
 def _thumb_name(path: str, suffix: str = "") -> str:
@@ -25,8 +38,8 @@ def make_image_thumb(src: str | Path, thumb_dir: Path, img: Image.Image | None =
     if dest.exists():
         return name
     try:
-        im = img if img is not None else Image.open(src)
-        im = ImageOps.exif_transpose(im).convert("RGB")
+        im = img if img is not None else imaging.load_any(src)
+        im = _flatten(ImageOps.exif_transpose(im))
         im.thumbnail(THUMB_SIZE, Image.LANCZOS)
         im.save(dest, "JPEG", quality=82)
         return name
