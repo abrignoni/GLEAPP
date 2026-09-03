@@ -241,6 +241,27 @@ def test_processing_reports_a_missing_archive_per_file_and_recovers(tmp_path):
         c.close()
 
 
+def test_missing_archive_error_text_carries_no_local_path(tmp_path):
+    """The per-file error for a missing zip is stored in files.error and reaches the
+    reports and exports, so it must not name where the zip was on this machine. Both
+    storage sites are covered: the image rows go through _process_one and the video
+    row through the batch path."""
+    z = _build(tmp_path)
+    c, _ = _ingest(tmp_path, z, "case folder", do_process=False)
+    try:
+        shutil.move(str(z), str(tmp_path / "hidden.zip"))
+        process(c, workers=2, keyframes=3, screen=False)
+        errors = {k: r["error"] for k, r in _rows(c).items()}
+    finally:
+        c.close()
+    assert set(errors) == {IMG, NOEXT, VID}
+    for text in errors.values():
+        assert text.startswith("source archive unavailable: "), text
+        assert str(tmp_path) not in text, text
+        assert tmp_path.name not in text and "case folder" not in text, text
+        assert text.rstrip() == text and not text.endswith(("at", ":")), text
+
+
 def test_local_copy_is_shared_while_in_use_and_removed_after(tmp_path):
     z = _build(tmp_path)
     c, _ = _ingest(tmp_path, z, "case", do_process=False)
