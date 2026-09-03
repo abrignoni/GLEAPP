@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import os
 import re
 import struct
@@ -57,6 +58,7 @@ import time
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from . import storage_views
 from .ingest import IMAGE_EXTS, VIDEO_EXTS, _kind_from_magic
 
 _SLUG = re.compile(r"[^A-Za-z0-9._-]+")
@@ -543,11 +545,13 @@ class _Tally:
         self.skipped_links = 0
         self.ts_extended = 0
         self.ts_dos = 0
+        self.mirrored = 0               # members that were another storage view of a kept one
+        self.views_differ = 0           # mirrored groups registered in full, copies disagree
 
 
 def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, size: int,
               mtime: float, ctime: float | None, crc32: int | None,
-              member_offset: int | None) -> None:
+              member_offset: int | None, alt_paths: list[str] | None = None) -> None:
     case.db.upsert_file(
         str(dest),
         rel_path=rel,
@@ -559,6 +563,7 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
         size=size,
         crc32=crc32,
         member_offset=member_offset,
+        alt_paths=json.dumps(alt_paths) if alt_paths else None,
         mtime=mtime,
         ctime=ctime,
         atime=None,
@@ -584,6 +589,8 @@ def _finish(case, src, path: Path, *, fmt: str, root: str, stage: bool, reason: 
     case.db.set_meta(f"{key}:skipped_encrypted", str(tally.skipped_encrypted))
     case.db.set_meta(f"{key}:skipped_over_max", str(tally.skipped_size))
     case.db.set_meta(f"{key}:skipped_links", str(tally.skipped_links))
+    case.db.set_meta(f"{key}:mirrored", str(tally.mirrored))
+    case.db.set_meta(f"{key}:views_differ", str(tally.views_differ))
     case.db.commit()
     how = "copied under the case" if stage else "read from the archive on demand"
     if reason:
@@ -591,7 +598,9 @@ def _finish(case, src, path: Path, *, fmt: str, root: str, stage: bool, reason: 
     case.db.audit_log(case.examiner, "ingest-archive",
                       f"{path.name} ({fmt}): registered {tally.registered} ({how}), skipped "
                       f"{tally.skipped_encrypted} encrypted, {tally.skipped_links} links, "
-                      f"{tally.skipped_size} over size limit; {timestamps}")
+                      f"{tally.skipped_size} over size limit; {tally.mirrored} storage-view "
+                      f"mirrors folded into their kept spelling, {tally.views_differ} mirrored "
+                      f"groups kept apart because the copies differ; {timestamps}")
 
 
 def ingest_archive(case, src, *, count: int = 0, progress=None) -> int:
@@ -618,6 +627,10 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
     with zipfile.ZipFile(zip_path) as zf:
         infos = [i for i in zf.infolist() if not i.is_dir()]
         root = common_root([i.filename for i in infos])
+        # The directory names every member up front, so the other storage views of a
+        # file are known before anything is copied or registered.
+        alts, drop, tally.views_differ = storage_views.plan(
+            (i.filename, i.file_size, i.CRC) for i in infos)
         n = count
         for info in infos:
             name = info.filename
@@ -639,6 +652,9 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
                     kind = _kind_from_magic(fh.read(16))
                 if kind == "other" and not src.include_other:
                     continue
+            if name in drop:
+                tally.mirrored += 1
+                continue
             dest = _staged_path(staged_dir, slug, name)
             mtime, ctime, which = _timestamps(info)
             if which == "extended":
@@ -651,7 +667,7 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
                     os.utime(dest, (mtime, mtime))
             rel = name[len(root):] if root and name.startswith(root) else name
             _register(case, src, dest, name, rel, kind, ext, info.file_size, mtime, ctime,
-                      info.CRC, None)
+                      info.CRC, None, alts.get(name))
             tally.registered += 1
             n += 1
             if n % 200 == 0:
@@ -732,13 +748,19 @@ def _ingest_tar(case, src, tar_path: Path, fmt: str, *, count: int, progress) ->
                 case.db.commit()
                 if progress:
                     progress(n)
-    # The wrapper folder is only known once every name has streamed past.
+    # The wrapper folder, and which members are other storage views of the same file,
+    # are only known once every name has streamed past.
     root = common_root(names)
     if root:
         case.db.conn.execute(
             "UPDATE files SET rel_path = substr(orig_path, ?) WHERE source = ? "
             "AND substr(orig_path, 1, ?) = ?",
             (len(root) + 1, src.name, len(root), root))
+    removed, differ = storage_views.collapse_registered(case, src.name)
+    tally.mirrored += removed
+    tally.views_differ += differ
+    tally.registered -= removed
+    n -= removed
     _finish(case, src, tar_path, fmt=fmt, root=root, stage=stage, reason=reason,
             tally=tally, timestamps=f"tar header on all {tally.registered} registered members")
     if progress:
