@@ -1,4 +1,8 @@
-Pillow>=10.0
+# 10.2 is the first release whose macOS arm64 wheel bundles libjpeg-turbo 3.0.1.
+# The 3.0.0 build in 10.0.x and 10.1.0 has no SIMD and its C Huffman encoder
+# flushes on an uninitialised flag, so a JPEG comes out corrupt at random
+# (measured, see .claude/rules/gleapp-cross-platform.md).
+Pillow>=10.2
 pillow-heif>=0.13
 texture2ddecoder>=1.0
 # pyliblzfse for Windows on x64, vendored so Windows never needs a C compiler.

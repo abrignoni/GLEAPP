@@ -110,3 +110,32 @@ Deleting the case folder deletes every copy the case made, and the source zip is
 written to. An extraction surfaces app streaming caches, ExoPlayer `.exo` fragments and
 the like, which are not standalone videos; the pipeline reports them with its existing
 messages rather than silently dropping them.
+
+## Pillow below 10.2 corrupts JPEG output on macOS arm64, at random
+
+`requirements.txt` and `pyproject.toml` floor Pillow at 10.2. Measured on 2026-09-03 with
+Python 3.12.1 on macOS arm64: Pillow 10.0.1 and 10.1.0 encode a flat white 4x4, 16x16,
+48x36 or 48x48 image to one of two byte streams, roughly a coin flip per call, in RGB
+and in L mode and with 4:4:4 as well as 4:2:0 subsampling. The headers are identical and
+only the entropy-coded scan differs: one stream is correct, the other has the wrong
+number of bits at the front (28 zero bits prepended on the 4x4 tile, the first 24 bits
+dropped on the 16x16 one), so the tile decodes to grey and noise. Pillow 10.2.0, 10.3.0,
+10.4.0, 11.0.0 and 12.3.0 give the correct stream 20 of 20 times each.
+
+The cause is in the libjpeg-turbo the wheel bundles, and it is fixed upstream. The
+10.0.1 and 10.1.0 arm64 wheels carry libjpeg-turbo 3.0.0 built without SIMD (the dylib
+has no `jsimd_` symbols). In that release `jchuff.c` allocates the Huffman encoder state
+without zeroing it, assigns its `simd` flag only under `#ifdef WITH_SIMD`, and still
+reads the flag in `flush_bits`, where an AArch64 build takes the Neon bit-buffer
+convention when it is nonzero. libjpeg-turbo 3.0.1 compiles that branch out ("Fixed a
+regression introduced by 3.0 beta2[6] that, in rare cases, caused the C Huffman encoder
+... to generate incorrect results if the Neon SIMD extensions were explicitly disabled
+at build time ... in an AArch64 build", its ChangeLog), and Pillow 10.2.0 is the first
+wheel with 3.0.1. Two checks corroborate the read of stale memory: `JSIMD_FORCENONE=1`
+changes nothing, because there is no SIMD to disable, and `MallocScribble=1`, which
+fills freed memory with 0x55, produces the corrupt stream 20 of 20 times.
+
+CI never saw it because a floor of `>=10.0` resolves to the newest release. It bit on a
+developer machine whose Pillow predated the fix, as an intermittent failure of the CgBI
+thumbnail test. `test_thumbnail_encoder_is_deterministic` encodes a white tile forty
+times and turns that coin flip into a certain failure on an affected build.
