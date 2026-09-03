@@ -1487,6 +1487,7 @@ async function liveJob() {
 async function refreshContext() {
   const c = await api("/api/context");
   if (c.needs_case) return;
+  showSourceStatus(c.archive_sources);
   state.cats = c.categories || [];
   try { await refreshCats(); } catch (e) {}
   updateScreenInfo(c.screening);
@@ -2236,12 +2237,53 @@ $("#createGo").onclick = async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       spec: specs[0] || null, sources: folders,
-      options: { screen: $("#optScreen").checked, keyframes: +$("#optKf").value }
+      options: { screen: $("#optScreen").checked, keyframes: +$("#optKf").value,
+                 stage: $("#optStage").checked }
     })
   }).catch(() => ({ error: true, message: "request failed" }));
   if (ing.error) return fail(ing.message || "Ingest failed");
   pollJob();
 };
+
+/* ---------- extraction zips read on demand ---------- */
+// A case built from an extraction zip without copying the media out depends on
+// that zip staying where the case recorded it. When it is missing or has changed,
+// say so at the top of the gallery and offer to relink it; the server accepts a
+// new location only if it holds every registered file with the same size and CRC.
+function showSourceStatus(list) {
+  const bad = (list || []).filter(s => s.status !== "ok");
+  let el = $("#srcBanner");
+  if (!bad.length) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "srcBanner";
+    el.style.cssText = "margin:6px 12px;padding:8px 12px;border:1px solid #c98a2b;"
+      + "border-radius:6px;background:rgba(201,138,43,.12);font-size:13px";
+    $("#main").prepend(el);
+  }
+  el.innerHTML = bad.map(s => {
+    const what = s.status === "missing"
+      ? "was not found at" : "has a different size or date than the case recorded, at";
+    const note = s.mode === "reference"
+      ? "Full-size viewing and export need it; thumbnails, hashes and categories still work."
+      : "The case holds its own copies, so nothing is lost.";
+    return `<div style="margin:2px 0"><b>${esc(s.name)}</b> ${what} <code>${esc(s.path)}</code>. ${note}
+      <button data-relink="${esc(s.name)}" style="margin-left:8px">Relink…</button></div>`;
+  }).join("");
+  el.querySelectorAll("[data-relink]").forEach(b => b.onclick = async () => {
+    const name = b.dataset.relink;
+    let p = Lr.native ? await pick("archive") : null;
+    if (!p) p = prompt(`Where is ${name} now? Full path to the zip:`);
+    if (!p) return;
+    const r = await api("/api/source/relink", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, path: p })
+    }).catch(() => ({ error: true, message: "request failed" }));
+    if (r.error) { toast(r.message || "Relink refused"); return; }
+    toast(`${name} relinked`);
+    try { showSourceStatus((await api("/api/context")).archive_sources); } catch (e) {}
+  });
+}
 
 /* ---------- boot ---------- */
 (async function boot() {
@@ -2265,6 +2307,7 @@ $("#createGo").onclick = async () => {
   }
   state.cats = c.categories || [];
   state.sources = c.sources || [];
+  showSourceStatus(c.archive_sources);
   setupTz(c);
   try { await refreshCats(); } catch (e) {}
   (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));

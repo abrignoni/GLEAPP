@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import dedupe, detect, hashdb, imaging, lzc  # noqa: F401  (imaging: decoder setup)
+from . import archive, dedupe, detect, hashdb, imaging, lzc  # noqa: F401  (imaging: decoder setup)
 from .case import Case, Source
 from .hashing import crypto_hashes, perceptual_hashes
 from .ingest import scan, sniff_kind
@@ -62,7 +62,6 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
                 progress(n)
             continue
         if src.kind == "archive":
-            from . import archive
             n = archive.ingest_archive(case, src, count=n, progress=progress)
             continue
         for d in scan(
@@ -93,18 +92,36 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
     return n
 
 
-def _process_one(thumb_dir, row, *, force: bool, keyframes: int, screen: bool) -> dict:
+def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, screen: bool,
+                 rec: dict | None = None) -> dict:
     """Pure worker: no DB access. Returns a payload for the writer thread.
 
     payload = {"id", "status": ok|skip|error, "fields": {...}, "keyframes": [...]}
+
+    ``rec`` is the archive source record for a row whose bytes live in a zip; they are
+    pulled out for the duration of the work and dropped again.
     """
+    fid = row["id"]
+    if row["md5"] and row["thumb"] and not force:
+        return {"id": fid, "status": "skip", "fields": {}, "keyframes": []}
+    if row["error"] == "file not found on disk" and not Path(row["path"]).exists():
+        return {"id": fid, "status": "skip", "fields": {}, "keyframes": []}
+    try:
+        with archive.local_copy(case_root, rec, row) as local:
+            return _process_one_at(thumb_dir, row, str(local), force=force,
+                                   keyframes=keyframes, screen=screen)
+    except archive.ArchiveUnavailable as exc:
+        return {"id": fid, "status": "error", "keyframes": [],
+                "fields": {"error": f"source archive unavailable: {exc}"[:300]}}
+
+
+def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
+                    screen: bool) -> dict:
+    """The work of ``_process_one`` once the bytes are at ``local``. The registered
+    path still names the thumbnail, so a thumbnail is the same whichever mode made it."""
     fid = row["id"]
     path = row["path"]
     keys = row.keys()
-    if row["md5"] and row["thumb"] and not force:
-        return {"id": fid, "status": "skip", "fields": {}, "keyframes": []}
-    if row["error"] == "file not found on disk" and not Path(path).exists():
-        return {"id": fid, "status": "skip", "fields": {}, "keyframes": []}
 
     existing_dt = row["created_dt"] if "created_dt" in keys else None
 
@@ -116,13 +133,13 @@ def _process_one(thumb_dir, row, *, force: bool, keyframes: int, screen: bool) -
     try:
         # trust the hash from a Project VIC import; only hash if we don't have one
         if not row["md5"] or force:
-            upd.update(crypto_hashes(path))
+            upd.update(crypto_hashes(local))
 
         # A Snapchat "LZC" bundle isn't itself an image/video - pull the best
         # embedded media out to a sidecar file and process that instead.
-        kind, decode_path = row["kind"], path
-        if kind == "archive" or lzc.is_lzc(path):
-            got = lzc.extract_best(path)
+        kind, decode_path = row["kind"], local
+        if kind == "archive" or lzc.is_lzc(local):
+            got = lzc.extract_best(local)
             if got is None:
                 return {"id": fid, "status": "error", "keyframes": [], "fields": {
                     "error": "Snapchat LZC bundle - no displayable media inside",
@@ -184,7 +201,7 @@ def _process_one(thumb_dir, row, *, force: bool, keyframes: int, screen: bool) -
         upd["error"] = None
         return {"id": fid, "status": "ok", "fields": upd, "keyframes": kfs}
     except Exception as exc:  # noqa: BLE001 - record and continue
-        err = imaging.describe_failure(path, exc)
+        err = imaging.describe_failure(local, exc)
         # the source tool tells us when its own carve was incomplete
         on = (row["orig_name"] if "orig_name" in keys else "") or ""
         if "_partial" in on or "_embedded_" in on:
@@ -315,22 +332,26 @@ def _video_failure_reason(path: str, fallback: str) -> str:
     return fallback
 
 
-def _video_result_to_payload(row, res: dict | None, *, screen: bool) -> dict:
+def _video_result_to_payload(row, res: dict | None, *, screen: bool,
+                             local: str | None = None) -> dict:
+    """``local`` is where the bytes were read from, when that is not the registered
+    path (a reference-mode archive row)."""
     fid = row["id"]
     keys = row.keys()
+    src = local or row["path"]
     existing_dt = row["created_dt"] if "created_dt" in keys else None
     # capture time comes only from embedded metadata (res["info"]) below;
     # filesystem timestamps are not a capture time.
     upd: dict = {"created_dt": existing_dt}
     if not row["md5"]:
         try:
-            upd.update(crypto_hashes(row["path"]))
+            upd.update(crypto_hashes(src))
         except OSError as exc:
             return {"id": fid, "status": "error",
                     "fields": {"error": f"{exc}"[:300]}, "keyframes": []}
     if res is None:
         upd["error"] = _video_failure_reason(
-            row["path"], "video could not be decoded (corrupt or unsupported)")
+            src, "video could not be decoded (corrupt or unsupported)")
         return {"id": fid, "status": "error", "fields": upd, "keyframes": []}
     for k, v in (res.get("info") or {}).items():
         if v is not None:
@@ -338,7 +359,7 @@ def _video_result_to_payload(row, res: dict | None, *, screen: bool) -> dict:
     frames = res.get("frames") or []
     if not frames:
         upd["error"] = _video_failure_reason(
-            row["path"], "no video frames could be read (truncated or unsupported)")
+            src, "no video frames could be read (truncated or unsupported)")
         return {"id": fid, "status": "error", "fields": upd, "keyframes": []}
     mid = len(frames) // 2
     upd["thumb"] = frames[mid]["name"]
@@ -365,19 +386,27 @@ def _process_videos(case: Case, vids, *, force, keyframes, screen, workers, writ
     if not todo:
         return
 
-    by_path = {r["path"]: r for r in todo}
-    paths = list(by_path)
+    recs = archive.source_records(case)
     batch = 20
-    chunks = [paths[i:i + batch] for i in range(0, len(paths), batch)]
+    chunks = [todo[i:i + batch] for i in range(0, len(todo), batch)]
     lock = threading.Lock()
 
-    def do_chunk(chunk):
-        results = extract_videos_batch(chunk, case.thumb_dir, count=keyframes,
-                                       screen=screen)
-        with lock:
-            for p in chunk:
-                write(_video_result_to_payload(by_path[p], results.get(p),
-                                               screen=screen))
+    def do_chunk(rows):
+        # A reference-mode archive row is pulled out of its zip for the batch and
+        # dropped after; the child process reads whatever path it is handed.
+        with archive.local_copies(case.root, recs, rows) as (local, failed):
+            by_local = {str(local[r["id"]]): r for r in rows if r["id"] in local}
+            results = extract_videos_batch(list(by_local), case.thumb_dir, count=keyframes,
+                                           screen=screen) if by_local else {}
+            with lock:
+                for p, r in by_local.items():
+                    write(_video_result_to_payload(r, results.get(p), screen=screen,
+                                                   local=p))
+                for r in rows:
+                    if r["id"] in failed:
+                        write({"id": r["id"], "status": "error", "keyframes": [],
+                               "fields": {"error": f"source archive unavailable: "
+                                                   f"{failed[r['id']]}"[:300]}})
 
     with ThreadPoolExecutor(max_workers=min(max(2, workers), 4)) as ex:
         list(ex.map(do_chunk, chunks))
@@ -432,9 +461,12 @@ def process(
     imgs = [r for r in rows if r["id"] not in _vid_ids]
 
     # images/other: threads (fast, in-process)
+    recs = archive.source_records(case)
+    archive.clear_tmp(case.root)
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-        futs = [ex.submit(_process_one, case.thumb_dir, r, force=force,
-                          keyframes=keyframes, screen=screen) for r in imgs]
+        futs = [ex.submit(_process_one, case.root, case.thumb_dir, r, force=force,
+                          keyframes=keyframes, screen=screen, rec=recs.get(r["source"]))
+                for r in imgs]
         for fut in as_completed(futs):
             _write(fut.result())
     case.db.commit()

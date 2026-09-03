@@ -22,9 +22,13 @@ Accepted JSON shapes (all keys case-insensitive)::
       "sources": [
         {"name": "USB-1", "path": "C:/evidence/usb1", "max_mb": 500},
         {"name": "Phone",  "path": "C:/evidence/android/DCIM",
-         "include_other": false, "follow_symlinks": false}
+         "include_other": false, "follow_symlinks": false},
+        {"name": "Handset", "path": "C:/evidence/EXTRACTION_FFS.zip", "stage": true}
       ]
     }
+
+A path that is a zip is an archive source. Its media is read from the zip on demand
+unless ``stage`` is true, which copies it under the case instead (see ``archive``).
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ from .db import CaseDB
 CASE_DB = "case.gleapp"
 THUMB_DIR = "thumbs"
 REPORT_DIR = "reports"
-STAGED_DIR = "staged"           # archive members extracted for processing and viewing
+STAGED_DIR = "staged"           # archive members copied under the case (staged mode)
 
 
 @dataclass
@@ -50,6 +54,8 @@ class Source:
     follow_symlinks: bool = False
     max_mb: int | None = None
     files_dir: str | None = None  # projectvic: where the media files live
+    stage: bool = False           # archive: copy members under the case at ingest;
+                                  # off, the default, reads them from the zip on demand
 
     @property
     def max_bytes(self) -> int | None:
@@ -76,6 +82,8 @@ class Case:
         return self.root / STAGED_DIR
 
     def close(self) -> None:
+        from . import archive
+        archive.close_zips()
         self.db.close()
 
     def __enter__(self) -> "Case":
@@ -133,6 +141,7 @@ def _norm_source(entry: object, base: Path) -> Source | None:
             include_other=bool(low.get("include_other", False)),
             follow_symlinks=bool(low.get("follow_symlinks", False)),
             max_mb=low.get("max_mb"),
+            stage=bool(low.get("stage", False)),
         )
     return None
 

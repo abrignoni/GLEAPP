@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS files (
     orig_name     TEXT,                   -- original file name in the source device
     orig_path     TEXT,                   -- original path in the extraction
     mime          TEXT,                   -- MIME type as reported by the source tool
-    vic_flags     TEXT                    -- JSON: victim/offender/distributed etc.
+    vic_flags     TEXT,                   -- JSON: victim/offender/distributed etc.
+    crc32         INTEGER                 -- the CRC-32 the source archive records for the member
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_md5      ON files(md5);
@@ -216,7 +217,7 @@ class CaseDB:
             ("media_id", "INTEGER"), ("orig_name", "TEXT"),
             ("orig_path", "TEXT"), ("mime", "TEXT"), ("vic_flags", "TEXT"),
             ("vstack_id", "INTEGER"), ("hashset_kind", "TEXT"),
-            ("atime", "REAL"),
+            ("atime", "REAL"), ("crc32", "INTEGER"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")

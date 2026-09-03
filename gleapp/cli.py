@@ -33,9 +33,16 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         case.db.set_meta("case_name", str(meta["case"]))
     if meta.get("examiner"):
         case.examiner = str(meta["examiner"])
+    if args.stage:
+        for s in sources:
+            if s.kind == "archive":
+                s.stage = True
     _p(f"Sources ({len(sources)}):")
     for s in sources:
-        _p(f"  - {s.name}: {s.path}")
+        how = ""
+        if s.kind == "archive":
+            how = "  [copied into the case]" if s.stage else "  [read from the zip on demand]"
+        _p(f"  - {s.name}: {s.path}{how}")
     n = ingest_sources(case, sources)
     _p(f"Registered {n} files.")
     if not args.no_process:
@@ -185,6 +192,47 @@ def cmd_stash(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_source(args: argparse.Namespace) -> int:
+    """Archive sources: list them, relink one whose zip moved, copy one into the
+    case, or drop the copies again."""
+    from . import archive
+
+    if args.action != "list" and not args.name:
+        raise ValueError(f"'source {args.action}' needs a source name (see 'source list')")
+    if args.action == "relink" and not args.path:
+        raise ValueError("'source relink' needs the zip's new path")
+    case = open_case(args.case, examiner=args.examiner)
+    try:
+        if args.action == "list":
+            rows = archive.source_status(case)
+            if not rows:
+                _p("No archive sources in this case.")
+            for s in rows:
+                _p(f"  {s['name']}: {s['files']:,} files, {s['mode']}, "
+                   f"{s['status']}  {s['path']}")
+            return 0
+        if args.action == "relink":
+            s = archive.relink_source(case, args.name, args.path)
+            _p(f"{s['name']} now reads from {s['path']} ({s['status']}).")
+            return 0
+        if args.action == "stage":
+            def progress(done: int, total: int) -> None:
+                print(f"\r  copying {done}/{total}", end="", flush=True)
+
+            n = archive.stage_source(case, args.name, progress=progress)
+            print()
+            _p(f"Copied {n:,} files into the case; {args.name} is self-contained now.")
+            return 0
+        n = archive.unstage_source(case, args.name)
+        _p(f"Removed {n:,} copies; {args.name} is read from the zip on demand again.")
+        return 0
+    except archive.ArchiveUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        case.close()
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     case = open_case(args.case)
     _p(json.dumps(case.db.stats(), indent=2))
@@ -297,8 +345,19 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction zip, or a JSON spec, then process")
     s.add_argument("source", help="folder path, extraction .zip, OR .json spec file")
     s.add_argument("--no-process", action="store_true", help="register files only")
+    s.add_argument("--stage", action="store_true",
+                   help="copy the media out of an extraction zip into the case, so the "
+                        "case is self-contained (default: read it from the zip on demand)")
     add_proc_opts(s)
     s.set_defaults(func=cmd_ingest)
+
+    s = sub.add_parser("source",
+                       help="extraction zips: list them, relink a moved zip, or copy one "
+                            "into the case (stage) and back (unstage)")
+    s.add_argument("action", choices=["list", "relink", "stage", "unstage"])
+    s.add_argument("name", nargs="?", help="source name, as shown by 'source list'")
+    s.add_argument("path", nargs="?", help="relink: where the zip is now")
+    s.set_defaults(func=cmd_source)
 
     s = sub.add_parser("process", help="(re)run processing on the current case")
     add_proc_opts(s)

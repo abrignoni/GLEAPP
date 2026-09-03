@@ -22,7 +22,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 
-from .. import appconfig, backup, categories, report
+from .. import appconfig, archive, backup, categories, report
 from ..case import open_case, parse_source_spec
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
@@ -207,6 +207,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                         "Hash lists (*.txt;*.csv;*.tsv;*.md5;*.hash;*.lst;*.json)",
                         "All files (*.*)"),
                 )
+            elif kind == "archive":
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=("Extraction zip (*.zip)", "All files (*.*)"),
+                )
             else:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
@@ -266,7 +271,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 abort(400, description=(
                     f"That folder is inside an existing case ({anc}). "
                     "Choose a new, empty folder for the case."))
-        if path.name.lower() in {"reports", "thumbs", "views", "backups"}:
+        if path.name.lower() in {"reports", "thumbs", "views", "backups", "staged",
+                                 "cache", "tmp", "extracted"}:
             abort(400, description=(
                 f"'{path.name}' is a name GLEAPP uses for a case's own "
                 "sub-folders. Pick a different folder name."))
@@ -308,6 +314,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             abort(400, description=str(exc))
         if not sources:
             abort(400, description="no sources given")
+        if opts.get("stage"):
+            for s in sources:
+                if s.kind == "archive":
+                    s.stage = True
 
         # flip the job to a definite running state *before* returning so the
         # client's first /api/job poll can never race a still-"idle" job
@@ -588,26 +598,41 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def thumb(name: str):
         return send_from_directory(C().thumb_dir, name, max_age=3600)
 
-    def _display_path(r) -> Path:
+    def _local(r) -> Path:
+        """The file holding a row's bytes: its own path, or, for a row whose bytes
+        live in an extraction zip, a copy kept under <case>/cache/. 410 with the
+        reason when neither can be produced."""
+        case = C()
+        p = Path(r["path"])
+        if p.exists():
+            return p
+        rec = archive.source_record(case, r["source"]) if r["source"] else None
+        if rec is None:
+            abort(410, description="the original file is not on disk")
+        try:
+            return archive.cached_copy(case.root, rec, r)
+        except archive.ArchiveUnavailable as exc:
+            abort(410, description=str(exc))
+
+    def _display_path(r, local: Path) -> Path:
         """The file to actually show: the media unpacked from an LZC bundle
-        during processing, or the original file."""
+        during processing, or the file itself."""
         ex_dir = C().root / "extracted"
         if ex_dir.is_dir():
             hit = next(ex_dir.glob(f"{r['id']}.*"), None)
             if hit:
                 return hit
-        return Path(r["path"])
+        return local
 
     @app.get("/media/<int:file_id>")
     def media(file_id: int):
         r = C().db.get_file(file_id)
         if not r:
             abort(404)
-        if not Path(r["path"]).exists():
-            abort(410)
-        p = _display_path(r)
+        p = _display_path(r, _local(r))
         mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-        return send_file(p, mimetype=mime, conditional=True, download_name=p.name)
+        return send_file(p, mimetype=mime, conditional=True,
+                         download_name=r["orig_name"] or p.name)
 
     @app.get("/view/<int:file_id>")
     def view(file_id: int):
@@ -618,9 +643,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         r = case.db.get_file(file_id)
         if not r:
             abort(404)
-        if not Path(r["path"]).exists():
-            abort(410)
-        p = _display_path(r)
+        p = _display_path(r, _local(r))
         # Apple CgBI ("iPhone-optimised") PNGs carry a .png name but no browser
         # can render them - transcode to a real PNG, keeping transparency.
         cgbi = p.suffix.lower() == ".png" and imaging.is_cgbi_png(p)
@@ -651,9 +674,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         r = C().db.get_file(file_id)
         if not r:
             abort(404)
-        p = Path(r["path"])
-        if not p.exists():
-            abort(410, description="the original file is not on disk")
+        p = _local(r)
         try:
             size = p.stat().st_size
             offset = max(0, int(request.args.get("offset", 0)))
@@ -663,7 +684,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 data = fh.read(length)
         except OSError as exc:
             abort(500, description=str(exc))
-        return jsonify({"name": p.name, "size": size,
+        return jsonify({"name": r["orig_name"] or p.name, "size": size,
                         "offset": min(offset, size), "bytes": data.hex()})
 
     # ---- listing / filtering --------------------------------
@@ -970,7 +991,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             return jsonify({
                 "needs_case": False, "native": state["native"],
                 "case": case.db.get_meta("case_name"), "case_dir": str(case.root),
-                "examiner": case.examiner, "sources": [], "clusters": [],
+                "examiner": case.examiner, "sources": [], "archive_sources": [],
+                "clusters": [],
                 "categories": list(categories.catmap(case.db).values()),
                 "stats": {}, "vic": None, "errors": 0,
                 "known_hash": {}, "screening": {},
@@ -1023,6 +1045,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "case_dir": str(case.root),
             "examiner": case.examiner,
             "sources": srcs,
+            "archive_sources": archive.source_status(case),
             "clusters": clusters,
             "categories": list(categories.catmap(case.db).values()),
             "stats": cst,
@@ -1050,6 +1073,69 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 "screenable": scr["n"] or 0,
             },
         }
+
+    # ---- archive sources (extraction zips) -------------------------
+    @app.get("/api/sources")
+    def sources_status():
+        return jsonify(archive.source_status(C()))
+
+    @app.post("/api/source/relink")
+    def source_relink():
+        """Point an archive source at the zip's new location. Accepted only when
+        the file holds every registered member with the same size and CRC."""
+        case = C()
+        body = request.get_json(force=True) or {}
+        name = str(body.get("name", ""))
+        raw = str(body.get("path", "")).strip().strip('"')
+        if not name or not raw:
+            abort(400, description="name and path are required")
+        try:
+            status = archive.relink_source(case, name, raw)
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        return jsonify({"ok": True, **status})
+
+    @app.post("/api/source/stage")
+    def source_stage():
+        """Copy a reference-mode source's files under the case (self-contained)."""
+        case = C()
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        name = str((request.get_json(force=True) or {}).get("name", ""))
+        if archive.source_record(case, name) is None:
+            abort(404, description=f"{name!r} is not an archive source of this case")
+        state["job"] = {"running": True, "stage": "process", "done": 0, "total": 0,
+                        "message": f"Copying {name} into the case…", "stats": None,
+                        "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                n = archive.stage_source(
+                    case, name, progress=lambda d, t: j.update(done=d, total=t))
+                j.update(running=False, stage="done",
+                         message=f"{n:,} files copied into the case",
+                         stats={"staged": n})
+            except (archive.ArchiveUnavailable, ValueError, OSError,
+                    sqlite3.Error) as exc:
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.post("/api/source/unstage")
+    def source_unstage():
+        """Drop a staged source's copies and read from the zip on demand again."""
+        case = C()
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        name = str((request.get_json(force=True) or {}).get("name", ""))
+        try:
+            n = archive.unstage_source(case, name)
+        except (archive.ArchiveUnavailable, ValueError) as exc:
+            abort(400, description=str(exc))
+        return jsonify({"ok": True, "removed": n})
 
     @app.get("/api/stats")
     def stats():
