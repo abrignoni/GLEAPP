@@ -58,7 +58,9 @@ def _wait_until_up(port: int, timeout: float = 10.0) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    import webview  # imported here so `--version` etc. don't need a GUI lib
+    # Imported here rather than at module level so importing gleapp.desktop never
+    # needs a GUI lib. --version is answered in packaging/entrypoint.py before this runs.
+    import webview
 
     argv = sys.argv[1:] if argv is None else argv
     case_dir = argv[0] if argv and not argv[0].startswith("-") else None
