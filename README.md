@@ -44,14 +44,28 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 
 ## Install
 
+The same steps as the other LEAPPs: clone it, make a venv, install, run.
+
 ```bash
+git clone https://github.com/abrignoni/GLEAPP.git
+cd GLEAPP
 python -m venv .venv
-.venv\Scripts\activate            # Windows;  source .venv/bin/activate on *nix
+.venv\Scripts\activate            # Windows;  source .venv/bin/activate on macOS and Linux
 pip install -r requirements.txt
-# or:  pip install -e .[desktop]   # installs `gleapp` + `gleapp-desktop`
+python gleapp.py web              # opens the review gallery in your browser
 ```
 
-Python 3.10+. No external binaries required (OpenCV handles video).
+`python gleappGUI.py` opens the native desktop window instead; that needs the
+desktop extra, `pip install -e .[desktop]`. Python 3.10 or newer. No external
+binaries are required, OpenCV handles video.
+
+Everything installs from prebuilt wheels on Windows x64 with Python 3.10 through
+3.14, and on macOS with Python 3.10 through 3.13. One dependency, `pyliblzfse`,
+has no prebuilt wheel for Linux, for Windows on ARM, or for Python 3.14 on macOS,
+so those setups need a C compiler on the machine and pip builds it from source on
+its own. It decodes Apple's LZFSE-compressed GPU textures and is reached only for
+that format. Its Windows x64 wheels are vendored in `whl_files/` so Windows never
+needs a compiler.
 
 ## Desktop app (offline, no browser)
 
