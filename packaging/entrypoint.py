@@ -13,5 +13,12 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--texworker":
         from gleapp._texworker import main as tw_main
         sys.exit(tw_main(sys.argv[2:]))
+    # --version answers without a window, so a frozen build can be smoke-tested
+    # headless and it matches `python gleapp.py --version`. desktop.main() does not
+    # handle it.
+    if "--version" in sys.argv[1:]:
+        from gleapp import __version__
+        print(f"GLEAPP {__version__}")
+        sys.exit(0)
     from gleapp.desktop import main
     sys.exit(main())

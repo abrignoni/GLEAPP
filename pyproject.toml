@@ -26,7 +26,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "piexif>=1.1"]
 desktop = ["pywebview>=5.0"]
-build = ["pywebview>=5.0", "pyinstaller>=6.0"]
+build = ["pywebview>=5.0", "pyinstaller==6.22.2"]
 
 [project.scripts]
 gleapp = "gleapp.cli:main"
