@@ -2250,7 +2250,52 @@ $("#createGo").onclick = async () => {
 // that zip staying where the case recorded it. When it is missing or has changed,
 // say so at the top of the gallery and offer to relink it; the server accepts a
 // new location only if it holds every registered file with the same size and CRC.
+// The sidebar's Source section lists every extraction zip the case was built from,
+// with its mode, and offers the conversion each way: "Copy into case" runs the stage
+// job (the live bottom bar follows it), "Drop copies" deletes the copies and goes back
+// to reading the zip, which the server refuses unless the zip still holds every file.
+function renderSourcePanel(list) {
+  const el = $("#srcInfo");
+  if (!el) return;
+  list = list || [];
+  if (!list.length) { el.innerHTML = ""; return; }
+  el.innerHTML = list.map(s => {
+    const ok = s.status === "ok";
+    const state = ok ? "" : ` <span style="color:#c98a2b" title="${esc(s.path)}">(${esc(s.status)})</span>`;
+    const mode = s.mode === "staged" ? "copied into the case" : "read from the zip";
+    const btn = s.mode === "staged"
+      ? `<button class="btn sm" data-unstage="${esc(s.name)}"${ok ? "" : " disabled"}
+           title="Delete the copies and read from the zip on demand again. Refused unless the zip still holds every registered file.">Drop copies</button>`
+      : `<button class="btn sm" data-stage="${esc(s.name)}"${ok ? "" : " disabled"}
+           title="Copy every registered file out of the zip into the case, so the case no longer needs the zip.">Copy into case</button>`;
+    return `<div style="margin:3px 0"><b title="${esc(s.path)}">${esc(s.name)}</b>
+      <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${state}
+      <div style="margin-top:2px">${btn}</div></div>`;
+  }).join("");
+  const post = (url, body) => api(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).catch(() => ({ error: true, message: "request failed" }));
+  el.querySelectorAll("[data-stage]").forEach(b => b.onclick = async () => {
+    const name = b.dataset.stage;
+    const r = await post("/api/source/stage", { name });
+    if (r.error) { toast(r.message || "Could not start the copy"); return; }
+    toast(`Copying ${name} into the case…`);
+    liveTick = 0; liveJob();                       // the bottom bar follows the job
+  });
+  el.querySelectorAll("[data-unstage]").forEach(b => b.onclick = async () => {
+    const name = b.dataset.unstage;
+    if (!confirm(`Delete the copies of ${name} from the case and read from the zip on demand?\n\n`
+      + "The zip must still hold every registered file, or this is refused.")) return;
+    const r = await post("/api/source/unstage", { name });
+    if (r.error) { toast(r.message || "Refused"); return; }
+    toast(`${(r.removed || 0).toLocaleString()} copies removed; ${name} is read from the zip again`);
+    try { showSourceStatus((await api("/api/context")).archive_sources); } catch (e) {}
+  });
+}
+
 function showSourceStatus(list) {
+  renderSourcePanel(list);
   const bad = (list || []).filter(s => s.status !== "ok");
   let el = $("#srcBanner");
   if (!bad.length) { if (el) el.remove(); return; }

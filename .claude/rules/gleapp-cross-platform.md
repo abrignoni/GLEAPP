@@ -87,7 +87,11 @@ A reference case depends on the zip staying readable where the case recorded it.
 path, size, mtime and per-row CRC-32 are recorded at ingest; `source_status` reports
 `ok`, `changed` or `missing`, the gallery shows a banner and a Relink button, and
 `gleapp source relink` or `POST /api/source/relink` accepts a new location only when
-every registered member is in it with the same size and CRC. A case whose zip has gone
+every registered member is in it with the same size and CRC. The sidebar's Source
+section lists each zip with its mode and offers the conversion both ways: "Copy into
+case" runs the stage job (`POST /api/source/stage`, followed by the live bottom bar)
+and "Drop copies" calls unstage after a confirm; both are disabled while the zip is not
+where the case expects it. A case whose zip has gone
 still opens: thumbnails, hashes, stacks and categories were computed at processing time,
 so only full-size bytes and export are lost until it is relinked, and each such file is
 reported with a `source archive unavailable` error rather than crashing the run.
