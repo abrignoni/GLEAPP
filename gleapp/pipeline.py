@@ -61,6 +61,10 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
             if progress:
                 progress(n)
             continue
+        if src.kind == "archive":
+            from . import archive
+            n = archive.ingest_archive(case, src, count=n, progress=progress)
+            continue
         for d in scan(
             src.path,
             include_other=src.include_other,

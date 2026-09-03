@@ -294,8 +294,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--no-screen", action="store_true", help="skip face/skin screening")
         sp.add_argument("--cluster-threshold", type=int, default=8)
 
-    s = sub.add_parser("ingest", help="ingest a folder or JSON spec, then process")
-    s.add_argument("source", help="folder path OR .json spec file")
+    s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction zip, or a JSON spec, then process")
+    s.add_argument("source", help="folder path, extraction .zip, OR .json spec file")
     s.add_argument("--no-process", action="store_true", help="register files only")
     add_proc_opts(s)
     s.set_defaults(func=cmd_ingest)

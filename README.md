@@ -124,6 +124,9 @@ python -m gleapp --case mycase ingest  C:\evidence\usb1
 #    ... or a JSON job describing several sources
 python -m gleapp --case mycase ingest  sample_evidence\ingest.json
 
+#    ... or a full-file-system extraction zip (Cellebrite, GrayKey, Magnet): the
+#    members are staged under the case and registered by their device paths
+python gleapp.py -c mycase ingest /path/to/EXTRACTION_FFS.zip
 # 2. (optional) load a known-hash list
 python -m gleapp --case mycase hashset  known_hashes.csv --name "Op-Foo known" --kind known
 
@@ -167,6 +170,9 @@ The most recent 20 are kept. To roll back, close GLEAPP and copy a snapshot over
 ---
 
 ## Ingest JSON spec
+
+A path in `sources` may also be a full-file-system extraction zip; it is detected by
+extension or by its magic and ingested as an archive source, staged under the case.
 
 Pass a folder path **or** a `.json` file. Accepted shapes (keys case-insensitive):
 
