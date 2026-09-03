@@ -37,7 +37,7 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | **Categories** | Locked **Project VIC 2.0 (US)** presets (codes 0–5) in every case; examiner adds their own (code 6+ — rename / delete / reorder, auto colors); shown as a color bar + name on every tile |
 | **Saving** | Every action commits to `case.gleapp` immediately (SQLite WAL); notes autosave; header shows save status; timestamped snapshots in `<case>/backups/` on a timer, on close, and on demand |
 | **Review workflow** | Filter to Uncategorized and work the backlog — categorizing *is* the review step, cursor auto-advances, ↻ Refresh clears done files; free-form tags, per-file notes, audit log of every action |
-| **Reporting** | HTML contact-sheet, CSV, JSON, **KML** of geolocated media, MD5 list, Project VIC round-trip |
+| **Reporting** | HTML contact-sheet, CSV, JSON, **KMZ** of geolocated media (thumbnails embedded, for Google Earth), MD5 list, Project VIC round-trip |
 | **Web gallery** | Filter sidebar, multi-select, keyboard categorization, docked metadata pane (single-click), filmstrip + duplicate stack, one-click export, built-in manual |
 
 ---
@@ -256,7 +256,7 @@ folders / a JSON job, then watch processing progress — no CLI needed.
 | Pages | **Thumbnails per page** in the sidebar (50–1500); pager bar has First/Prev/Next/Last and a jump-to-page box; `PageUp`/`PageDown` keys, `Ctrl+Home`/`Ctrl+End` |
 | Search | sidebar box — matches file name, path, original device path/name, MD5/SHA/pHash (partial ok), capture date, camera, MIME, source, notes, tags. Space-separated words all have to match |
 | Filters | sidebar: **Clear all filters**; search, type, category, source, cluster, **duplicates** (any / exact / visual / near-dup), has-faces, min skin ratio, has-GPS, known-hash hit, **hide known-NSRL**, processing error, collapse duplicates. Sort / per-page / tile-size live on the grid's top bar |
-| Export | **Export report** button → dialog: pick scope (All / **Categorized only** / **Uncategorized only** / Selected) and formats (HTML, CSV, JSON, KML, **MD5 list**, Project VIC). Scoped files get a suffixed name (`report_categorized.csv`) |
+| Export | **Export report** button → dialog: pick scope (All / **Categorized only** / **Uncategorized only** / Selected) and formats (HTML, CSV, JSON, KMZ, **MD5 list**, Project VIC). Scoped files get a suffixed name (`report_categorized.csv`) |
 | Manual | **? Help** in the header, or press `?` |
 | Export MD5s | selection bar / right-click **Export MD5s** → `<case>/reports/md5_<timestamp>.csv`, one distinct hash per row under an `md5` header |
 
@@ -287,7 +287,7 @@ gleapp/
   dedupe.py     exact stacking + near-dup union-find clustering
   similar.py    similarity search (stills ⇄ video key frames)
   pipeline.py   orchestration: threaded workers, single DB writer
-  report.py     CSV / JSON / HTML / KML export
+  report.py     CSV / JSON / HTML / KMZ export
   projectvic.py Project VIC 2.0 import + round-trip export
   _vidworker.py / _texworker.py   isolated decode subprocesses
   backup.py     case snapshots (auto + manual), pruning

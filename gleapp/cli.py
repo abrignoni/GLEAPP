@@ -238,7 +238,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                                        full_images=not args.thumbs_only,
                                        full_videos=not args.thumbs_only))
     if "kml" in fmts:
-        made.append(report.export_kml(case, out_dir / f"geolocation{tag}.kml", where))
+        made.append(report.export_kml(case, out_dir / f"geolocation{tag}.kmz", where))
     if "md5" in fmts:
         made.append(report.export_md5(case, out_dir / f"md5{tag}.csv", where))
     if "vic" in fmts:

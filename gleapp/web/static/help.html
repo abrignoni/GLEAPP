@@ -70,7 +70,7 @@ finishes; closing the case is blocked until then.</p>
   <tr><td><code>thumbs/</code></td><td>generated grid thumbnails and video key frames</td></tr>
   <tr><td><code>views/</code></td><td>full-size JPEGs transcoded from formats the browser can't show (HEIC, TIFF, KTX…)</td></tr>
   <tr><td><code>extracted/</code></td><td>media unpacked from container files (Snapchat <code>LZC</code> bundles)</td></tr>
-  <tr><td><code>reports/</code></td><td>exported reports, CSV/JSON, MD5 lists, KML, Project VIC exports</td></tr>
+  <tr><td><code>reports/</code></td><td>exported reports, CSV/JSON, MD5 lists, KMZ, Project VIC exports</td></tr>
   <tr><td><code>backups/</code></td><td>timestamped snapshot copies of <code>case.gleapp</code></td></tr>
 </table>
 <p>Switch cases with <strong>⇤ Close case</strong> (snapshots first, returns to the
@@ -599,7 +599,7 @@ current selection — and one or more <strong>formats</strong>:</p>
   <tr><td>HTML report</td><td>a self-contained page (thumbnails embedded) with your case header, a "Report contents" breakdown, and one card per image showing the fields you chose</td></tr>
   <tr><td>CSV</td><td>full metadata, one row per file</td></tr>
   <tr><td>JSON</td><td>the same data, structured; carries the case header too</td></tr>
-  <tr><td>KML</td><td>geolocated media, for mapping tools</td></tr>
+  <tr><td>KMZ</td><td>geolocated media for Google Earth / mapping tools &mdash; a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location</td></tr>
   <tr><td>MD5 list</td><td>one hash per row (also from the selection bar / right-click)</td></tr>
   <tr><td>Project VIC JSON</td><td>the original VIC file with your Category / Comments / Tags written back, keyed by MediaID and MD5 (shown for VIC cases)</td></tr>
 </table>
