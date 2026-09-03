@@ -3,8 +3,8 @@ name: Test builds
 # Builds the frozen desktop executable on each platform with packaging/build.py and
 # smoke-tests what came out, headlessly: --version must print the package version, and
 # --texworker must decode an image inside the frozen bundle. The Windows leg goes on to
-# build the Inno Setup installer, so phase 2 and the version pass-through are exercised
-# somewhere real. Artifacts are uploaded for inspection; nothing here is a release.
+# build the Inno Setup installer and the macOS leg the .dmg, so phase 2 and the version
+# pass-through are exercised somewhere real on both. Artifacts are uploaded for inspection; nothing here is a release.
 #
 # Advisory rather than required, so a paths filter is fine here. Modeled on iLEAPP's
 # test_builds.yml.
@@ -64,6 +64,19 @@ jobs:
           "$BIN" --texworker smoke_in.png smoke_out.jpg 32
           [ -s smoke_out.jpg ] || { echo "--texworker produced no output"; exit 1; }
           echo "--texworker -> $(wc -c < smoke_out.jpg) bytes"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            APPBIN=dist/GLEAPP.app/Contents/MacOS/GLEAPP
+            [ -x "$APPBIN" ] || { echo "no .app bundle produced"; exit 1; }
+            echo "bundle --version -> $("$APPBIN" --version)"
+            /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" dist/GLEAPP.app/Contents/Info.plist
+          fi
+
+      - name: Phase 2, the disk image (macOS only)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python packaging/build.py installer
+          ls -l dist/GLEAPP-*.dmg
 
       - name: Phase 2, the installer (Windows only)
         if: runner.os == 'Windows'
@@ -80,4 +93,6 @@ jobs:
           path: |
             dist/GLEAPP/
             dist/GLEAPP-Setup-*.exe
+            dist/GLEAPP.app/
+            dist/GLEAPP-*.dmg
           if-no-files-found: error
