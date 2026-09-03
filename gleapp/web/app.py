@@ -51,8 +51,11 @@ LIST_COLS = {
 # must act on the same COALESCE expression the UI shows (e.g. a folder-ingest
 # file has no orig_name - the "Name" column shows its on-disk name instead).
 _COL_EXPR = {
-    "name":      "COALESCE(NULLIF(orig_name, ''), rel_path, path)",
-    "file_path": "COALESCE(NULLIF(orig_path, ''), path, rel_path)",
+    "name":      "COALESCE(NULLIF(orig_name, ''), "
+                 "CASE WHEN media_id IS NULL THEN rel_path END)",
+    "file_path": "COALESCE(NULLIF(orig_path, ''), "
+                 "CASE WHEN media_id IS NULL THEN path END, "
+                 "CASE WHEN media_id IS NULL THEN rel_path END)",
 }
 
 
@@ -712,9 +715,17 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         if q.get("q", "").strip():
             # every whitespace-separated term must match somewhere (AND);
             # within a term, match across every text/metadata column (OR).
-            cols = ("rel_path", "path", "orig_name", "orig_path", "camera",
-                    "notes", "mime", "source", "created_dt", "reviewed_by",
-                    "hashset_hit", "error", "md5", "sha1", "sha256", "phash")
+            # Name/path resolve to the *device* name and path for a Project VIC
+            # file (MediaFiles.FileName / .FilePath); rel_path is only searched
+            # for a plain folder ingest (media_id IS NULL). Otherwise the local
+            # extraction folder the VIC files were unpacked into - which is on
+            # every row - would match every search.
+            _rp = "CASE WHEN media_id IS NULL THEN rel_path END"
+            cols = (f"COALESCE(NULLIF(orig_name, ''), {_rp})",
+                    f"COALESCE(NULLIF(orig_path, ''), {_rp})",
+                    "camera", "notes", "mime", "source", "created_dt",
+                    "reviewed_by", "hashset_hit", "error",
+                    "md5", "sha1", "sha256", "phash")
             for word in q["q"].split():
                 term = f"%{word}%"
                 clause = " OR ".join(f"{c} LIKE ?" for c in cols)

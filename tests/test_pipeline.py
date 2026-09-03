@@ -1165,6 +1165,20 @@ def test_projectvic_detect_and_import(tmp_path, evidence):
         done = c.db.iter_files("media_id = 1")[0]
         assert done["phash"] and done["thumb"]       # processed
         assert done["ctime"] == want                 # FS time preserved through processing
+
+        # search matches the device name/path, not the local extraction folder
+        from gleapp.web.app import create_app
+        app = create_app(str(c.root))
+        cl = app.test_client()
+
+        def q(term):
+            return {f["media_id"] for f in
+                    cl.get(f"/api/files?q={term}").get_json()["files"]}
+
+        assert q("VIC_Files") == set()          # the local media folder: no hits
+        assert q("DCIM") == {1, 2, 3}           # MediaFiles.FilePath
+        assert q("orig_2") == {2}               # MediaFiles.FileName
+        app.config["STATE"]["case"].close()
     finally:
         c.close()
 

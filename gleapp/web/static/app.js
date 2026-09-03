@@ -309,10 +309,10 @@ const LIST_DEFS = [
     get: f => dispName(f) },
   { key: "rel_path", label: "Stored name", type: "text", alt: "diskname",
     get: f => diskName(f) },
-  // "File path" = the original path recorded in the Project VIC JSON; for
-  // folder-ingest cases (no VIC data) it falls back to the on-disk path.
+  // "File path" = the device path from the Project VIC JSON; for a folder
+  // ingest (no VIC data) it's the source path. Not the local unpack folder.
   { key: "orig_path", filterKey: "file_path", label: "File path", type: "text",
-    get: f => f.orig_path || f.path || "" },
+    get: f => f.orig_path || (f.media_id ? "" : (f.path || f.rel_path)) || "" },
   { key: "path", label: "File path (working copy)", type: "text", get: f => f.path || "" },
   { key: "rel_path", label: "Relative path", type: "text", alt: "relpath",
     get: f => f.rel_path || "" },
@@ -975,10 +975,14 @@ async function showMeta(id) {
     if (vf) flags = Object.entries(vf).filter(([, v]) => v === true)
       .map(([k]) => k.replace(/_/g, " ")).join(", ");
   } catch (e) {}
+  // device path for a VIC file; the on-disk path for a folder ingest;
+  // never the local folder a VIC export was unpacked into
+  const dispPath = f.orig_path || (f.media_id ? "" : (f.path || f.rel_path)) || "";
   const rows = [
     ["Source", f.source], ["Type", f.kind],
     ["Original name", f.orig_name || ""],
-    ["File path", f.orig_path || ""],
+    ["File path", dispPath],
+    ["Stored at", f.orig_path && f.path && f.path !== f.orig_path ? f.path : ""],
     ["MIME", f.mime || ""],
     ["VIC MediaID", f.media_id ?? ""],
     ["VIC flags", flags],
@@ -1014,7 +1018,7 @@ async function showMeta(id) {
     <div class="preview">${preview}</div>
     <div class="body">
       <h2>${esc(nm || "file #" + f.id)}</h2>
-      <div class="path">${esc(f.path || f.rel_path || "")}</div>
+      <div class="path">${esc(dispPath)}</div>
       ${f.error ? `<div class="path" style="color:var(--danger)">⚠ ${esc(f.error)}</div>` : ""}
 
       <div>Category:
