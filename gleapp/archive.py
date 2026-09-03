@@ -263,7 +263,7 @@ def _open_zip(path: str) -> zipfile.ZipFile:
                 zf = zipfile.ZipFile(path)
             except (OSError, zipfile.BadZipFile) as exc:
                 raise ArchiveUnavailable(
-                    f"cannot open the source archive at {path}: {exc}") from exc
+                    f"cannot open the source archive ({path}): {exc}") from exc
             _ZIPS[path] = zf
         return zf
 
@@ -291,16 +291,17 @@ def _extract_member(zip_path: str, member: str, dest: Path) -> None:
     try:
         info = zf.getinfo(member)
     except KeyError:
-        raise ArchiveUnavailable(f"{member!r} is not in {zip_path}") from None
+        raise ArchiveUnavailable(
+            f"{member!r} is not in the source archive ({zip_path})") from None
     try:
         _write_member(zf, info, dest)
     except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
         if isinstance(exc, OSError) and not Path(zip_path).exists():
             _drop_zip(zip_path)
             raise ArchiveUnavailable(
-                f"the source archive is no longer at {zip_path}") from exc
+                f"the source archive is no longer at its recorded path ({zip_path})") from exc
         raise ArchiveUnavailable(
-            f"could not read {member!r} from {zip_path}: {exc}") from exc
+            f"could not read {member!r} from the source archive ({zip_path}): {exc}") from exc
 
 
 # ---- on-demand copies ------------------------------------------------------
@@ -587,12 +588,13 @@ def stage_source(case, name: str, *, progress=None) -> int:
                 info = zf.getinfo(r["orig_path"])
             except KeyError:
                 raise ArchiveUnavailable(
-                    f"{r['orig_path']!r} is not in {rec['path']}") from None
+                    f"{r['orig_path']!r} is not in the source archive ({rec['path']})") from None
             try:
                 _write_member(zf, info, dest)
             except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
                 raise ArchiveUnavailable(
-                    f"could not read {r['orig_path']!r} from {rec['path']}: {exc}") from exc
+                    f"could not read {r['orig_path']!r} from the source archive "
+                    f"({rec['path']}): {exc}") from exc
             if r["mtime"]:
                 with contextlib.suppress(OSError):
                     os.utime(dest, (r["mtime"], r["mtime"]))

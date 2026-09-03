@@ -243,6 +243,38 @@ def test_processing_reports_a_missing_archive_per_file_and_recovers(tmp_path):
         c.close()
 
 
+def test_missing_archive_errors_carry_no_local_path(tmp_path):
+    """The stored ``source archive unavailable`` text names neither the case folder nor
+    the folder the zip was in. The archive layer's message embeds the zip's absolute
+    path (and the OSError inside it does too), and that column reaches the HTML, CSV
+    and JSON reports; the row's source column already names the zip. The image rows
+    reach the message through ``_process_one`` and the video through
+    ``_process_videos``. Both folder names hold a space on purpose: a scrub that ends a
+    path at whitespace would leave the tail."""
+    drive = tmp_path / "evidence drive"
+    drive.mkdir()
+    z = _build(drive)
+    c, _ = _ingest(tmp_path, z, "case folder", do_process=False)
+    try:
+        shutil.move(str(z), str(tmp_path / "hidden.zip"))
+        rec = archive.source_record(c, SRC)
+        with pytest.raises(archive.ArchiveUnavailable) as ei:
+            with archive.local_copy(c.root, rec, _rows(c)[IMG]):
+                pass
+        assert str(z) in str(ei.value)  # the premise: the archive layer names the path
+        process(c, workers=2, keyframes=3, screen=False)
+        rows = _rows(c)
+        assert set(rows) == set(MEMBERS)
+        for r in rows.values():
+            text = r["error"]
+            assert text.startswith("source archive unavailable: cannot open the source archive: "), text
+            assert str(z) not in text and str(drive) not in text, text
+            assert str(tmp_path) not in text and tmp_path.name not in text, text
+            assert "evidence drive" not in text and "case folder" not in text, text
+    finally:
+        c.close()
+
+
 def test_local_copy_is_shared_while_in_use_and_removed_after(tmp_path):
     z = _build(tmp_path)
     c, _ = _ingest(tmp_path, z, "case", do_process=False)

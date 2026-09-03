@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 from PIL import Image, UnidentifiedImageError
 
-from gleapp import imaging
-from gleapp.pipeline import _video_result_to_payload
+from gleapp import archive, imaging
+from gleapp.pipeline import _process_one, _video_result_to_payload
 
 
 def _staged(tmp_path: Path, ext: str) -> tuple[Path, Path]:
@@ -129,3 +129,38 @@ def test_processed_rows_store_no_local_path(tmp_path, monkeypatch):
         assert tmp_path.name not in text, text
         assert "case folder" not in text and "evidence folder" not in text, text
     assert errors["bad.jpg"] == "UnidentifiedImageError: cannot identify image file", errors
+
+
+def test_scrub_local_paths_tidies_what_a_removed_path_leaves():
+    """A path removed from inside brackets or from before a colon leaves ``()`` and a
+    space before the colon; both go, so the archive messages read cleanly."""
+    msg = "cannot open the source archive (/ev/x.zip): [Errno 2] No such file or directory: '/ev/x.zip'"
+    assert imaging.scrub_local_paths(msg, "/ev/x.zip") == \
+        "cannot open the source archive: [Errno 2] No such file or directory"
+
+
+# The zip's recorded path in the shapes the other platforms give it, driven through
+# the worker that stores the message. zipfile is stood in for so that no platform
+# tries to resolve a UNC host or a foreign drive letter.
+@pytest.mark.parametrize("zip_path, leaks", [
+    ("/Volumes/Case Drive/EXTRACTION_FFS.zip", ("Volumes", "Case Drive")),
+    ("C:\\Users\\ex\\Evidence\\EXTRACTION_FFS.zip", ("Users", "Evidence")),
+    ("\\\\server\\share\\ev\\EXTRACTION_FFS.zip", ("server", "share")),
+])
+def test_process_one_stores_no_archive_path(tmp_path, monkeypatch, zip_path, leaks):
+    def gone(path, *a, **k):
+        raise FileNotFoundError(2, "No such file or directory", path)
+    monkeypatch.setattr(archive.zipfile, "ZipFile", gone)
+    case = tmp_path / "case folder"
+    row = {"id": 3, "md5": None, "thumb": None, "error": None, "source": "EXTRACTION_FFS.zip",
+           "orig_path": "Dump/data/media/0/DCIM/photo.jpg",
+           "path": str(case / "staged" / "slug" / "54" / ("a" * 40 + ".jpg"))}
+    payload = _process_one(case, case / "thumbs", row, force=False, keyframes=2, screen=False,
+                           rec={"path": zip_path})
+    assert payload["status"] == "error"
+    text = payload["fields"]["error"]
+    assert text.startswith("source archive unavailable: cannot open the source archive: "), text
+    assert "[Errno 2] No such file or directory" in text, text
+    for leak in leaks:
+        assert leak not in text, text
+    assert "case folder" not in text and str(tmp_path) not in text, text

@@ -92,6 +92,16 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
     return n
 
 
+def _archive_unavailable(reason: str, rec: dict | None, case_root) -> str:
+    """The stored form of an ``ArchiveUnavailable``: its text with the zip's recorded
+    path, the case folder and anything else shaped like a local path removed. The
+    column reaches the reports and the exports, and the row's source column already
+    names the zip."""
+    text = imaging.scrub_local_paths(reason, rec["path"] if rec else None, case_root)
+    return (f"source archive unavailable: {text}" if text
+            else "source archive unavailable")[:300]
+
+
 def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, screen: bool,
                  rec: dict | None = None) -> dict:
     """Pure worker: no DB access. Returns a payload for the writer thread.
@@ -112,7 +122,7 @@ def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, scre
                                    keyframes=keyframes, screen=screen)
     except archive.ArchiveUnavailable as exc:
         return {"id": fid, "status": "error", "keyframes": [],
-                "fields": {"error": f"source archive unavailable: {exc}"[:300]}}
+                "fields": {"error": _archive_unavailable(str(exc), rec, case_root)}}
 
 
 def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
@@ -406,8 +416,8 @@ def _process_videos(case: Case, vids, *, force, keyframes, screen, workers, writ
                 for r in rows:
                     if r["id"] in failed:
                         write({"id": r["id"], "status": "error", "keyframes": [],
-                               "fields": {"error": f"source archive unavailable: "
-                                                   f"{failed[r['id']]}"[:300]}})
+                               "fields": {"error": _archive_unavailable(
+                                   failed[r["id"]], recs.get(r["source"]), case.root)}})
 
     with ThreadPoolExecutor(max_workers=min(max(2, workers), 4)) as ex:
         list(ex.map(do_chunk, chunks))
