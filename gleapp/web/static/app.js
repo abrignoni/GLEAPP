@@ -2262,12 +2262,15 @@ function renderSourcePanel(list) {
   el.innerHTML = list.map(s => {
     const ok = s.status === "ok";
     const state = ok ? "" : ` <span style="color:#c98a2b" title="${esc(s.path)}">(${esc(s.status)})</span>`;
-    const mode = s.mode === "staged" ? "copied into the case" : "read from the zip";
+    const mode = s.mode === "staged" ? "copied into the case" : "read from the archive";
+    // a compressed tar cannot be read on demand, so its copies cannot be dropped
+    const fixed = s.format === "tar-compressed";
     const btn = s.mode === "staged"
-      ? `<button class="btn sm" data-unstage="${esc(s.name)}"${ok ? "" : " disabled"}
-           title="Delete the copies and read from the zip on demand again. Refused unless the zip still holds every registered file.">Drop copies</button>`
+      ? `<button class="btn sm" data-unstage="${esc(s.name)}"${ok && !fixed ? "" : " disabled"}
+           title="${fixed ? "A compressed tar cannot be read on demand, so the copies stay."
+             : "Delete the copies and read from the archive on demand again. Refused unless the archive still holds every registered file."}">Drop copies</button>`
       : `<button class="btn sm" data-stage="${esc(s.name)}"${ok ? "" : " disabled"}
-           title="Copy every registered file out of the zip into the case, so the case no longer needs the zip.">Copy into case</button>`;
+           title="Copy every registered file out of the archive into the case, so the case no longer needs it.">Copy into case</button>`;
     return `<div style="margin:3px 0"><b title="${esc(s.path)}">${esc(s.name)}</b>
       <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${state}
       <div style="margin-top:2px">${btn}</div></div>`;
@@ -2285,11 +2288,11 @@ function renderSourcePanel(list) {
   });
   el.querySelectorAll("[data-unstage]").forEach(b => b.onclick = async () => {
     const name = b.dataset.unstage;
-    if (!confirm(`Delete the copies of ${name} from the case and read from the zip on demand?\n\n`
-      + "The zip must still hold every registered file, or this is refused.")) return;
+    if (!confirm(`Delete the copies of ${name} from the case and read from the archive on demand?\n\n`
+      + "The archive must still hold every registered file, or this is refused.")) return;
     const r = await post("/api/source/unstage", { name });
     if (r.error) { toast(r.message || "Refused"); return; }
-    toast(`${(r.removed || 0).toLocaleString()} copies removed; ${name} is read from the zip again`);
+    toast(`${(r.removed || 0).toLocaleString()} copies removed; ${name} is read from the archive again`);
     try { showSourceStatus((await api("/api/context")).archive_sources); } catch (e) {}
   });
 }
@@ -2318,7 +2321,7 @@ function showSourceStatus(list) {
   el.querySelectorAll("[data-relink]").forEach(b => b.onclick = async () => {
     const name = b.dataset.relink;
     let p = Lr.native ? await pick("archive") : null;
-    if (!p) p = prompt(`Where is ${name} now? Full path to the zip:`);
+    if (!p) p = prompt(`Where is ${name} now? Full path to the archive:`);
     if (!p) return;
     const r = await api("/api/source/relink", {
       method: "POST", headers: { "Content-Type": "application/json" },

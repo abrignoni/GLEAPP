@@ -63,13 +63,27 @@ Never publish an absolute path from the examiner's machine into a report or an e
 Use `os.path` and `pathlib`. A split on a hard-coded separator is the identity function on
 the other platform, and a derived column that always equals its input is the tell.
 
-## Full-file-system zips are read in place by default, and any copy is flat and hashed
+## Full-file-system archives are read in place by default, and any copy is flat and hashed
 
-An extraction zip is a third source kind, `archive` (`gleapp/archive.py`). Members are
-enumerated from the central directory, which took 0.1 to 1.7 seconds on 12 to 14 GiB
-images, and every extension-less member is sniffed from its first 16 bytes straight from
-the archive, because that is where the media hides: on one Android image 1,085 members
-were media by extension and the sniff found 2,849 more.
+An extraction zip or tar is a third source kind, `archive` (`gleapp/archive.py`), decided
+by the file's bytes (`archive_format`), never its name. A zip's members are enumerated
+from the central directory, which took 0.1 to 1.7 seconds on 12 to 14 GiB images. A tar
+has no directory, so enumerating it is one streaming read of the whole file: header,
+first 16 bytes and data offset of every member in a single pass, 21.7 s for a 7.2 GB
+Android emulator tar (2,389 media registered, 3,450 link members skipped because a link
+carries no bytes). Every extension-less member is sniffed from its first 16 bytes
+straight from the archive, because that is where the media hides: on one Android image
+1,085 members were media by extension and the sniff found 2,849 more. A plain tar is
+read on demand by seeking to the recorded offset (`member_offset` in `files`); a
+compressed tar (gzip, bzip2, xz) cannot be seeked, so it is always copied out, the case
+records why in `mode_reason`, and the gallery's Drop copies button stays disabled for it:
+a 16.7 GB gzipped iOS image registered and copied out 49,245 media in 2 min 7 s, 2.1 GB
+staged, one decompression pass.
+Relink and unstage verify a tar by size and modification time from a fresh pass, since a
+tar records no per-member checksum, and relink refreshes the offsets because a repacked
+tar lays its members out differently. A single root that is a device directory (`data/`
+in a tar of /data, `private/` on iOS) is part of the evidence path and is not stripped
+from `rel_path`; only a wrapper folder such as `Dump/` is.
 
 Two modes per source. **Reference**, the default, copies nothing out: a row's `path` is
 where a copy would go, and the bytes are pulled from the zip on demand, into

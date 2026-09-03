@@ -110,16 +110,9 @@ def open_case(path: str | Path, *, create: bool = False, examiner: str = "examin
 
 # --------------------------------------------------------------------------
 def is_archive_file(p: Path) -> bool:
-    """A zip by extension or by its local-header magic; the file must exist."""
-    if not p.is_file():
-        return False
-    if p.suffix.lower() == ".zip":
-        return True
-    try:
-        with open(p, "rb") as fh:
-            return fh.read(4) == b"PK\x03\x04"
-    except OSError:
-        return False
+    """A zip or a tar, plain or compressed, by its magic; the file must exist."""
+    from . import archive
+    return archive.archive_format(p) is not None
 
 
 def _norm_source(entry: object, base: Path) -> Source | None:

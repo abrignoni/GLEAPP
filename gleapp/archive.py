@@ -1,33 +1,41 @@
-"""Ingest a full-file-system extraction zip as a source.
+"""Ingest a full-file-system extraction archive, zip or tar, as a source.
 
-Mobile extractions (Cellebrite, GrayKey, Magnet) arrive as one zip holding the device's
-filesystem under a single root folder, tens of gigabytes, with a large minority of
-members carrying no extension. This module enumerates the archive from its central
-directory, decides what to keep, and registers each member with the device path the
-examiner sees kept apart from the path the code reads.
+Mobile extractions (Cellebrite, GrayKey, Magnet) arrive as one archive holding the
+device's filesystem, tens of gigabytes, with a large minority of members carrying no
+extension. This module enumerates the archive, decides what to keep, and registers each
+member with the device path the examiner sees kept apart from the path the code reads.
+
+A zip is enumerated from its central directory in seconds. A tar has no directory, so
+enumerating it is one streaming read of the whole file (measured at about 13 minutes
+for a 47 GB tar on an external drive); every member's header, first bytes and data
+offset are taken in that single pass, and a compressed tar (gzip, bzip2, xz) is
+decompressed once during it.
 
 Two modes, chosen per source at ingest:
 
 ``reference`` (the default)
     Nothing is copied out. Each registered row points at the path a staged copy would
-    have, and the bytes are pulled out of the zip on demand: into ``<case>/tmp/`` while
-    the pipeline hashes and thumbnails a file, deleted afterwards, and into
+    have, and the bytes are pulled out of the archive on demand: into ``<case>/tmp/``
+    while the pipeline hashes and thumbnails a file, deleted afterwards, and into
     ``<case>/cache/`` for the viewer, kept up to ``CACHE_MAX_BYTES`` and evicted oldest
-    first. The case stays small and the zip has to stay readable where the case
-    recorded it. ``source_status`` says whether it still is, and ``relink_source``
-    moves the record when the zip has moved, accepting the new file only when every
-    registered member is in it with the same size and CRC. Hashes, thumbnails, stacks
-    and categories are computed when the case is processed, so a case whose zip has
-    gone missing still opens and shows everything but full-size bytes.
+    first. A zip member is read through its directory entry; a plain tar member is read
+    by seeking to the data offset recorded at ingest. A compressed tar cannot be seeked,
+    so it is always staged, and the case records why. The case stays small and the
+    archive has to stay readable where the case recorded it. ``source_status`` says
+    whether it still is, and ``relink_source`` moves the record when the archive has
+    moved, accepting the new file only when every registered member is in it with the
+    same size and CRC (zip) or size and modification time (tar). Hashes, thumbnails,
+    stacks and categories are computed when the case is processed, so a case whose
+    archive has gone missing still opens and shows everything but full-size bytes.
 
 ``staged``
     Every registered member is copied under ``<case>/staged/`` at ingest and the case
     is self-contained. ``stage_source`` converts a reference source into this;
-    ``unstage_source`` goes the other way while the zip is still readable.
+    ``unstage_source`` goes the other way while the archive is still readable.
 
 Either way, what is registered is what the case can produce: media members, plus
-everything else when ``include_other`` is set on the source. The source zip is never
-written to, and deleting the case folder deletes every copy the case made.
+everything else when ``include_other`` is set on the source. The source archive is
+never written to, and deleting the case folder deletes every copy the case made.
 
 Staged and on-demand names are a hash of the member path with the extension kept, so
 two members that differ only by case cannot collide on a case-insensitive volume, a
@@ -43,6 +51,7 @@ import hashlib
 import os
 import re
 import struct
+import tarfile
 import threading
 import time
 import zipfile
@@ -55,15 +64,55 @@ _SHA256_LINE = re.compile(r"^\s*(?P<name>[^=]+?)\s*=\s*(?P<hex>[0-9A-Fa-f]{64})\
 
 MODE_REFERENCE = "reference"
 MODE_STAGED = "staged"
+FORMAT_ZIP = "zip"
+FORMAT_TAR = "tar"
+FORMAT_TAR_COMPRESSED = "tar-compressed"
 CACHE_DIR = "cache"             # on-demand copies for the viewer; bounded, oldest evicted
 TMP_DIR = "tmp"                 # on-demand copies for processing; removed after use
 CACHE_MAX_BYTES = 2 * 1024 ** 3
 _CACHE_GRACE_S = 60             # a cached copy touched this recently is never evicted
 _CHUNK = 1 << 20
 
+# A single top-level folder that is one of these is the device's own tree, not a
+# wrapper the tool put around it, so it stays in rel_path. A tar of /data starts with
+# "data/"; stripping that would turn data/media/0/DCIM into media/0/DCIM.
+_DEVICE_TOPS = frozenset({
+    "data", "data_mirror", "sdcard", "storage", "system", "mnt", "vendor", "product",
+    "apex", "metadata", "private", "var", "System", "Library", "Applications", "usr",
+})
+
 
 class ArchiveUnavailable(Exception):
-    """The zip a reference-mode row points at cannot be read where the case recorded it."""
+    """The archive a reference-mode row points at cannot be read where the case recorded it."""
+
+
+# ---- format ----------------------------------------------------------------
+def _is_tar(path: Path) -> bool:
+    try:
+        return tarfile.is_tarfile(path)
+    except (OSError, tarfile.TarError, EOFError, ValueError):
+        return False
+
+
+def archive_format(path: str | Path) -> str | None:
+    """``zip``, ``tar``, ``tar-compressed`` or None, decided by the file's own bytes.
+
+    A gzip, bzip2 or xz stream counts only if a tar is inside it; a gzipped single file
+    is not an archive source.
+    """
+    p = Path(path)
+    if not p.is_file():
+        return None
+    try:
+        with open(p, "rb") as fh:
+            head = fh.read(6)
+    except OSError:
+        return None
+    if head[:4] == b"PK\x03\x04" or p.suffix.lower() == ".zip":
+        return FORMAT_ZIP if zipfile.is_zipfile(p) else None
+    if head[:2] == b"\x1f\x8b" or head[:3] == b"BZh" or head[:6] == b"\xfd7zXZ\x00":
+        return FORMAT_TAR_COMPRESSED if _is_tar(p) else None
+    return FORMAT_TAR if _is_tar(p) else None
 
 
 # ---- members ---------------------------------------------------------------
@@ -112,16 +161,20 @@ def _is_macosx_junk(name: str) -> bool:
 
 
 def common_root(names: list[str]) -> str:
-    """The single top-level folder every member sits under, or '' if there is none.
+    """The single wrapper folder every member sits under, or '' if there is none.
 
     A zip repacked on a Mac carries a parallel __MACOSX/ tree of resource forks; the
-    ingest skips it, so it must not count as a second root here either.
+    ingest skips it, so it must not count as a second root here either. A single root
+    that is a device directory (``data/`` in a tar of /data) is part of the evidence
+    path and is not a wrapper.
     """
     names = [n for n in names if not _is_macosx_junk(n)]
     firsts = {n.split("/", 1)[0] for n in names if "/" in n}
     loose = any("/" not in n for n in names)
     if len(firsts) == 1 and not loose:
-        return next(iter(firsts)) + "/"
+        root = next(iter(firsts))
+        if root not in _DEVICE_TOPS:
+            return root + "/"
     return ""
 
 
@@ -173,14 +226,15 @@ def _local_name(row) -> str:
     return f"{_slug(row['source'])}-{Path(row['path']).name}"
 
 
-def _write_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, dest: Path) -> None:
-    """Copy one member to ``dest`` through a private temp name, so a partial copy never
-    sits at the final path. zipfile checks the member's CRC as it reads, so a copy that
-    lands is one the archive vouches for."""
+def _write_stream(fin, dest: Path, head: bytes = b"") -> None:
+    """Copy ``head`` and then everything left in ``fin`` to ``dest`` through a private
+    temp name, so a partial copy never sits at the final path."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(f"{dest.name}.part-{os.getpid()}-{threading.get_ident()}")
     try:
-        with zf.open(info) as fin, open(part, "wb") as fout:
+        with open(part, "wb") as fout:
+            if head:
+                fout.write(head)
             while chunk := fin.read(_CHUNK):
                 fout.write(chunk)
         os.replace(part, dest)
@@ -188,6 +242,13 @@ def _write_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, dest: Path) -> Non
         with contextlib.suppress(OSError):
             part.unlink()
         raise
+
+
+def _write_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo, dest: Path) -> None:
+    """Copy one zip member to ``dest``. zipfile checks the member's CRC as it reads, so
+    a copy that lands is one the archive vouches for."""
+    with zf.open(info) as fin:
+        _write_stream(fin, dest)
 
 
 # ---- source records --------------------------------------------------------
@@ -214,8 +275,10 @@ def source_record(case, name: str) -> dict | None:
         "size": num("size", int, 0),
         "mtime": num("mtime", float, 0.0),
         "root": case.db.get_meta(f"{key}:root") or "",
-        # a case ingested before modes existed copied everything out
+        # a case ingested before modes existed copied everything out, and before
+        # tar support every archive source was a zip
         "mode": case.db.get_meta(f"{key}:mode") or MODE_STAGED,
+        "format": case.db.get_meta(f"{key}:format") or FORMAT_ZIP,
         "sha256": case.db.get_meta(f"{key}:sha256") or "",
     }
 
@@ -251,6 +314,8 @@ def source_status(case) -> list[dict]:
 # One ZipFile per archive per process: opening a 14 GiB extraction reads its whole
 # central directory, measured at up to 1.7 s, which must not be paid per file.
 # zipfile serialises member reads on the handle's own lock, so threads share it.
+# A tar member is read by a plain seek on a handle opened for that read, so tars
+# hold nothing open between reads.
 _ZIPS: dict[str, zipfile.ZipFile] = {}
 _ZIP_LOCK = threading.Lock()
 
@@ -303,6 +368,49 @@ def _extract_member(zip_path: str, member: str, dest: Path) -> None:
             f"could not read {member!r} from the source archive ({exc}): {zip_path}") from exc
 
 
+def _extract_tar_member(rec: dict, row, dest: Path) -> None:
+    """Copy one plain-tar member to ``dest`` by seeking to the data offset the case
+    recorded for it. A compressed tar has no offsets to seek to."""
+    tar_path, member = rec["path"], row["orig_path"]
+    offset, size = row["member_offset"], row["size"]
+    if rec.get("format") != FORMAT_TAR or offset is None:
+        raise ArchiveUnavailable(
+            f"{member!r} cannot be read on demand from a compressed tar: {tar_path}")
+    try:
+        with open(tar_path, "rb") as fin:
+            fin.seek(offset)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            part = dest.with_name(f"{dest.name}.part-{os.getpid()}-{threading.get_ident()}")
+            try:
+                left = int(size)
+                with open(part, "wb") as fout:
+                    while left > 0:
+                        chunk = fin.read(min(_CHUNK, left))
+                        if not chunk:
+                            raise ArchiveUnavailable(
+                                f"{member!r} is truncated in the source archive: {tar_path}")
+                        fout.write(chunk)
+                        left -= len(chunk)
+                os.replace(part, dest)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    part.unlink()
+                raise
+    except OSError as exc:
+        if not Path(tar_path).exists():
+            raise ArchiveUnavailable(
+                f"the source archive is no longer at its recorded location: {tar_path}") from exc
+        raise ArchiveUnavailable(
+            f"could not read {member!r} from the source archive ({exc}): {tar_path}") from exc
+
+
+def _materialize(rec: dict, row, dest: Path) -> None:
+    if rec.get("format", FORMAT_ZIP) == FORMAT_ZIP:
+        _extract_member(rec["path"], row["orig_path"], dest)
+    else:
+        _extract_tar_member(rec, row, dest)
+
+
 # ---- on-demand copies ------------------------------------------------------
 _INUSE: dict[str, int] = {}
 _INUSE_LOCK = threading.Lock()
@@ -325,7 +433,7 @@ def local_copy(case_root: Path, rec: dict | None, row):
     key = str(dest)
     with _INUSE_LOCK:
         if _INUSE.get(key, 0) == 0:
-            _extract_member(rec["path"], row["orig_path"], dest)
+            _materialize(rec, row, dest)
         _INUSE[key] = _INUSE.get(key, 0) + 1
     try:
         yield dest
@@ -369,7 +477,7 @@ def cached_copy(case_root: Path, rec: dict | None, row) -> Path:
         return dest
     with _INUSE_LOCK:
         if not dest.exists():
-            _extract_member(rec["path"], row["orig_path"], dest)
+            _materialize(rec, row, dest)
     evict_cache(cache, keep=dest)
     return dest
 
@@ -425,30 +533,101 @@ def clear_tmp(case_root: Path) -> int:
 
 
 # ---- ingest --------------------------------------------------------------
+class _Tally:
+    """Counters one ingest pass keeps, written into the case's meta at the end."""
+
+    def __init__(self) -> None:
+        self.registered = 0
+        self.skipped_encrypted = 0
+        self.skipped_size = 0
+        self.skipped_links = 0
+        self.ts_extended = 0
+        self.ts_dos = 0
+
+
+def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, size: int,
+              mtime: float, ctime: float | None, crc32: int | None,
+              member_offset: int | None) -> None:
+    case.db.upsert_file(
+        str(dest),
+        rel_path=rel,
+        orig_path=name,
+        orig_name=PurePosixPath(name).name,
+        source=src.name,
+        kind=kind,
+        ext=ext,
+        size=size,
+        crc32=crc32,
+        member_offset=member_offset,
+        mtime=mtime,
+        ctime=ctime,
+        atime=None,
+    )
+
+
+def _finish(case, src, path: Path, *, fmt: str, root: str, stage: bool, reason: str,
+            tally: _Tally, timestamps: str) -> None:
+    st = path.stat()
+    key = _meta_key(src.name)
+    sha = _sidecar_sha256(path)
+    mode = MODE_STAGED if stage else MODE_REFERENCE
+    case.db.set_meta(f"{key}:path", str(path))
+    case.db.set_meta(f"{key}:size", str(st.st_size))
+    case.db.set_meta(f"{key}:mtime", str(st.st_mtime))
+    case.db.set_meta(f"{key}:root", root)
+    case.db.set_meta(f"{key}:format", fmt)
+    case.db.set_meta(f"{key}:mode", mode)
+    case.db.set_meta(f"{key}:mode_reason", reason)
+    case.db.set_meta(f"{key}:sha256", sha or "")
+    case.db.set_meta(f"{key}:sha256_source", "ufd sidecar" if sha else "not recorded")
+    case.db.set_meta(f"{key}:timestamps", timestamps)
+    case.db.set_meta(f"{key}:skipped_encrypted", str(tally.skipped_encrypted))
+    case.db.set_meta(f"{key}:skipped_over_max", str(tally.skipped_size))
+    case.db.set_meta(f"{key}:skipped_links", str(tally.skipped_links))
+    case.db.commit()
+    how = "copied under the case" if stage else "read from the archive on demand"
+    if reason:
+        how += f"; {reason}"
+    case.db.audit_log(case.examiner, "ingest-archive",
+                      f"{path.name} ({fmt}): registered {tally.registered} ({how}), skipped "
+                      f"{tally.skipped_encrypted} encrypted, {tally.skipped_links} links, "
+                      f"{tally.skipped_size} over size limit; {timestamps}")
+
+
 def ingest_archive(case, src, *, count: int = 0, progress=None) -> int:
     """Register the members of ``src.path`` worth keeping, copying them under the case
-    when ``src.stage`` is set. Returns the running file count, continuing from
-    ``count`` so the caller's progress numbers stay whole.
+    when ``src.stage`` is set or the archive cannot be read on demand. Returns the
+    running file count, continuing from ``count`` so the caller's progress numbers
+    stay whole.
     """
-    zip_path = Path(src.path)
+    path = Path(src.path)
+    fmt = archive_format(path)
+    if fmt is None:
+        raise ValueError(f"{path.name} is not a zip or tar archive")
+    if fmt == FORMAT_ZIP:
+        return _ingest_zip(case, src, path, count=count, progress=progress)
+    return _ingest_tar(case, src, path, fmt, count=count, progress=progress)
+
+
+def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
     slug = _slug(zip_path.stem)
     staged_dir = case.staged_dir
     stage = bool(getattr(src, "stage", False))
     max_bytes = src.max_bytes
+    tally = _Tally()
     with zipfile.ZipFile(zip_path) as zf:
         infos = [i for i in zf.infolist() if not i.is_dir()]
         root = common_root([i.filename for i in infos])
         n = count
-        registered = skipped_encrypted = skipped_size = ts_extended = ts_dos = 0
         for info in infos:
             name = info.filename
             if _is_macosx_junk(name):
                 continue
             if info.flag_bits & 0x1:
-                skipped_encrypted += 1
+                tally.skipped_encrypted += 1
                 continue
             if max_bytes and info.file_size > max_bytes:
-                skipped_size += 1
+                tally.skipped_size += 1
                 continue
             ext = PurePosixPath(name).suffix.lower()
             if ext in IMAGE_EXTS:
@@ -463,56 +642,105 @@ def ingest_archive(case, src, *, count: int = 0, progress=None) -> int:
             dest = _staged_path(staged_dir, slug, name)
             mtime, ctime, which = _timestamps(info)
             if which == "extended":
-                ts_extended += 1
+                tally.ts_extended += 1
             else:
-                ts_dos += 1
+                tally.ts_dos += 1
             if stage:
                 _write_member(zf, info, dest)
                 with contextlib.suppress(OSError):
                     os.utime(dest, (mtime, mtime))
             rel = name[len(root):] if root and name.startswith(root) else name
-            case.db.upsert_file(
-                str(dest),
-                rel_path=rel,
-                orig_path=name,
-                orig_name=PurePosixPath(name).name,
-                source=src.name,
-                kind=kind,
-                ext=ext,
-                size=info.file_size,
-                crc32=info.CRC,
-                mtime=mtime,
-                ctime=ctime,
-                atime=None,
-            )
-            registered += 1
+            _register(case, src, dest, name, rel, kind, ext, info.file_size, mtime, ctime,
+                      info.CRC, None)
+            tally.registered += 1
             n += 1
             if n % 200 == 0:
                 case.db.commit()
                 if progress:
                     progress(n)
-    st = zip_path.stat()
-    key = _meta_key(src.name)
-    sha = _sidecar_sha256(zip_path)
-    mode = MODE_STAGED if stage else MODE_REFERENCE
-    case.db.set_meta(f"{key}:path", str(zip_path))
-    case.db.set_meta(f"{key}:size", str(st.st_size))
-    case.db.set_meta(f"{key}:mtime", str(st.st_mtime))
-    case.db.set_meta(f"{key}:root", root)
-    case.db.set_meta(f"{key}:mode", mode)
-    case.db.set_meta(f"{key}:sha256", sha or "")
-    case.db.set_meta(f"{key}:sha256_source", "ufd sidecar" if sha else "not recorded")
-    case.db.set_meta(f"{key}:timestamps",
-                     f"extended field on {ts_extended} of {registered} registered members; "
-                     f"DOS date on {ts_dos}")
-    case.db.set_meta(f"{key}:skipped_encrypted", str(skipped_encrypted))
-    case.db.set_meta(f"{key}:skipped_over_max", str(skipped_size))
-    case.db.commit()
-    how = "copied under the case" if stage else "read from the zip on demand"
-    case.db.audit_log(case.examiner, "ingest-archive",
-                      f"{zip_path.name}: registered {registered} ({how}), skipped "
-                      f"{skipped_encrypted} encrypted, {skipped_size} over size limit; "
-                      f"timestamps extended={ts_extended} dos={ts_dos}")
+    _finish(case, src, zip_path, fmt=FORMAT_ZIP, root=root, stage=stage, reason="",
+            tally=tally, timestamps=(
+                f"extended field on {tally.ts_extended} of {tally.registered} registered "
+                f"members; DOS date on {tally.ts_dos}"))
+    if progress:
+        progress(n)
+    return n
+
+
+def _tar_name(member: tarfile.TarInfo) -> str:
+    name = member.name
+    while name.startswith("./"):
+        name = name[2:]
+    return name
+
+
+def _ingest_tar(case, src, tar_path: Path, fmt: str, *, count: int, progress) -> int:
+    """One streaming pass: header, first bytes and data offset of every member, and the
+    copy itself when staging. A compressed tar is staged whatever the source asked,
+    because its members cannot be seeked to later."""
+    slug = _slug(tar_path.name.split(".")[0] or tar_path.stem)
+    staged_dir = case.staged_dir
+    compressed = fmt == FORMAT_TAR_COMPRESSED
+    stage = bool(getattr(src, "stage", False)) or compressed
+    reason = ("a compressed tar cannot be read on demand, so its media was copied out"
+              if compressed and not getattr(src, "stage", False) else "")
+    max_bytes = src.max_bytes
+    tally = _Tally()
+    names: list[str] = []
+    n = count
+    with tarfile.open(tar_path, "r|*") as tf:
+        for member in tf:
+            if member.issym() or member.islnk():
+                tally.skipped_links += 1            # a link carries no bytes of its own
+                continue
+            if not member.isreg():
+                continue
+            name = _tar_name(member)
+            if _is_macosx_junk(name):
+                continue
+            if max_bytes and member.size > max_bytes:
+                tally.skipped_size += 1
+                continue
+            ext = PurePosixPath(name).suffix.lower()
+            fin = None
+            head = b""
+            if ext in IMAGE_EXTS:
+                kind = "image"
+            elif ext in VIDEO_EXTS:
+                kind = "video"
+            else:
+                fin = tf.extractfile(member)
+                head = fin.read(16) if fin is not None else b""
+                kind = _kind_from_magic(head)
+                if kind == "other" and not src.include_other:
+                    continue
+            dest = _staged_path(staged_dir, slug, name)
+            mtime = float(member.mtime)
+            if stage:
+                if fin is None:
+                    fin = tf.extractfile(member)
+                    head = b""
+                _write_stream(fin, dest, head)
+                with contextlib.suppress(OSError):
+                    os.utime(dest, (mtime, mtime))
+            names.append(name)
+            _register(case, src, dest, name, name, kind, ext, member.size, mtime, None, None,
+                      None if compressed else int(member.offset_data))
+            tally.registered += 1
+            n += 1
+            if n % 200 == 0:
+                case.db.commit()
+                if progress:
+                    progress(n)
+    # The wrapper folder is only known once every name has streamed past.
+    root = common_root(names)
+    if root:
+        case.db.conn.execute(
+            "UPDATE files SET rel_path = substr(orig_path, ?) WHERE source = ? "
+            "AND substr(orig_path, 1, ?) = ?",
+            (len(root) + 1, src.name, len(root), root))
+    _finish(case, src, tar_path, fmt=fmt, root=root, stage=stage, reason=reason,
+            tally=tally, timestamps=f"tar header on all {tally.registered} registered members")
     if progress:
         progress(n)
     return n
@@ -546,19 +774,65 @@ def _verify_members(case, name: str, zf: zipfile.ZipFile, limit: int = 20) -> li
     return problems
 
 
+def _tar_index(tar_path: Path) -> dict[str, tuple[int, int, int]]:
+    """``name -> (size, mtime, data offset)`` for every regular member, from one
+    streaming pass. This is the whole read for a tar; there is no directory to consult."""
+    index: dict[str, tuple[int, int, int]] = {}
+    with tarfile.open(tar_path, "r|*") as tf:
+        for member in tf:
+            if member.isreg():
+                index[_tar_name(member)] = (member.size, int(member.mtime),
+                                            int(member.offset_data))
+    return index
+
+
+def _verify_tar_members(case, name: str, index: dict, limit: int = 20) -> list[str]:
+    """Every registered member of ``name`` must be in the tar with the same size and
+    modification time; a tar records no per-member checksum."""
+    problems: list[str] = []
+    for r in case.db.iter_files("source = ?", (name,)):
+        member = r["orig_path"]
+        got = index.get(member)
+        if got is None:
+            problems.append(f"{member}: not in the archive")
+        elif got[0] != r["size"]:
+            problems.append(f"{member}: size {got[0]} != {r['size']}")
+        elif r["mtime"] is not None and got[1] != int(r["mtime"]):
+            problems.append(f"{member}: modification time differs")
+        if len(problems) >= limit:
+            break
+    return problems
+
+
 def relink_source(case, name: str, new_path: str | Path) -> dict:
-    """Point an archive source at a zip that has moved. The new file is accepted only
-    when every registered member is in it with the same size and CRC, so a different
-    extraction with the same name is refused. The same path is accepted too, which
-    re-verifies a source reported as ``changed``."""
+    """Point an archive source at an archive that has moved. The new file is accepted
+    only when every registered member is in it with the same size and CRC (zip) or
+    size and modification time (tar), so a different extraction with the same name is
+    refused. The same path is accepted too, which re-verifies a source reported as
+    ``changed``. For a plain tar the recorded data offsets are refreshed from the new
+    file, since a repacked tar lays its members out differently."""
     rec = _require(case, name)
     new = Path(new_path).resolve()
-    try:
-        zf = zipfile.ZipFile(new)
-    except (OSError, zipfile.BadZipFile) as exc:
-        raise ValueError(f"cannot open {new}: {exc}") from exc
-    with zf:
-        problems = _verify_members(case, name, zf)
+    fmt = archive_format(new)
+    if fmt is None:
+        raise ValueError(f"cannot open {new}: not a zip or tar archive")
+    if (fmt == FORMAT_ZIP) != (rec["format"] == FORMAT_ZIP):
+        raise ValueError(f"{new.name} is a {fmt} and the case registered {name!r} "
+                         f"from a {rec['format']}")
+    index: dict = {}
+    if fmt == FORMAT_ZIP:
+        try:
+            zf = zipfile.ZipFile(new)
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise ValueError(f"cannot open {new}: {exc}") from exc
+        with zf:
+            problems = _verify_members(case, name, zf)
+    else:
+        try:
+            index = _tar_index(new)
+        except (OSError, tarfile.TarError, EOFError) as exc:
+            raise ValueError(f"cannot read {new}: {exc}") from exc
+        problems = _verify_tar_members(case, name, index)
     if problems:
         shown = "; ".join(problems[:3])
         raise ValueError(f"{new.name} does not hold what the case registered from "
@@ -566,9 +840,14 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
     _drop_zip(rec["path"])
     st = new.stat()
     key = _meta_key(name)
+    if fmt == FORMAT_TAR:
+        for r in case.db.iter_files("source = ?", (name,)):
+            case.db.update_file(r["id"], member_offset=index[r["orig_path"]][2])
     case.db.set_meta(f"{key}:path", str(new))
     case.db.set_meta(f"{key}:size", str(st.st_size))
     case.db.set_meta(f"{key}:mtime", str(st.st_mtime))
+    case.db.set_meta(f"{key}:format", fmt)
+    case.db.commit()
     case.db.audit_log(case.examiner, "relink-source", f"{name}: {rec['path']} -> {new}")
     return next(s for s in source_status(case) if s["name"] == name)
 
@@ -577,23 +856,26 @@ def stage_source(case, name: str, *, progress=None) -> int:
     """Copy every registered member of a reference-mode source under the case, making
     it self-contained. Returns the number of files written."""
     rec = _require(case, name)
-    zf = _open_zip(rec["path"])
+    zf = _open_zip(rec["path"]) if rec["format"] == FORMAT_ZIP else None
     rows = case.db.iter_files("source = ?", (name,))
     written = 0
     for i, r in enumerate(rows, 1):
         dest = Path(r["path"])
         if not dest.exists():
-            try:
-                info = zf.getinfo(r["orig_path"])
-            except KeyError:
-                raise ArchiveUnavailable(
-                    f"{r['orig_path']!r} is not in the source archive: {rec['path']}") from None
-            try:
-                _write_member(zf, info, dest)
-            except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
-                raise ArchiveUnavailable(
-                    f"could not read {r['orig_path']!r} from the source archive "
-                    f"({exc}): {rec['path']}") from exc
+            if zf is None:
+                _extract_tar_member(rec, r, dest)
+            else:
+                try:
+                    info = zf.getinfo(r["orig_path"])
+                except KeyError:
+                    raise ArchiveUnavailable(
+                        f"{r['orig_path']!r} is not in the source archive: {rec['path']}") from None
+                try:
+                    _write_member(zf, info, dest)
+                except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
+                    raise ArchiveUnavailable(
+                        f"could not read {r['orig_path']!r} from the source archive "
+                        f"({exc}): {rec['path']}") from exc
             if r["mtime"]:
                 with contextlib.suppress(OSError):
                     os.utime(dest, (r["mtime"], r["mtime"]))
@@ -607,12 +889,25 @@ def stage_source(case, name: str, *, progress=None) -> int:
 
 
 def unstage_source(case, name: str) -> int:
-    """Remove the copies of a staged source and read from the zip on demand instead.
-    Refused unless the zip is readable and still holds every registered member, since
-    the copies would otherwise be the only copy. Returns the number of files removed."""
+    """Remove the copies of a staged source and read from the archive on demand
+    instead. Refused unless the archive is readable and still holds every registered
+    member, since the copies would otherwise be the only copy, and refused outright for
+    a compressed tar, which cannot be read on demand. Returns the number of files
+    removed."""
     rec = _require(case, name)
-    zf = _open_zip(rec["path"])
-    problems = _verify_members(case, name, zf)
+    if rec["format"] == FORMAT_TAR_COMPRESSED:
+        raise ValueError(f"{Path(rec['path']).name} is a compressed tar and cannot be read "
+                         "on demand; keeping the copies")
+    if rec["format"] == FORMAT_ZIP:
+        zf = _open_zip(rec["path"])
+        problems = _verify_members(case, name, zf)
+    else:
+        try:
+            index = _tar_index(Path(rec["path"]))
+        except (OSError, tarfile.TarError, EOFError) as exc:
+            raise ArchiveUnavailable(
+                f"cannot open the source archive ({exc}): {rec['path']}") from exc
+        problems = _verify_tar_members(case, name, index)
     if problems:
         raise ValueError(f"{Path(rec['path']).name} no longer holds what the case "
                          f"registered; keeping the copies: {'; '.join(problems[:3])}")
@@ -632,5 +927,5 @@ def unstage_source(case, name: str) -> int:
                 cand.rmdir()                             # only when empty
     case.db.set_meta(f"{_meta_key(name)}:mode", MODE_REFERENCE)
     case.db.audit_log(case.examiner, "unstage-source",
-                      f"{name}: {removed} copies removed, reading from the zip on demand")
+                      f"{name}: {removed} copies removed, reading from the archive on demand")
     return removed
