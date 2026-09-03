@@ -129,7 +129,9 @@ python -m gleapp --case mycase ingest  sample_evidence\ingest.json
 #    demand, so the case stays small and the archive has to stay where it is. Add
 #    --stage to copy the media into the case instead (self-contained, and as large as
 #    the media). A compressed tar (.tar.gz) is always copied out, since it cannot be
-#    read on demand.
+#    read on demand. An Android image that carries one file under several storage
+#    views (data/data, data/user/0, data_mirror, storage/emulated) registers it once;
+#    the other paths show in the details pane as "Also under" and are searchable.
 python gleapp.py -c mycase ingest /path/to/EXTRACTION_FFS.zip
 python gleapp.py -c mycase source list                  # is the zip still where the case expects it?
 python gleapp.py -c mycase source relink EXTRACTION_FFS.zip /new/place/EXTRACTION_FFS.zip
