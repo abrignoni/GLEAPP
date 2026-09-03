@@ -78,14 +78,34 @@ def build_exe(onefile: bool, clean: bool) -> Path:
         for folder in (BUILD, DIST):
             print(f"==> removing {folder}", flush=True)
             shutil.rmtree(folder, ignore_errors=True)
+    out = DIST / exe_name() if onefile else DIST / APP / exe_name()
+    refuse_collision(onefile, out)
     run([sys.executable, "-m", "pip", "install", "-q", "--disable-pip-version-check",
          "-e", f"{ROOT}[build]"])
     env = dict(os.environ, GLEAPP_ONEFILE="1" if onefile else "0")
     run([sys.executable, "-m", "PyInstaller", str(SPEC), "--noconfirm",
          "--distpath", str(DIST), "--workpath", str(BUILD)], env=env)
-    out = DIST / exe_name() if onefile else DIST / APP / exe_name()
     assert_artifact(out, "executable")
     return out
+
+
+def refuse_collision(onefile: bool, out: Path) -> None:
+    """Stop a build from silently destroying the other layout's output.
+
+    Off Windows both layouts are named dist/GLEAPP, a file for --onefile and a folder
+    otherwise, and PyInstaller's --noconfirm removes whatever is already there without
+    a word. Measured: a --onefile build on top of a one-folder build logged
+    "Removing dir dist/GLEAPP" and replaced 1,257 files with one, exit 0. In the
+    signing workflow that folder can be the signed build waiting for phase 2.
+    --clean is the explicit way to discard it.
+    """
+    folder = DIST / APP
+    if onefile and out.is_dir():
+        sys.exit(f"build: {out} is an existing one-folder build and a --onefile build at "
+                 "that name would delete it; pass --clean to discard it, or move it first")
+    if not onefile and folder.is_file():
+        sys.exit(f"build: {folder} is an existing one-file build sitting where the folder "
+                 "build must go; pass --clean to discard it, or move it first")
 
 
 def find_iscc() -> str:

@@ -57,3 +57,40 @@ def test_installer_says_plainly_it_is_windows_only():
     r = _run("installer")
     assert r.returncode != 0
     assert "Windows" in r.stdout + r.stderr
+
+
+def _driver_in(tmp_path, monkeypatch):
+    mod = _load()
+    monkeypatch.setattr(mod, "DIST", tmp_path / "dist")
+    monkeypatch.setattr(mod, "BUILD", tmp_path / "build")
+    return mod
+
+
+def test_onefile_refuses_to_delete_a_folder_build(tmp_path, monkeypatch):
+    """Off Windows both layouts are dist/GLEAPP; PyInstaller would remove the folder silently."""
+    mod = _driver_in(tmp_path, monkeypatch)
+    (mod.DIST / mod.exe_name()).mkdir(parents=True)   # a folder sitting where the one-file output goes
+    with pytest.raises(SystemExit) as e:
+        mod.build_exe(onefile=True, clean=False)
+    assert "would delete it" in str(e.value)
+
+
+def test_folder_build_refuses_to_clobber_a_onefile_build(tmp_path, monkeypatch):
+    mod = _driver_in(tmp_path, monkeypatch)
+    mod.DIST.mkdir()
+    (mod.DIST / mod.APP).write_text("a one-file build")
+    with pytest.raises(SystemExit) as e:
+        mod.build_exe(onefile=False, clean=False)
+    assert "where the folder build must go" in str(e.value)
+
+
+def test_clean_discards_the_collision_and_proceeds(tmp_path, monkeypatch):
+    """--clean is the sanctioned way past the guard; stop the build at pip so this stays fast."""
+    mod = _driver_in(tmp_path, monkeypatch)
+    (mod.DIST / mod.exe_name()).mkdir(parents=True)
+    calls = []
+    monkeypatch.setattr(mod, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(mod, "assert_artifact", lambda path, what: None)
+    mod.build_exe(onefile=True, clean=True)
+    assert not (mod.DIST / mod.exe_name()).exists()
+    assert calls and "pip" in calls[0]
