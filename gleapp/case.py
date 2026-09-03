@@ -38,13 +38,14 @@ from .db import CaseDB
 CASE_DB = "case.gleapp"
 THUMB_DIR = "thumbs"
 REPORT_DIR = "reports"
+STAGED_DIR = "staged"           # archive members extracted for processing and viewing
 
 
 @dataclass
 class Source:
     name: str
     path: str
-    kind: str = "folder"          # 'folder' | 'projectvic'
+    kind: str = "folder"          # 'folder' | 'projectvic' | 'archive'
     include_other: bool = False
     follow_symlinks: bool = False
     max_mb: int | None = None
@@ -69,6 +70,10 @@ class Case:
     @property
     def report_dir(self) -> Path:
         return self.root / REPORT_DIR
+
+    @property
+    def staged_dir(self) -> Path:
+        return self.root / STAGED_DIR
 
     def close(self) -> None:
         self.db.close()
@@ -96,6 +101,19 @@ def open_case(path: str | Path, *, create: bool = False, examiner: str = "examin
 
 
 # --------------------------------------------------------------------------
+def is_archive_file(p: Path) -> bool:
+    """A zip by extension or by its local-header magic; the file must exist."""
+    if not p.is_file():
+        return False
+    if p.suffix.lower() == ".zip":
+        return True
+    try:
+        with open(p, "rb") as fh:
+            return fh.read(4) == b"PK\x03\x04"
+    except OSError:
+        return False
+
+
 def _norm_source(entry: object, base: Path) -> Source | None:
     if isinstance(entry, str):
         p = (base / entry).resolve() if not Path(entry).is_absolute() else Path(entry)
@@ -111,6 +129,7 @@ def _norm_source(entry: object, base: Path) -> Source | None:
         return Source(
             name=str(low.get("name") or p.name or str(p)),
             path=str(p),
+            kind="archive" if is_archive_file(p) else "folder",
             include_other=bool(low.get("include_other", False)),
             follow_symlinks=bool(low.get("follow_symlinks", False)),
             max_mb=low.get("max_mb"),
@@ -124,6 +143,10 @@ def parse_source_spec(spec: str | Path) -> tuple[list[Source], dict]:
     Returns (sources, meta) where meta may carry 'case'/'examiner'.
     """
     p = Path(spec)
+    # A full-file-system extraction is a zip. Check before the folder branch, which
+    # would otherwise register the zip itself as one file.
+    if p.is_file() and is_archive_file(p):
+        return [Source(name=p.name, path=str(p.resolve()), kind="archive")], {}
     if p.is_dir() or (p.exists() and p.suffix.lower() not in {".json"}):
         return [Source(name=p.name or str(p), path=str(p.resolve()))], {}
 
