@@ -295,7 +295,8 @@ def scrub_local_paths(text: str, *known: str | Path | None) -> str:
     given, with the other separator, and with a repr's doubled backslashes), which
     is what handles a folder name holding a space. Anything else shaped like an
     absolute path, quoted or bare, is removed by shape; a bare path with a space in
-    it is only fully removed when it is passed as ``known``.
+    it is only fully removed when it is passed as ``known``. The brackets a path sat
+    in, and the punctuation or space left dangling beside it, go with it.
     """
     out = text
     for k in known:
@@ -308,6 +309,11 @@ def scrub_local_paths(text: str, *known: str | Path | None) -> str:
             out = re.sub(r"(['\"]?)" + re.escape(f) + r"\1", "", out)
     out = _QUOTED_PATH.sub("", out)
     out = _BARE_PATH.sub("", out)
+    # what a removed path leaves behind: a colon or space before a closing bracket,
+    # empty brackets, a space before the punctuation that followed it
+    out = re.sub(r"[\s:,;]+(?=\))", "", out)
+    out = re.sub(r"\(\s*\)", "", out)
+    out = re.sub(r"\s+(?=[:,;)])", "", out)
     return re.sub(r"\s+", " ", out).strip(" :,;")
 
 
