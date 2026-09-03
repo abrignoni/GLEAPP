@@ -326,8 +326,9 @@ def _video_result_to_payload(row, res: dict | None, *, screen: bool) -> dict:
         try:
             upd.update(crypto_hashes(row["path"]))
         except OSError as exc:
+            err = imaging.scrub_local_paths(str(exc), row["path"]) or type(exc).__name__
             return {"id": fid, "status": "error",
-                    "fields": {"error": f"{exc}"[:300]}, "keyframes": []}
+                    "fields": {"error": err[:300]}, "keyframes": []}
     if res is None:
         upd["error"] = _video_failure_reason(
             row["path"], "video could not be decoded (corrupt or unsupported)")

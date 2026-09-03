@@ -7,6 +7,8 @@ opens images gets the same behaviour.
 
 from __future__ import annotations
 
+import os
+import re
 import struct
 import zlib
 from pathlib import Path
@@ -272,8 +274,46 @@ _BLOB_MAGICS = [
 ]
 
 
+# An absolute path as it appears inside an exception message: POSIX, a Windows
+# drive, a UNC share, including the doubled backslashes a repr gives them. A quoted
+# path may hold whitespace; a bare one is taken to end at the first whitespace.
+_PATH_START = r"(?:/|[A-Za-z]:[\\/]|\\\\)"
+_QUOTED_PATH = re.compile(r"'" + _PATH_START + r"[^']*'|\"" + _PATH_START + r'[^"]*"')
+_BARE_PATH = re.compile(r"(?<![\w./\\-])" + _PATH_START + r"[^\s'\"<>|,;)\]]+")
+
+
+def scrub_local_paths(text: str, *known: str | Path | None) -> str:
+    """``text`` with every absolute path removed.
+
+    Pillow, the OSError family and the media libraries name the file they were
+    handed, and that name is a path on the examiner's machine: the case folder for
+    a staged or on-demand copy, the evidence mount otherwise. Stored error text
+    reaches the reports and the exports, and the row already identifies the file,
+    so the path is dropped rather than rewritten.
+
+    Each path in ``known`` is removed in every spelling a message can carry (as
+    given, with the other separator, and with a repr's doubled backslashes), which
+    is what handles a folder name holding a space. Anything else shaped like an
+    absolute path, quoted or bare, is removed by shape; a bare path with a space in
+    it is only fully removed when it is passed as ``known``.
+    """
+    out = text
+    for k in known:
+        if not k:
+            continue
+        s = os.fspath(k)
+        forms = {s, s.replace("\\", "/"), s.replace("/", "\\")}
+        forms |= {repr(f)[1:-1] for f in list(forms)}
+        for f in sorted(forms, key=len, reverse=True):
+            out = re.sub(r"(['\"]?)" + re.escape(f) + r"\1", "", out)
+    out = _QUOTED_PATH.sub("", out)
+    out = _BARE_PATH.sub("", out)
+    return re.sub(r"\s+", " ", out).strip(" :,;")
+
+
 def describe_failure(path: str | Path, exc: Exception) -> str:
-    """A useful error string for a file that wouldn't decode."""
+    """A useful error string for a file that wouldn't decode. Never carries the
+    path: the row names the file, and the path is the examiner's machine."""
     es = str(exc)
     if "Security limit exceeded" in es or "exceeds the maximum image size" in es:
         # libheif produced a frame far bigger than the container declared - the
@@ -292,7 +332,9 @@ def describe_failure(path: str | Path, exc: Exception) -> str:
                 return label
     except OSError:
         pass
-    return f"{type(exc).__name__}: {exc}"[:300]
+    text = scrub_local_paths(es, path)
+    name = type(exc).__name__
+    return (f"{name}: {text}" if text else name)[:300]
 
 
 # extensions whose decode can hard-crash -> must go through a child process
