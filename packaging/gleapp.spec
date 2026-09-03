@@ -8,6 +8,7 @@
 # Windows installer is wired up.
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +18,8 @@ ONEFILE = os.environ.get("GLEAPP_ONEFILE", "") == "1"   # set by build.py, never
 
 ROOT = Path(SPECPATH).parent          # repo root (packaging/ -> ..)
 PKG = ROOT / "gleapp"
+# Read as text so the spec never imports the package (that would pull in OpenCV).
+VERSION = re.search(r'^__version__\s*=\s*"([^"]+)"', (PKG / "__init__.py").read_text(encoding="utf-8"), re.M).group(1)
 
 datas = [
     (str(PKG / "web" / "templates"), "gleapp/web/templates"),
@@ -80,3 +83,15 @@ else:
               bootloader_ignore_signals=False, strip=False, upx=False, **exe_kwargs)
     coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas,
                    strip=False, upx=False, name="GLEAPP")
+
+if sys.platform == "darwin" and not ONEFILE:
+    # A .app around the one-folder build. No icon ships yet, so PyInstaller uses its
+    # default until packaging/ carries a gleapp.icns. PyInstaller strips signatures
+    # while it builds, so codesign runs after this, on the finished bundle.
+    ICNS = ROOT / "packaging" / "gleapp.icns"
+    app = BUNDLE(coll, name="GLEAPP.app",
+                 icon=str(ICNS) if ICNS.exists() else None,
+                 bundle_identifier="org.leapp.gleapp.app",
+                 info_plist={"CFBundleShortVersionString": VERSION,
+                             "CFBundleVersion": VERSION,
+                             "NSHighResolutionCapable": True})

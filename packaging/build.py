@@ -2,7 +2,8 @@
 
     python packaging/build.py exe                 phase 1: PyInstaller -> dist/GLEAPP/ (one-folder)
     python packaging/build.py exe --onefile       phase 1: one executable in dist/ (no installer from this)
-    python packaging/build.py installer           phase 2, Windows: Inno Setup -> dist/GLEAPP-Setup-<version>.exe
+    python packaging/build.py installer           phase 2: Windows -> dist/GLEAPP-Setup-<version>.exe (Inno Setup);
+                                                  macOS -> dist/GLEAPP-<version>.dmg around dist/GLEAPP.app
     python packaging/build.py installer --sign-tool NAME
                                                   phase 2, with Inno Setup signing the installer and the
                                                   uninstaller using the Sign Tool configured under NAME
@@ -21,9 +22,9 @@ reaches the spec through the GLEAPP_ONEFILE environment variable; the spec file 
 edited by a build. PyInstaller is pinned in the [build] extra of pyproject.toml, which
 phase 1 installs.
 
-Phase 1 runs anywhere PyInstaller does. Phase 2 is Windows only today: a macOS .app
-bundle and a Linux AppImage are not wired up yet, and the command says so instead of
-producing nothing.
+Phase 1 runs anywhere PyInstaller does and, on macOS, also produces GLEAPP.app. Phase 2
+makes an Inno Setup installer on Windows and a .dmg on macOS; a Linux AppImage is not
+wired up yet, and the command says so instead of producing nothing.
 """
 
 from __future__ import annotations
@@ -119,9 +120,18 @@ def find_iscc() -> str:
 
 
 def build_installer(sign_tool: str | None) -> Path:
-    if sys.platform != "win32":
-        sys.exit("build: only Windows packaging (Inno Setup) is wired up; a macOS bundle "
-                 "and a Linux AppImage are not yet")
+    if sys.platform == "win32":
+        return _build_inno(sign_tool)
+    if sys.platform == "darwin":
+        if sign_tool:
+            sys.exit("build: --sign-tool is an Inno Setup concept; on macOS sign the bundle "
+                     "with codesign after 'exe', then run 'installer' for the disk image")
+        return _build_dmg()
+    sys.exit("build: packaging is wired up for Windows (Inno Setup) and macOS (.dmg); "
+             "a Linux AppImage is not yet")
+
+
+def _build_inno(sign_tool: str | None) -> Path:
     exe = DIST / APP / exe_name()
     if not exe.is_file():
         sys.exit(f"build: {exe} not found; run 'exe' first, the one-folder build rather than "
@@ -134,6 +144,21 @@ def build_installer(sign_tool: str | None) -> Path:
     run(cmd)
     out = DIST / f"{APP}-Setup-{version}.exe"
     assert_artifact(out, "installer")
+    return out
+
+
+def _build_dmg() -> Path:
+    """A compressed disk image around the .app the spec's BUNDLE step produced."""
+    app = DIST / f"{APP}.app"
+    if not app.is_dir():
+        sys.exit(f"build: {app} not found; run 'exe' first, the one-folder build, which "
+                 "produces the bundle on macOS")
+    version = read_version()
+    out = DIST / f"{APP}-{version}.dmg"
+    run(["hdiutil", "create", "-volname", APP, "-srcfolder", str(app), "-ov",
+         "-format", "UDZO", str(out)])
+    run(["hdiutil", "verify", str(out)])
+    assert_artifact(out, "disk image")
     return out
 
 

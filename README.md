@@ -87,6 +87,7 @@ pip install -e .[build]
 python packaging/build.py exe               # phase 1 -> dist/GLEAPP/  (one-folder; GLEAPP.exe on Windows)
 python packaging/build.py exe --onefile     # phase 1 -> one file in dist/  (no installer from this)
 python packaging/build.py installer         # phase 2, Windows -> dist/GLEAPP-Setup-<version>.exe (needs Inno Setup)
+python packaging/build.py installer         # phase 2, macOS -> dist/GLEAPP-<version>.dmg around dist/GLEAPP.app
 python packaging/build.py all               # both phases, for unsigned local builds
 ```
 
@@ -95,9 +96,9 @@ before phase 2, or the installer ships an unsigned exe inside a signed wrapper. 
 `installer --sign-tool <name>` and Inno Setup signs the installer and its uninstaller
 with the Sign Tool configured under that name. `python packaging/build.py verify <file>`
 checks a signature is present and valid before anything is uploaded. The installer
-version is read from `gleapp/__init__.py`, so it cannot drift from the app. Phase 1 runs
-on macOS and Linux too; their packaging, a `.app` bundle and an AppImage, is not wired
-up yet.
+version is read from `gleapp/__init__.py`, so it cannot drift from the app. Phase 1 on
+macOS also produces `dist/GLEAPP.app`, unsigned; sign it with `codesign` before phase 2.
+A Linux AppImage is not wired up yet.
 
 The build bundles Python, OpenCV, Pillow, NumPy, SciPy, Flask and pywebview —
 ~110–140 MB one-folder, ~90 MB one-file. It does **not** bundle the WebView2

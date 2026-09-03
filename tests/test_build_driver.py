@@ -52,11 +52,11 @@ def test_all_refuses_a_sign_tool_because_the_inner_exe_would_be_unsigned():
     assert "unsigned" in r.stdout + r.stderr
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows is the platform that has an installer")
-def test_installer_says_plainly_it_is_windows_only():
+@pytest.mark.skipif(sys.platform in ("win32", "darwin"), reason="Windows and macOS have packaging wired up")
+def test_installer_says_plainly_which_platforms_are_wired():
     r = _run("installer")
     assert r.returncode != 0
-    assert "Windows" in r.stdout + r.stderr
+    assert "Windows" in r.stdout + r.stderr and "macOS" in r.stdout + r.stderr
 
 
 def _driver_in(tmp_path, monkeypatch):
