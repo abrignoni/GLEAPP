@@ -1162,7 +1162,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 header=header, fields=fields, scope_label=label,
                 full_images=full_images, full_videos=full_videos, tz=tz)))
         if "kml" in fmts:
-            made.append(str(report.export_kml(case, out / f"geolocation{tag}.kml", where)))
+            made.append(str(report.export_kml(case, out / f"geolocation{tag}.kmz", where)))
         if "md5" in fmts:
             made.append(str(report.export_md5(case, out / f"md5{tag}.csv", where)))
         if "vic" in fmts:

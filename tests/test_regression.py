@@ -113,6 +113,30 @@ def test_per_file_expectations(processed):
     assert not problems, "\n".join(problems)
 
 
+def test_kmz_export_embeds_thumbnails(processed, tmp_path):  # pylint: disable=redefined-outer-name
+    import zipfile
+
+    from gleapp import report
+
+    case, _manifest, by_rel, _stats = processed
+    gps = [r for r in by_rel.values()
+           if r["gps_lat"] is not None and r["gps_lon"] is not None and r["thumb"]]
+    assert gps, "regression collection has no geolocated file with a thumbnail"
+
+    out = report.export_kml(case, tmp_path / "geo.kml")     # .kml -> .kmz
+    assert out.suffix == ".kmz" and out.exists()
+
+    with zipfile.ZipFile(out) as z:
+        names = z.namelist()
+        assert "doc.kml" in names
+        kml = z.read("doc.kml").decode("utf-8")
+        assert '<img src="files/' in kml
+        imgs = [n for n in names if n.startswith("files/") and n.endswith(".jpg")]
+        assert imgs
+        for n in imgs:
+            assert z.read(n)[:3] == b"\xff\xd8\xff"          # JPEG SOI
+
+
 def test_exact_and_visual_grouping(processed):
     _case, _manifest, by_rel, _stats = processed
     a, b = _row(by_rel, "duplicates/orig.jpg"), _row(by_rel, "duplicates/exact_copy.jpg")

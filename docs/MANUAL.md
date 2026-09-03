@@ -53,7 +53,7 @@ One case is one folder. Inside it:
 | `thumbs/` | grid thumbnails and video key frames |
 | `views/` | full-size JPEGs transcoded from formats the browser can't show (HEIC, TIFF, KTX…) |
 | `extracted/` | media unpacked from container files (Snapchat `LZC` bundles) |
-| `reports/` | exported reports, CSV/JSON, MD5 lists, KML, Project VIC exports |
+| `reports/` | exported reports, CSV/JSON, MD5 lists, KMZ, Project VIC exports |
 | `backups/` | timestamped snapshot copies of `case.gleapp` |
 
 Switch cases with **⇤ Close case** (snapshots first, returns to the launcher).
@@ -564,7 +564,7 @@ current selection — and one or more **formats**:
 | HTML report | self-contained page (thumbnails embedded) with your case header, a "Report contents" breakdown, one card per image showing the fields you chose |
 | CSV | full metadata, one row per file |
 | JSON | the same data, structured; carries the case header too |
-| KML | geolocated media, for mapping tools |
+| KMZ | geolocated media for Google Earth / mapping tools — a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location |
 | MD5 list | one hash per row (also from the selection bar / right-click) |
 | Project VIC JSON | the original VIC file with Category / Comments / Tags written back, keyed by MediaID and MD5 (VIC cases) |
 

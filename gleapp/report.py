@@ -8,6 +8,7 @@ import html
 import io
 import json
 import time
+import zipfile
 from collections import Counter
 from pathlib import Path
 
@@ -96,17 +97,30 @@ def export_json(case: Case, dest: str | Path, where: str = "",
 
 
 def export_kml(case: Case, dest: str | Path, where: str = "") -> Path:
-    """KML of every in-scope file that carries GPS coordinates."""
-    dest = Path(dest)
-    pts = [d for d in _rows(case, _and("gps_lat IS NOT NULL AND gps_lon IS NOT NULL",
-                                       where))]
+    """KMZ of every in-scope file that carries GPS coordinates.
+
+    The archive bundles a thumbnail (or, for a video, its middle key frame)
+    for each placemark, so clicking a pin in Google Earth shows the picture
+    right at its location.
+    """
+    dest = Path(dest).with_suffix(".kmz")
+    pts = _rows(case, _and("gps_lat IS NOT NULL AND gps_lon IS NOT NULL", where))
+
+    media: dict[str, bytes] = {}          # arcname -> file bytes
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
         f"<name>{html.escape(str(case.db.get_meta('case_name')))} - media geolocation</name>",
     ]
     for d in pts:
+        img_html = ""
+        thumb = _thumb_bytes(case, d)
+        if thumb:
+            arc = f"files/{d['id']}.jpg"
+            media[arc] = thumb
+            img_html = f'<img src="{arc}" width="320"/><br/>'
         desc = (
+            f"{img_html}"
             f"{html.escape(_disp_path(d))}<br/>"
             f"{html.escape(str(d.get('created_dt') or ''))}<br/>"
             f"Category: {html.escape(d['category_label'])}"
@@ -119,8 +133,31 @@ def export_kml(case: Case, dest: str | Path, where: str = "") -> Path:
             "</Placemark>"
         )
     parts.append("</Document></kml>")
-    dest.write_text("\n".join(parts), encoding="utf-8")
+
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("doc.kml", "\n".join(parts))
+        for arc, raw in media.items():
+            z.writestr(arc, raw)
     return dest
+
+
+def _thumb_bytes(case: Case, d: dict) -> bytes | None:
+    """Raw JPEG bytes of the best small preview for a file, or None."""
+    names: list[str] = []
+    if d.get("kind") == "video":
+        kfs = case.db.conn.execute(
+            "SELECT thumb FROM keyframes WHERE file_id=? AND thumb IS NOT NULL "
+            "ORDER BY ts", (d["id"],)).fetchall()
+        if kfs:
+            names.append(kfs[len(kfs) // 2]["thumb"])
+    if d.get("thumb"):
+        names.append(d["thumb"])
+    for name in names:
+        try:
+            return (case.thumb_dir / name).read_bytes()
+        except OSError:
+            continue
+    return None
 
 
 # display timezone for the current export (set by export_html / export_csv)
@@ -439,8 +476,8 @@ def _fullview_candidates(case: Case, d: dict):
         yield v
 
 
-def _fullview_data_uri(case: Case, d: dict, max_px: int = 2000) -> str:
-    """A downscaled JPEG data URI to open on click, or '' if nothing works.
+def _fullview_jpeg(case: Case, d: dict, max_px: int = 2000) -> bytes | None:
+    """A downscaled JPEG for click-to-open, or None if nothing works.
 
     Images: the original decoded and capped at max_px. Videos: the middle
     key frame. HEIC/HEIF work because ``imaging`` registers the decoder.
@@ -455,11 +492,18 @@ def _fullview_data_uri(case: Case, d: dict, max_px: int = 2000) -> str:
                 im.thumbnail((max_px, max_px))
             buf = io.BytesIO()
             im.save(buf, "JPEG", quality=82)
-            return ("data:image/jpeg;base64,"
-                    + base64.b64encode(buf.getvalue()).decode("ascii"))
+            return buf.getvalue()
         except Exception:  # noqa: BLE001 - try the next candidate
             continue
-    return ""
+    return None
+
+
+def _fullview_data_uri(case: Case, d: dict, max_px: int = 2000) -> str:
+    """``_fullview_jpeg`` as a data URI, or '' if nothing works."""
+    raw = _fullview_jpeg(case, d, max_px)
+    if not raw:
+        return ""
+    return "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
 
 
 def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
