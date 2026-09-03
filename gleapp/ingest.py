@@ -16,6 +16,20 @@ VIDEO_EXTS = {
     ".mp4", ".m4v", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm",
     ".mpg", ".mpeg", ".3gp", ".ts", ".m2ts", ".mts",
 }
+# Major brands the MP4 Registration Authority (mp4ra.org, data/brands.csv, read
+# 2026-09-03) registers for audio: the iTunes audio family and the CMAF, OMAF,
+# IFE and IAMF audio media profiles. GLEAPP has no audio kind, so a file whose
+# major brand is one of these is "other", not a video that then fails to decode.
+# The registry notes M4A and M4B may also carry a video track; the brand is
+# still read as declaring an audio file.
+ISOBMFF_AUDIO_BRANDS = frozenset({
+    b"M4A ", b"M4B ", b"M4P ",                       # iTunes audio, audiobook, protected audio
+    b"caaa", b"caac", b"cama", b"camc", b"casu",     # CMAF AAC / USAC
+    b"ca4m", b"ca4s", b"ca4e", b"ceac",              # CMAF AC-4 / E-AC-3
+    b"cmh1", b"cmh2", b"cmhm", b"cmhs", b"cabl",     # CMAF MPEG-H / OMAF 3D audio
+    b"dts1", b"dts2", b"dts3",                       # CMAF DTS
+    b"oa2d", b"oabl", b"ifaa", b"iamf",              # OMAF audio, IFE-AAC, IAMF
+})
 
 
 def classify(ext: str) -> str:
@@ -51,6 +65,8 @@ def _kind_from_magic(h: bytes) -> str:
         brand = h[8:12]
         if brand[:2] in (b"he", b"mi", b"ms") or brand in (b"avif", b"avis"):
             return "image"                                   # HEIC / AVIF
+        if brand in ISOBMFF_AUDIO_BRANDS:
+            return "other"                                   # m4a / m4b / m4p: audio, no video
         return "video"                                       # mp4 / mov / m4v
     if h[:4] == b"\x1aE\xdf\xa3":                            # Matroska / WebM
         return "video"
