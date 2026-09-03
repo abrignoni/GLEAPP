@@ -621,6 +621,14 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         if not Path(r["path"]).exists():
             abort(410)
         p = _display_path(r)
+        # Apple CgBI ("iPhone-optimised") PNGs carry a .png name but no browser
+        # can render them - transcode to a real PNG, keeping transparency.
+        cgbi = p.suffix.lower() == ".png" and imaging.is_cgbi_png(p)
+        if cgbi:
+            cache = case.root / "views" / f"{file_id}.png"
+            if not cache.exists() and not imaging.to_web_png(p, cache):
+                abort(415, description="Apple CgBI PNG could not be decoded")
+            return send_file(cache, mimetype="image/png", conditional=True)
         if r["kind"] == "video" or p.suffix.lower() in imaging.WEB_IMAGE_EXTS:
             mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
             return send_file(p, mimetype=mime, conditional=True)

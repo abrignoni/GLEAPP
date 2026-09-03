@@ -7,8 +7,11 @@ opens images gets the same behaviour.
 
 from __future__ import annotations
 
+import struct
+import zlib
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageFile, ImageOps
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -88,8 +91,6 @@ def _parse_aapl(b: bytes):
     ``LZFS`` is an LZFSE-compressed payload, ``astc``/``ASTC`` a raw one -
     both preceded by a 4-byte lead value.
     """
-    import struct
-
     pos, n = 8, len(b)
     glinternal = w = h = 0
     dpos = dsize = 0
@@ -121,8 +122,6 @@ def _parse_aapl(b: bytes):
 
 def _decode_texture(glinternal: int, data: bytes, w: int, h: int):
     """Turn decompressed GPU-texture bytes into a PIL Image, or None."""
-    import numpy as np
-
     if not w or not h or w * h > 40_000_000:
         return None
 
@@ -177,8 +176,6 @@ def _decode_texture(glinternal: int, data: bytes, w: int, h: int):
 
 def _decode_ktx1(path: str | Path):
     """Decode a KTX 1 or Apple ``AAPL`` GPU texture -> PIL Image, or None."""
-    import struct
-
     b = Path(path).read_bytes()
 
     if b[:8] == _AAPL_MAGIC:
@@ -302,12 +299,148 @@ def describe_failure(path: str | Path, exc: Exception) -> str:
 RISKY_EXTS = {".ktx", ".ktx2", ".dds", ".pvr", ".astc"}
 
 
+# ---- Apple CgBI ("iPhone-optimised") PNG -----------------------------
+#
+# Xcode's asset pipeline rewrites PNGs bundled in .app packages into a
+# non-standard variant that ordinary decoders (Pillow, Chromium/WebView2)
+# render as a black or empty image: a ``CgBI`` chunk is inserted before
+# ``IHDR``, the IDAT stream is raw DEFLATE (no zlib header), the colour
+# channels are byte-swapped (BGRA) and the alpha is premultiplied. An
+# ``iDOT`` chunk may additionally split the IDAT into two zlib streams.
+_PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def is_cgbi_png(src: str | Path) -> bool:
+    """True if ``src`` is an Apple CgBI PNG (needs the fallback decoder)."""
+    try:
+        with open(src, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return False
+    return head[:8] == _PNG_SIG and head[12:16] == b"CgBI"
+
+
+# Adam7 interlace passes: (x0, y0, x-step, y-step)
+_ADAM7 = [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4),
+          (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)]
+
+
+def _png_unfilter(buf, start, rows, stride, bpp):
+    """Reverse PNG filtering for ``rows`` scanlines starting at ``buf[start]``.
+
+    Returns an (rows, stride) uint8 array. Each scanline is ``1 + stride`` bytes
+    (a leading filter-type byte), so the caller advances ``start`` itself.
+    ``bpp`` is the byte distance to the pixel to the left.
+    """
+    off = start
+    if off + rows * (stride + 1) > len(buf):
+        raise ValueError("PNG pixel data is truncated")
+    out = np.zeros((rows, stride), np.uint16)
+    prior = np.zeros(stride, np.uint16)
+    for y in range(rows):
+        ftype = buf[off]
+        cur = np.frombuffer(buf, np.uint8, count=stride, offset=off + 1).astype(
+            np.uint16)
+        off += 1 + stride
+        if ftype == 0:
+            pass
+        elif ftype == 2:                                   # Up
+            cur = (cur + prior) & 0xFF
+        elif ftype == 1:                                   # Sub
+            chan = np.cumsum(cur.reshape((-1, bpp)), axis=0, dtype=np.int64)
+            cur = (chan & 0xFF).reshape(-1).astype(np.uint16)
+        elif ftype == 3:                                   # Average
+            for x in range(stride):
+                left = int(cur[x - bpp]) if x >= bpp else 0
+                cur[x] = (cur[x] + ((left + int(prior[x])) >> 1)) & 0xFF
+        elif ftype == 4:                                   # Paeth
+            for x in range(stride):
+                left = int(cur[x - bpp]) if x >= bpp else 0
+                up = int(prior[x])
+                ul = int(prior[x - bpp]) if x >= bpp else 0
+                p = left + up - ul
+                pa, pb, pc = abs(p - left), abs(p - up), abs(p - ul)
+                pred = left if (pa <= pb and pa <= pc) else (up if pb <= pc else ul)
+                cur[x] = (cur[x] + pred) & 0xFF
+        else:
+            raise ValueError(f"unknown PNG filter type {ftype}")
+        out[y] = cur
+        prior = cur
+    return out.astype(np.uint8)
+
+
+def _decode_cgbi_png(src: str | Path) -> Image.Image:
+    """Decode an Apple CgBI PNG into a normal RGB(A) image."""
+    data = Path(src).read_bytes()
+    if data[:8] != _PNG_SIG:
+        raise ValueError("not a PNG")
+    pos, width, height, depth, color, interlace = 8, 0, 0, 0, 0, 0
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        ctype = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        pos += 12 + length                       # length + type + data + CRC
+        if ctype == b"IHDR":
+            width, height, depth, color, _c, _f, interlace = struct.unpack(
+                ">IIBBBBB", body)
+        elif ctype == b"IDAT":
+            idat += body
+        elif ctype == b"IEND":
+            break
+    if depth != 8 or color not in (2, 6) or interlace not in (0, 1):
+        raise ValueError(
+            f"unsupported CgBI PNG (depth={depth}, color={color}, "
+            f"interlace={interlace})")
+    channels = 4 if color == 6 else 3
+
+    stream = bytes(idat)
+    rawpix = bytearray()
+    while stream:                                # iDOT can split it in two
+        dec = zlib.decompressobj(-zlib.MAX_WBITS)
+        rawpix += dec.decompress(stream)
+        rawpix += dec.flush()
+        stream = dec.unused_data
+    rawpix = bytes(rawpix)
+
+    if interlace == 0:
+        flat = _png_unfilter(rawpix, 0, height, width * channels, channels)
+        px = flat.reshape((height, width, channels)).copy()
+    else:
+        px = np.zeros((height, width, channels), np.uint8)
+        off = 0
+        for x0, y0, dx, dy in _ADAM7:
+            pw = (width - x0 + dx - 1) // dx
+            ph = (height - y0 + dy - 1) // dy
+            if pw <= 0 or ph <= 0:
+                continue
+            sub = _png_unfilter(rawpix, off, ph, pw * channels, channels)
+            off += ph * (pw * channels + 1)
+            px[y0:height:dy, x0:width:dx] = sub.reshape((ph, pw, channels))
+
+    px[:, :, [0, 2]] = px[:, :, [2, 0]]         # BGRA -> RGBA
+    if channels == 4:
+        alpha = px[:, :, 3].astype(np.uint16)
+        nz = alpha > 0
+        for ch in range(3):
+            c = px[:, :, ch].astype(np.uint16)
+            c[nz] = np.minimum(255, (c[nz] * 255 + alpha[nz] // 2) // alpha[nz])
+            px[:, :, ch] = c.astype(np.uint8)
+        return Image.fromarray(px, "RGBA")
+    return Image.fromarray(px, "RGB")
+
+
 def load_any(src: str | Path) -> Image.Image:
     """Open an image with Pillow; fall back to the KTX GPU-texture decoder.
 
     Only safe for non-risky formats (jpg/png/heic/tiff/...).  For KTX-family
     files call ``transcode_isolated`` instead - their decoder can segfault.
     """
+    if is_cgbi_png(src):
+        try:
+            return _decode_cgbi_png(src)
+        except (ValueError, struct.error, zlib.error, OSError):
+            pass                                # fall through to the normal path
     try:
         im = Image.open(src)
         im.load()
@@ -368,20 +501,37 @@ def transcode_isolated(src: str | Path, dest: Path, *, max_side: int = 2200,
     return r.returncode == 0 and dest.exists()
 
 
+def _write_web_image(src: str | Path, dest: Path, max_side: int, fmt: str,
+                     keep: tuple[str, ...], fallback: str, **save_kw) -> bool:
+    """``load_any`` + downscale + save as ``fmt``; False on any decode failure."""
+    try:
+        im = load_any(src)
+        if im.mode not in keep:
+            im = im.convert(fallback)
+        if max(im.size) > max_side:
+            im.thumbnail((max_side, max_side), Image.LANCZOS)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        im.save(dest, fmt, **save_kw)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def to_web_jpeg(src: str | Path, dest: Path, *, max_side: int = 2200) -> bool:
     """Decode ``src`` (Pillow or KTX) and write a display JPEG to ``dest``.
 
     Returns False when nothing can turn it into an image (Apple AAPL assets,
     unknown codecs, truly corrupt data).
     """
-    try:
-        im = load_any(src)
-        if im.mode not in ("RGB", "L"):
-            im = im.convert("RGB")
-        if max(im.size) > max_side:
-            im.thumbnail((max_side, max_side), Image.LANCZOS)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        im.save(dest, "JPEG", quality=88)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+    return _write_web_image(src, dest, max_side, "JPEG", ("RGB", "L"), "RGB",
+                            quality=88)
+
+
+def to_web_png(src: str | Path, dest: Path, *, max_side: int = 2200) -> bool:
+    """Decode ``src`` and write a display PNG to ``dest``, keeping any alpha.
+
+    Used for formats a browser can't render but that carry transparency worth
+    preserving (Apple CgBI PNGs). Returns False when nothing can decode it.
+    """
+    return _write_web_image(src, dest, max_side, "PNG",
+                            ("RGB", "RGBA", "L", "LA"), "RGBA")

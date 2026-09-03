@@ -94,6 +94,98 @@ def test_pipeline_hashes_and_thumbs(case):
         assert (case.thumb_dir / r["thumb"]).exists()
 
 
+def _write_cgbi_png(path, rows):
+    """Minimal Apple CgBI PNG: BGRA byte order, premultiplied alpha, header-less
+    (raw DEFLATE) IDAT. ``rows`` is a list of rows of (r, g, b, a) tuples."""
+    import binascii
+    import struct
+    import zlib
+
+    h, w = len(rows), len(rows[0])
+    raw = bytearray()
+    for row in rows:
+        raw.append(0)                                   # filter: None
+        for (r, g, b, a) in row:
+            raw += bytes((b * a // 255, g * a // 255, r * a // 255, a))
+    comp = zlib.compressobj(9, zlib.DEFLATED, -zlib.MAX_WBITS)
+    idat = comp.compress(bytes(raw)) + comp.flush()
+
+    def chunk(typ, data):
+        return (struct.pack(">I", len(data)) + typ + data
+                + struct.pack(">I", binascii.crc32(typ + data) & 0xffffffff))
+
+    blob = (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"CgBI", b"\x50\x00\x20\x02")
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", idat)
+            + chunk(b"IEND", b""))
+    Path(path).write_bytes(blob)
+
+
+def test_cgbi_png_decoded(tmp_path):
+    from PIL import Image, ImageFile
+
+    from gleapp import imaging
+
+    p = tmp_path / "icon.png"
+    _write_cgbi_png(p, [
+        [(255, 0, 0, 255), (0, 255, 0, 255)],
+        [(0, 0, 255, 128), (255, 255, 255, 0)],
+    ])
+
+    assert imaging.is_cgbi_png(p)
+
+    # a standard PNG decoder renders it blank - the reason it "won't render"
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+    assert Image.open(p).convert("RGB").getextrema() == ((0, 0),) * 3
+
+    im = imaging.load_any(p)
+    assert im.mode == "RGBA" and im.size == (2, 2)
+    px = im.load()
+    assert px[0, 0][:3] == (255, 0, 0) and px[0, 0][3] == 255
+    assert px[1, 0][:3] == (0, 255, 0)
+    r, g, b, a = px[0, 1]
+    assert a == 128 and abs(b - 255) <= 2 and r <= 2 and g <= 2
+    assert px[1, 1][3] == 0
+
+    dest = tmp_path / "view.png"
+    assert imaging.to_web_png(p, dest)
+    out = Image.open(dest)
+    out.load()
+    assert out.size == (2, 2)
+
+
+def test_cgbi_png_pipeline_thumbnail(tmp_path):
+    from gleapp.web.app import create_app
+
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_cgbi_png(src / "circle.png", [[(255, 255, 255, 255)] * 4] * 4)
+
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "c"), "name": "CG"})
+    cl.post("/api/case/ingest", json={"spec": str(src),
+                                      "options": {"screen": False, "keyframes": 0}})
+    for _ in range(60):
+        j = cl.get("/api/job").get_json()
+        if not j["running"] and j["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert j["stage"] == "done"
+
+    cs = app.config["STATE"]["case"]
+    row = cs.db.iter_files("kind='image'")[0]
+    assert row["thumb"] and (cs.thumb_dir / row["thumb"]).exists()
+    # the white icon must not have thumbnailed to black
+    from PIL import Image
+    thumb = Image.open(cs.thumb_dir / row["thumb"]).convert("L")
+    assert min(thumb.getextrema()) > 200
+
+    r = cl.get(f"/view/{row['id']}")
+    assert r.status_code == 200 and r.mimetype == "image/png"
+
+
 def test_hex_view_endpoint(tmp_path):
     from gleapp.web.app import create_app
 
