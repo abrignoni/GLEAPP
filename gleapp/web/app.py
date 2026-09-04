@@ -22,7 +22,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 
-from .. import appconfig, archive, backup, categories, report
+from .. import appconfig, archive, backup, basemaps, categories, report
 from ..case import open_case, parse_source_spec
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
@@ -219,6 +219,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                     file_types=(
                         "Reference data (*.db;*.sqlite;*.sqlite3;*.sql)",
                         "All files (*.*)"),
+                )
+            elif kind == "basemap":
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=("Basemap (*.pmtiles;*.mbtiles)", "All files (*.*)"),
                 )
             else:
                 res = win.create_file_dialog(
@@ -1133,6 +1138,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "examiner": case.examiner,
             "sources": srcs,
             "archive_sources": archive.source_status(case),
+            "basemap": basemaps.get_active(),
+            "basemaps": len(basemaps.list_basemaps()),
             "clusters": clusters,
             "categories": list(categories.catmap(case.db).values()),
             "stats": cst,
@@ -1160,6 +1167,105 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 "screenable": scr["n"] or 0,
             },
         }
+
+    # ---- offline basemaps -------------------------------------------
+    @app.get("/api/basemaps")
+    def basemaps_list():
+        return jsonify({"active": basemaps.get_active(), "basemaps": basemaps.list_basemaps()})
+
+    @app.post("/api/basemaps/import")
+    def basemaps_import():
+        """Copy a .pmtiles or raster .mbtiles under the app's data folder, hashing it on
+        the way; runs as a job because the file can be gigabytes."""
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        body = request.get_json(force=True) or {}
+        raw = str(body.get("path", "")).strip().strip('"')
+        if not raw or not Path(raw).is_file():
+            abort(400, description=f"file not found: {raw or '(none)'}")
+        try:
+            basemaps.inspect(raw)                    # refuse before any copying starts
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            abort(400, description=str(exc))
+        name = str(body.get("name", "")).strip() or None
+        state["job"] = {"running": True, "stage": "process", "done": 0, "total": 0,
+                        "message": f"Importing basemap {Path(raw).name}…", "stats": None,
+                        "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                rec = basemaps.import_basemap(
+                    raw, name=name, progress=lambda d, t: j.update(done=d, total=t))
+                j.update(running=False, stage="done",
+                         message=f"Basemap {rec['name']} imported",
+                         stats={"basemap": rec["name"]})
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.post("/api/basemaps/remove")
+    def basemaps_remove():
+        name = str((request.get_json(force=True) or {}).get("name", ""))
+        if not basemaps.remove_basemap(name):
+            abort(404, description=f"no basemap named {name!r}")
+        return jsonify({"ok": True, "active": basemaps.get_active()})
+
+    @app.post("/api/basemaps/active")
+    def basemaps_active():
+        name = (request.get_json(force=True) or {}).get("name") or None
+        try:
+            basemaps.set_active(name)
+        except ValueError as exc:
+            abort(404, description=str(exc))
+        return jsonify({"ok": True, "active": basemaps.get_active()})
+
+    @app.get("/api/basemaps/style")
+    def basemaps_style():
+        """A MapLibre style for the active (or named) basemap; every URL in it is local."""
+        name = request.args.get("name") or basemaps.get_active()
+        if not name:
+            abort(404, description="no basemap imported")
+        try:
+            return jsonify(basemaps.style(name, flavor=request.args.get("flavor", "dark")))
+        except (ValueError, OSError) as exc:
+            abort(404, description=str(exc))
+
+    @app.post("/api/basemaps/used")
+    def basemaps_used():
+        """The case records which basemap its map was drawn on, so the report can say."""
+        case = C()
+        name = str((request.get_json(force=True) or {}).get("name", "")) or basemaps.get_active()
+        rec = basemaps.record_use(case, name) if name else None
+        return jsonify({"ok": rec is not None, "name": rec["name"] if rec else None,
+                        "sha256": rec["sha256"] if rec else None})
+
+    @app.get("/basemap/<name>/<int:z>/<int:x>/<int:y>")
+    def basemap_tile(name: str, z: int, x: int, y: int):
+        """One raster tile from an MBTiles basemap, addressed the XYZ way."""
+        rec = basemaps.get(name)
+        if not rec or rec["format"] != basemaps.FORMAT_MBTILES:
+            abort(404)
+        got = basemaps.mbtiles_tile(rec["path"], z, x, y)
+        if got is None:
+            abort(404)
+        data, mime = got
+        resp = app.response_class(data, mimetype=mime)
+        resp.headers["Cache-Control"] = "private, max-age=3600"
+        return resp
+
+    @app.get("/basemap/<path:filename>")
+    def basemap_file(filename: str):
+        """The PMTiles file itself, with byte ranges, which is all pmtiles.js needs."""
+        p = basemaps.basemap_dir() / filename
+        rec = basemaps.get(Path(filename).stem)
+        if (not rec or rec["format"] != basemaps.FORMAT_PMTILES
+                or Path(rec["path"]) != p or not p.is_file()):
+            abort(404)                  # an MBTiles is served tile by tile, never whole
+        return send_file(p, mimetype="application/octet-stream", conditional=True)
 
     # ---- archive sources (extraction zips) -------------------------
     @app.get("/api/sources")

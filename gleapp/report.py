@@ -90,6 +90,10 @@ def export_json(case: Case, dest: str | Path, where: str = "",
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "report_header": {k: v for k, v in (header or {}).items() if k != "logo"},
         "stats": case.db.stats(),
+        "basemap": ({"name": case.db.get_meta("basemap_name"),
+                     "format": case.db.get_meta("basemap_format"),
+                     "sha256": case.db.get_meta("basemap_sha256")}
+                    if case.db.get_meta("basemap_sha256") else None),
         # files.path is where the bytes sat on this machine; rel_path, orig_path and
         # file_path say where the file was within the evidence, and that is what leaves.
         "files": [{k: v for k, v in d.items() if k != "path"} for d in _rows(case, where)],
@@ -413,6 +417,16 @@ def _summary_html(case: Case, rows: list[dict], label: str) -> str:
         out.append(line("sub", "Files matching a known set", hits))
 
     out.append(line("tot", "Total media in the case", total))
+
+    # which offline basemap the review's maps were drawn on, so a reader can obtain the
+    # same file and see the same map
+    bm_sha = case.db.get_meta("basemap_sha256")
+    if bm_sha:
+        bm = f"{case.db.get_meta('basemap_name') or ''} ({case.db.get_meta('basemap_format') or ''})"
+        out.append("<tr class='grp'><td colspan='3'>Map</td></tr>")
+        out.append(f"<tr class='sub'><td class='lbl'>Basemap used in review</td>"
+                   f"<td colspan='2' style='font-size:11px'>{html.escape(bm)}<br>"
+                   f"<span style='font-family:monospace'>sha256 {html.escape(bm_sha)}</span></td></tr>")
 
     bar = ""
     if n and len(codes) > 1:

@@ -129,6 +129,37 @@ written to. An extraction surfaces app streaming caches, ExoPlayer `.exo` fragme
 the like, which are not standalone videos; the pipeline reports them with its existing
 messages rather than silently dropping them.
 
+## Maps are drawn from a file the examiner imports, and the page requests nothing else
+
+The gallery's only map feature used to be a link to openstreetmap.org carrying the
+file's coordinates in the URL, which handed a live case's location to a third party on
+click. It is gone. `gleapp/basemaps.py` and the Maps dialog replace it: the examiner
+imports a basemap file after installation, GLEAPP copies it under the data folder with
+its SHA-256, serves it from the local server, and MapLibre GL JS draws it; the case
+records which basemap its maps were drawn on and the report prints the name and hash.
+
+Two formats. A `.pmtiles` (the recommended one) is a single vector tileset that
+pmtiles.js reads by HTTP byte range, so the server just `send_file`s it with
+`conditional=True` and never decodes a tile. A region is cut from the Protomaps planet
+build with `pmtiles extract <build url> out.pmtiles --bbox=W,S,E,N`; measured
+2026-09-04 against the 137.7 GB build of 2026-09-02, the Washington DC metro box was
+28 MB in 8 s and Puerto Rico 70 MB in 11 s, zoom 0 to 15. A raster `.mbtiles` is the
+fallback for a map an examiner already has: one query per tile, with the row flipped
+because MBTiles count from the bottom (TMS) and the web from the top (XYZ), which the
+fixture test pins by pixel colour. Vector MBTiles are refused: a second schema means a
+second style, fonts and sprites.
+
+Vendored under `gleapp/web/static/maps/` (its README lists versions and licences):
+MapLibre GL JS 5.x, because 6.x ships only ES modules plus a module worker and the
+gallery is a classic-script page; pmtiles.js; the Protomaps basemap style layers,
+generated once with `@protomaps/basemaps` into `layers-dark.json` and `layers-light.json`;
+Noto Sans glyphs (768 PBF files, 14 MB, SIL OFL) and the v4 sprites. The style's
+glyph, sprite and source URLs are all local paths, and a test asserts no `http` appears
+in a generated style. Attribution is shown as plain text, "© OpenStreetMap contributors",
+never as a link. `.gitattributes` marks `.pbf`, `.pmtiles` and `.mbtiles` binary so
+line-ending normalisation cannot touch them. The PyInstaller spec bundles all of
+`gleapp/web/static`, so the assets ship with the frozen build unchanged.
+
 ## One file under several Android storage views is one row, not three exact copies
 
 Android exposes an app's data directory through several mount points and a full file

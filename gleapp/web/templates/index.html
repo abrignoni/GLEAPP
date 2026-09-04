@@ -191,7 +191,7 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
   #hashImportDlg .box,#refDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #hashImportDlg h2,#refDlg h2{margin:0 0 4px;font-size:15px}
   #hashImportDlg .field,#refDlg .field{margin-top:10px}
@@ -205,8 +205,8 @@
   #caseSets .cs .x:hover,#refList .cs .x:hover{color:var(--danger)}
   .linkish:hover{text-decoration:underline}
   #stashWipeDlg{z-index:80}
-  #snapDlg .box,#stashDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
-  #snapDlg h2,#stashDlg h2{margin:0 0 8px;font-size:15px}
+  #snapDlg .box,#stashDlg .box,#mapsDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #snapDlg h2,#stashDlg h2,#mapsDlg h2{margin:0 0 8px;font-size:15px}
   #stashWipeDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,94vw);
     background:var(--panel);border:2px solid var(--danger);border-radius:10px;overflow:hidden}
   #stashWipeDlg .whead{background:var(--danger);color:#fff;font-weight:700;font-size:14px;padding:10px 16px}
@@ -318,6 +318,7 @@
   <button class="btn sm" id="btnCats">⚙ Categories</button>
   <button class="btn sm" id="btnMeta">Details pane</button>
   <button class="btn sm" id="btnSnapshot" title="Save, list and restore case snapshots">Snapshots</button>
+  <button class="btn sm" id="btnMaps" title="Offline maps: import a basemap file and see geolocated files on it. Nothing is fetched from the internet.">Maps</button>
   <button class="btn sm" id="btnStash" title="Save the MD5s of your category 1–3 files to the local hash stash, and re-use them in future cases">Hash stash</button>
   <button class="btn sm" id="btnVic" style="display:none" title="Export a Project VIC 2.0 JSON with your categories">Export Project VIC</button>
   <button class="btn sm" id="btnReport">Export report</button>
@@ -714,6 +715,44 @@
     <button class="btn" id="snapClose">Done</button></div>
 </div></div>
 
+<style>
+  .detmap{height:220px;border:1px solid var(--line);border-radius:6px;margin:8px 0;overflow:hidden}
+  #mapView{display:none;position:fixed;inset:0;z-index:60;background:var(--bg)}
+  #mapView .bar{display:flex;align-items:center;gap:12px;height:44px;padding:0 14px;
+    background:var(--panel);border-bottom:1px solid var(--line);font-size:13px}
+  #mapViewMap{position:absolute;top:44px;left:0;right:0;bottom:0}
+  .maplibregl-popup-content{background:var(--panel);color:var(--fg);border:1px solid var(--line);
+    border-radius:6px;padding:6px;font-size:12px}
+  .maplibregl-popup-content img{display:block;max-width:180px;max-height:140px;margin-bottom:4px;cursor:pointer}
+  .maplibregl-popup-tip{border-top-color:var(--panel)}
+  .bmrow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
+  .bmrow .nm{flex:1;min-width:0}
+  .bmrow code{font-size:10px;color:var(--muted);word-break:break-all}
+</style>
+<div id="mapsDlg"><div class="box">
+  <h2>Maps</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:10px">
+    GLEAPP ships no map data and fetches none. Import a basemap file once and the
+    gallery draws maps from it, offline, and the report names the file used.
+    A <b>.pmtiles</b> region cut from the Protomaps build is the recommended form
+    (see the README's Maps section for the one command that makes one); a raster
+    <b>.mbtiles</b> made with QGIS or MapTiler Desktop also works.
+  </div>
+  <div class="row" style="margin-bottom:10px">
+    <button class="btn" id="mapsShow" title="Every geolocated file in the current filter, on the active basemap">Show current filter on the map</button>
+    <span style="flex:1"></span>
+    <button class="btn" id="mapsImport">Import basemap file…</button>
+  </div>
+  <div id="mapsList"></div>
+  <div class="row" style="margin-top:12px"><span style="flex:1"></span>
+    <button class="btn" id="mapsClose">Done</button></div>
+</div></div>
+<div id="mapView">
+  <div class="bar"><b>Map</b><span id="mapViewInfo" class="muted"></span><span style="flex:1"></span>
+    <button class="btn sm" id="mapViewClose">Close</button></div>
+  <div id="mapViewMap"></div>
+</div>
+
 <div id="stashDlg"><div class="box">
   <h2>Local hash stash</h2>
   <p class="note">
@@ -813,6 +852,9 @@
 </defs></svg>
 <div id="toast"></div>
 
+<link rel="stylesheet" href="/static/maps/maplibre-gl.css">
+<script src="/static/maps/maplibre-gl.js"></script>
+<script src="/static/maps/pmtiles.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

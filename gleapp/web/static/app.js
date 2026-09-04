@@ -948,6 +948,7 @@ function toggleMeta(force) {
   state.metaOpen = force ?? !state.metaOpen;
   try { localStorage.setItem("gleapp.meta", state.metaOpen ? "1" : "0"); } catch (e) {}
   $("#meta").classList.toggle("hidden", !state.metaOpen);
+  if (detailMap) setTimeout(() => detailMap.resize(), 60);   // it may have been sized while hidden
   $("#btnMeta").style.borderColor = state.metaOpen ? "var(--accent)" : "";
   if (state.metaOpen && state.focus != null) showMeta(state.focus);
 }
@@ -1013,9 +1014,11 @@ async function showMeta(id) {
   ].filter(r => r[1] !== "" && r[1] != null);
   const hashes = [["MD5", f.md5], ["SHA1", f.sha1], ["SHA256", f.sha256], ["pHash", f.phash]]
     .filter(r => r[1]);
+  // the coordinates are evidence: they stay on this machine. The map below draws
+  // them on an imported offline basemap; Copy puts them on the clipboard.
   const gps = f.gps_lat != null
     ? `<tr><td>GPS</td><td>${f.gps_lat}, ${f.gps_lon}
-       <a target="_blank" href="https://www.openstreetmap.org/?mlat=${f.gps_lat}&mlon=${f.gps_lon}#map=15/${f.gps_lat}/${f.gps_lon}">map</a></td></tr>` : "";
+       <button class="btn sm" id="mGpsCopy" title="Copy the coordinates">Copy</button></td></tr>` : "";
 
   const preview = f.thumb
     ? `<img src="/thumb/${f.thumb}" alt=""
@@ -1025,6 +1028,7 @@ async function showMeta(id) {
   const nm = (f.orig_name || f.rel_path || f.path || "").split(/[\\/]/).pop();
   m.innerHTML = `
     <div class="preview">${preview}</div>
+    ${f.gps_lat != null ? `<div id="detMap" class="detmap" style="display:none"></div>` : ""}
     <div class="body">
       <h2>${esc(nm || "file #" + f.id)}</h2>
       <div class="path">${esc(dispPath)}</div>
@@ -1071,6 +1075,11 @@ async function showMeta(id) {
     + `<button class="btn sm" data-c="0">Clear</button>`;
   $("#mCats").querySelectorAll("[data-c]").forEach(b =>
     b.onclick = () => categorize([id], +b.dataset.c));
+  renderDetailMap(f);
+  if ($("#mGpsCopy")) $("#mGpsCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText(`${f.gps_lat}, ${f.gps_lon}`); toast("Coordinates copied"); }
+    catch (e) { toast("Clipboard unavailable; select the text instead"); }
+  };
   $("#mSim").onclick = () => showSimilar(id);
   $("#mTag").onclick = () => tagIds([id]);
   $("#mHex").onclick = () => openHex(id);
@@ -1540,6 +1549,7 @@ async function liveJob() {
 async function refreshContext() {
   const c = await api("/api/context");
   if (c.needs_case) return;
+  state.basemap = c.basemap || null;
   showSourceStatus(c.archive_sources);
   state.cats = c.categories || [];
   try { await refreshCats(); } catch (e) {}
@@ -2283,7 +2293,8 @@ async function pick(kind, label) {
     }
   }
   return prompt(label || ({ folder: "Folder path:",
-    archive: "Path to the extraction archive (zip / tar):" }[kind]
+    archive: "Path to the extraction archive (zip / tar):",
+    basemap: "Path to a basemap file (.pmtiles or .mbtiles):" }[kind]
     || "Path to .json job file:")) || null;
 }
 function renderSources() {
@@ -2486,6 +2497,142 @@ function showSourceStatus(list) {
   });
 }
 
+/* ---------- offline maps ---------- */
+// GLEAPP ships no map data and the page requests none from anywhere: the examiner
+// imports a basemap file (Maps), the server hands the gallery a style whose every URL
+// is local, MapLibre draws it, and the case records which file its maps were drawn on.
+let mapProto = false, detailMap = null, viewMap = null, mapUsedFor = "";
+function mapsAvailable() { return !!(window.maplibregl && window.pmtiles); }
+function mapsInit() {
+  if (mapProto || !mapsAvailable()) return;
+  maplibregl.addProtocol("pmtiles", new pmtiles.Protocol().tile);
+  mapProto = true;
+}
+async function mapStyle() {
+  const s = await api("/api/basemaps/style?flavor=dark").catch(() => null);
+  if (!s || s.error) return null;
+  // MapLibre validates the sprite and glyph URLs as absolute; the server hands out
+  // local paths on purpose, so the page's own origin is prefixed here and nowhere else.
+  for (const k of ["sprite", "glyphs"]) {
+    if (typeof s[k] === "string" && s[k].startsWith("/")) s[k] = location.origin + s[k];
+  }
+  return s;
+}
+async function noteBasemapUsed(style) {
+  const key = (style && style.name) || "";
+  if (!key || mapUsedFor === key) return;
+  mapUsedFor = key;
+  try { await save("/api/basemaps/used", {}); } catch (e) {}
+}
+function makeMap(container, style, opts = {}) {
+  mapsInit();
+  const m = new maplibregl.Map({ container, style, attributionControl: { compact: false }, ...opts });
+  m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  return m;
+}
+async function renderDetailMap(f) {
+  const box = $("#detMap");
+  if (detailMap) { detailMap.remove(); detailMap = null; }
+  if (!box) return;
+  if (f.gps_lat == null || !state.basemap || !mapsAvailable()) { box.style.display = "none"; return; }
+  const style = await mapStyle();
+  if (!style) { box.style.display = "none"; return; }
+  box.style.display = "";
+  detailMap = makeMap(box, style, { center: [f.gps_lon, f.gps_lat], zoom: 14 });
+  new maplibregl.Marker({ color: "#e74c3c" }).setLngLat([f.gps_lon, f.gps_lat]).addTo(detailMap);
+  detailMap.on("load", () => noteBasemapUsed(style));
+}
+async function openMapView() {
+  if (!state.basemap) { toast("Import a basemap first"); openMapsDlg(); return; }
+  const style = await mapStyle();
+  if (!style) { toast("The active basemap could not be loaded"); return; }
+  const p = new URLSearchParams(filterParams());
+  p.set("has_gps", "1"); p.set("limit", "5000"); p.set("offset", "0");
+  const d = await api("/api/files?" + p.toString());
+  const feats = (d.files || []).filter(x => x.gps_lat != null).map(x => ({
+    type: "Feature", geometry: { type: "Point", coordinates: [x.gps_lon, x.gps_lat] },
+    properties: { id: x.id, thumb: x.thumb || "", name: x.orig_name || x.rel_path || "" } }));
+  $("#mapViewInfo").textContent = `${feats.length.toLocaleString()} geolocated file(s) in the current filter`
+    + (d.total > feats.length ? ` (showing the first ${feats.length.toLocaleString()} of ${d.total.toLocaleString()})` : "");
+  $("#mapsDlg").style.display = "none";
+  $("#mapView").style.display = "block";
+  if (viewMap) { viewMap.remove(); viewMap = null; }
+  viewMap = makeMap("mapViewMap", style, { center: [0, 20], zoom: 1 });
+  viewMap.on("load", () => {
+    noteBasemapUsed(style);
+    viewMap.addSource("files", { type: "geojson", data: { type: "FeatureCollection", features: feats } });
+    viewMap.addLayer({ id: "files-halo", type: "circle", source: "files",
+      paint: { "circle-radius": 9, "circle-color": "#ffffff", "circle-opacity": 0.55 } });
+    viewMap.addLayer({ id: "files", type: "circle", source: "files",
+      paint: { "circle-radius": 6, "circle-color": "#e74c3c", "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
+    if (feats.length) {
+      const b = new maplibregl.LngLatBounds(feats[0].geometry.coordinates, feats[0].geometry.coordinates);
+      feats.forEach(x => b.extend(x.geometry.coordinates));
+      viewMap.fitBounds(b, { padding: 60, maxZoom: 15, duration: 0 });
+    }
+    viewMap.on("click", "files", e => {
+      const pr = e.features[0].properties;
+      const html = `${pr.thumb ? `<img src="/thumb/${esc(pr.thumb)}" data-open="${pr.id}">` : ""}`
+        + `<div>${esc(pr.name)}</div><button class="btn sm" data-open="${pr.id}">Details</button>`;
+      const pop = new maplibregl.Popup({ maxWidth: "220px" })
+        .setLngLat(e.features[0].geometry.coordinates).setHTML(html).addTo(viewMap);
+      pop.getElement().querySelectorAll("[data-open]").forEach(el => el.onclick = () => {
+        closeMapView(); toggleMeta(true); showMeta(+el.dataset.open);
+      });
+    });
+    viewMap.on("mouseenter", "files", () => { viewMap.getCanvas().style.cursor = "pointer"; });
+    viewMap.on("mouseleave", "files", () => { viewMap.getCanvas().style.cursor = ""; });
+  });
+}
+function closeMapView() {
+  $("#mapView").style.display = "none";
+  if (viewMap) { viewMap.remove(); viewMap = null; }
+}
+async function refreshMapsList() {
+  const box = $("#mapsList");
+  box.textContent = "Loading…";
+  const d = await api("/api/basemaps").catch(() => ({ active: null, basemaps: [] }));
+  state.basemap = d.active || null;
+  $("#mapsShow").disabled = !d.active;
+  if (!d.basemaps.length) {
+    box.innerHTML = `<div class="muted" style="font-size:12px">No basemap imported yet.</div>`;
+    return;
+  }
+  box.innerHTML = d.basemaps.map(b => `<div class="bmrow">
+    <input type="radio" name="bmActive" value="${esc(b.name)}" ${b.active ? "checked" : ""} title="Use this basemap">
+    <div class="nm"><b>${esc(b.name)}</b> <span class="muted">· ${esc(b.format)} · zoom ${b.min_zoom} to ${b.max_zoom} · ${_snapBytes(b.size)}${b.present ? "" : " · <span style='color:var(--danger)'>file missing</span>"}</span><br><code>sha256 ${esc(b.sha256)}</code>${b.attribution ? `<br><span class="muted">${esc(b.attribution)}</span>` : ""}</div>
+    <button class="btn sm" data-rm="${esc(b.name)}">Remove</button></div>`).join("");
+  box.querySelectorAll("input[name=bmActive]").forEach(r => r.onchange = async () => {
+    await save("/api/basemaps/active", { name: r.value });
+    refreshMapsList();
+  });
+  box.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => {
+    if (!confirm(`Remove basemap ${b.dataset.rm}?\n\nThe imported copy is deleted; your original file is untouched.`)) return;
+    const r = await save("/api/basemaps/remove", { name: b.dataset.rm });
+    if (r.error) return toast(r.message || "Could not remove");
+    refreshMapsList();
+  });
+}
+async function importBasemap() {
+  const p = await pick("basemap");
+  if (!p) return;
+  const r = await save("/api/basemaps/import", { path: p });
+  if (r.error) return toast(r.message || "Import refused");
+  toast("Importing basemap…");
+  liveTick = 0; liveJob();                                    // the bottom bar follows the copy
+  const wait = setInterval(async () => {
+    const j = await api("/api/job").catch(() => null);
+    if (j && !j.running) { clearInterval(wait); refreshMapsList(); }
+  }, 800);
+}
+function openMapsDlg() { $("#mapsDlg").style.display = "block"; refreshMapsList(); }
+$("#btnMaps").onclick = openMapsDlg;
+$("#mapsClose").onclick = () => $("#mapsDlg").style.display = "none";
+$("#mapsDlg").addEventListener("click", e => { if (e.target.id === "mapsDlg") $("#mapsDlg").style.display = "none"; });
+$("#mapsImport").onclick = importBasemap;
+$("#mapsShow").onclick = openMapView;
+$("#mapViewClose").onclick = closeMapView;
+
 /* ---------- boot ---------- */
 (async function boot() {
   let c;
@@ -2508,6 +2655,7 @@ function showSourceStatus(list) {
   }
   state.cats = c.categories || [];
   state.sources = c.sources || [];
+  state.basemap = c.basemap || null;
   showSourceStatus(c.archive_sources);
   setupTz(c);
   try { await refreshCats(); } catch (e) {}

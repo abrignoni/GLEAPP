@@ -259,6 +259,48 @@ gallery re-runs matching without a full reprocess.
 
 ---
 
+## Maps (offline basemaps)
+
+GLEAPP ships no map data and never fetches any: a review page must not hand a
+subject's coordinates to a server somebody else runs. Instead you import a basemap
+file once, GLEAPP serves it from the local server, the gallery draws the map with
+MapLibre, and the report names the file (and its SHA-256) the maps were drawn on, so a
+reader can obtain the same file and see the same map years later.
+
+**Get a region as a `.pmtiles` file** (recommended). Install the `pmtiles` tool from
+https://github.com/protomaps/go-pmtiles/releases, pick a recent Protomaps planet build
+(`https://build.protomaps.com/YYYYMMDD.pmtiles`, a date within the last few days), and cut
+your area with a bounding box in decimal degrees, west, south, east, north:
+
+```bash
+pmtiles extract https://build.protomaps.com/20260902.pmtiles dc.pmtiles --bbox=-77.12,38.79,-76.90,38.99
+```
+
+That reads only the tiles inside the box, at every zoom level from 0 to 15. Measured on
+2026-09-04 against the 137.7 GB planet build: the Washington DC metro box above came out
+at 28 MB in 8 s, and all of Puerto Rico (`--bbox=-67.30,17.85,-65.20,18.55`) at 70 MB in
+11 s. Add `--maxzoom=13` for a smaller file when street-level detail is not needed.
+`gleapp maps extract --bbox=W,S,E,N --out area.pmtiles --build URL` runs the same command
+when the tool is on your PATH, and prints it otherwise (write the box with `=`, since a
+western longitude starts with a minus sign).
+
+**Import it**: the **Maps** button in the gallery header, or `gleapp maps import
+area.pmtiles`. The file is copied under GLEAPP's data folder and hashed; the first one
+imported becomes the active basemap. The details pane then shows a map for any file
+with GPS, and **Show current filter on the map** plots every geolocated file matching
+your filters, with a popup thumbnail that opens the file.
+
+**Raster MBTiles also work**, as a fallback for a map you already have: a `.mbtiles`
+of image tiles made with QGIS, MapTiler Desktop or a GIS shop's own tooling. GLEAPP
+serves its tiles one query at a time. Vector MBTiles are not accepted.
+
+**Licences**. The Protomaps builds are OpenStreetMap data under the ODbL, distributed as
+a produced work, and the map shows "© OpenStreetMap contributors" as that licence asks
+(as plain text, because a link would be the one outbound address on the page). MapLibre
+GL JS and PMTiles are BSD-3-Clause; the PMTiles specification is public domain; the
+Noto Sans glyphs are under the SIL Open Font License. All of it is vendored under
+`gleapp/web/static/maps/` with its licence texts, and the page loads nothing else.
+
 ## CLI reference
 
 ```
@@ -269,6 +311,9 @@ gleapp -c CASE  process   [same processing flags]
 gleapp -c CASE  source    list | relink NAME PATH | stage NAME | unstage NAME
                           # extraction archives: where they are, move the record when
                           # one moved, copy one into the case, or drop the copies
+gleapp          maps      list | import FILE [--name N] | remove NAME | use NAME
+                          | extract --bbox=W,S,E,N --out FILE [--maxzoom Z] [--build URL]
+                          # offline basemaps for the gallery map (see Maps above)
 gleapp -c CASE  hashset   FILE  [--name NAME] [--kind known|known-good|other]
 gleapp          hashset   [FILE] --global  [--kind …] [--table T] [--algos a,b]
                           [--schema S --full F] [--base B.db --delta D.sql]

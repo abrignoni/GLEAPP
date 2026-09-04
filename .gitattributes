@@ -9,3 +9,6 @@
 *.gif -text
 *.ico -text
 *.icns -text
+*.pbf -text
+*.pmtiles -text
+*.mbtiles -text
