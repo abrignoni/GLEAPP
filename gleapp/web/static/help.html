@@ -28,7 +28,8 @@ signals only. Every category decision is the examiner's.</p>
   <a href="#reprocess">16. Reprocessing</a><br>
   <a href="#keys">17. Keyboard shortcuts</a><br>
   <a href="#privacy">18. Data &amp; privacy</a><br>
-  <a href="#credits">19. Credits &amp; acknowledgements</a>
+  <a href="#maps">19. Maps (offline basemaps)</a><br>
+  <a href="#credits">20. Credits &amp; acknowledgements</a>
 </div>
 
 <h2 id="start">1. Getting started</h2>
@@ -234,7 +235,8 @@ Hex view) — a scrolling offset / hex / ASCII dump of the raw file, page throug
 it or type an offset (decimal, or <code>0x</code>-prefixed); existing tags (click
 &times; to remove); a video key-frame filmstrip; a metadata table (source, type, original name/path, MIME, VIC MediaID and flags, size,
 dimensions, duration, captured date, camera, faces, skin ratio, known-hash,
-exact/visual/near-dup group sizes, error); GPS with a map link; MD5 / SHA-1 /
+exact/visual/near-dup group sizes, error); GPS with a Copy button and, once a basemap
+is imported (section&nbsp;19), an offline map of the spot; MD5 / SHA-1 /
 SHA-256 / pHash; a <strong>Notes</strong> box that autosaves as you type; and
 filmstrips of the file's exact copies and visually-similar files (click one to
 jump to it; "Show only this group" filters to the visual-match set).</p>
@@ -721,8 +723,9 @@ the command line (<code>gleapp process --force</code>).</p>
 </table>
 
 <h2 id="privacy">18. Data &amp; privacy</h2>
-<p>GLEAPP runs entirely on your machine with no network access. The evidence you
-ingest is only ever read; all output is written inside the case folder and the
+<p>GLEAPP runs entirely on your machine with no network access; even the maps are
+drawn from a basemap file you import (section&nbsp;19), never from a tile server. The
+evidence you ingest is only ever read; all output is written inside the case folder and the
 per-user config / hash store under <code>%APPDATA%</code> and
 <code>%LOCALAPPDATA%</code>. Examiner actions (categorize, snapshot, import,
 re-match, VIC import, hash-stash add / merge / clear) are recorded in the case's
@@ -735,7 +738,33 @@ only — no file content, names or paths — of files you categorized 1–3, and
 leaves your machine unless you <strong>Export</strong> it or point it at a shared
 location.</p>
 
-<h2 id="credits">19. Credits &amp; acknowledgements</h2>
+<h2 id="maps">19. Maps (offline basemaps)</h2>
+<p>GLEAPP ships no map data and fetches none, so a subject's coordinates never reach a
+server somebody else runs. To see geolocated files on a map, import a basemap file
+once with the <strong>Maps</strong> button in the header; GLEAPP copies it under its
+data folder, records its SHA-256, and draws maps from it entirely offline. The details
+pane then shows a map for any file with GPS (plus a <strong>Copy</strong> button for the
+coordinates), and <strong>Show current filter on the map</strong> plots every
+geolocated file matching your filters; click a marker for its thumbnail and a
+<strong>Details</strong> button. The report's summary names the basemap and its hash,
+so a reader can obtain the same file and see the same map.</p>
+<p>Two file types are accepted. A <strong>.pmtiles</strong> region is the recommended
+one: install the <code>pmtiles</code> tool from
+<code>github.com/protomaps/go-pmtiles/releases</code>, pick a recent Protomaps planet
+build (<code>https://build.protomaps.com/YYYYMMDD.pmtiles</code>), and cut your area
+with a bounding box, west, south, east, north in decimal degrees, for example
+<code>pmtiles extract https://build.protomaps.com/20260902.pmtiles dc.pmtiles
+--bbox=-77.12,38.79,-76.90,38.99</code>. That reads only the tiles inside the box; a
+metro area is tens of megabytes and a small country under a hundred, at street-level
+detail. A raster <strong>.mbtiles</strong> made with QGIS or MapTiler Desktop also
+works, for a map you already have; vector MBTiles are not accepted. The same actions
+exist on the command line as <code>gleapp maps list | import | remove | use |
+extract</code>.</p>
+<p>The Protomaps builds are OpenStreetMap data under the ODbL, and the map shows the
+"&copy; OpenStreetMap contributors" credit that licence asks for. It is shown as plain
+text rather than a link, because a link would be the one outbound address on the page.</p>
+
+<h2 id="credits">20. Credits &amp; acknowledgements</h2>
 <p>GLEAPP stands on a lot of other people's work. If GLEAPP is useful to you,
 please support, star and cite the projects below.</p>
 
@@ -754,6 +783,11 @@ please support, star and cite the projects below.</p>
   <tr><td><strong>tzdata</strong> / <strong>IANA Time Zone Database</strong></td><td>timezone conversion &amp; DST for the display-timezone setting — IANA (public domain); PyPI packaging by the CPython team</td></tr>
   <tr><td><strong>SQLite</strong></td><td>the case database, via Python's <code>sqlite3</code> — D.&nbsp;Richard&nbsp;Hipp &amp; the SQLite team (public domain)</td></tr>
   <tr><td><strong>pywebview</strong></td><td>the native desktop window in the offline build — Roman&nbsp;Sirokov &amp; contributors (BSD-3)</td></tr>
+  <tr><td><strong>MapLibre GL JS</strong></td><td>draws the offline map in the gallery — MapLibre contributors (BSD-3)</td></tr>
+  <tr><td><strong>PMTiles</strong> + <strong>pmtiles.js</strong></td><td>the single-file tileset format the basemap is read from — Protomaps (specification public domain; reference code BSD-3)</td></tr>
+  <tr><td><strong>Protomaps basemap style</strong> &amp; sprites</td><td>the map's look — Protomaps (BSD-3; sprite icons derived from the MIT-licensed tangrams/icons)</td></tr>
+  <tr><td><strong>Noto Sans</strong></td><td>the map's label glyphs — Google (SIL Open Font License)</td></tr>
+  <tr><td><strong>OpenStreetMap</strong></td><td>the data in a Protomaps basemap you import — &copy; OpenStreetMap contributors (ODbL); credited on the map as the licence asks</td></tr>
   <tr><td><strong>Microsoft Edge WebView2</strong></td><td>the webview runtime the desktop window uses on Windows — Microsoft</td></tr>
   <tr><td><strong>PyInstaller</strong></td><td>building <code>GLEAPP.exe</code> — the PyInstaller Development Team (GPL-2.0 with bootloader exception)</td></tr>
   <tr><td><strong>pytest</strong>, <strong>piexif</strong></td><td>development and tests only, not shipped — Holger&nbsp;Krekel &amp; pytest-dev; hMatoba (MIT)</td></tr>
