@@ -250,8 +250,15 @@ examiner name. Codes map 1:1 to Project VIC codes on export; code 0 exports as
 
 ## 8. Filtering — every option
 
-Filters combine with AND and apply as you change them. **Clear all filters** (top
-of the sidebar) resets everything. The header stat line shows the match count.
+Filters combine with AND and apply as you change them. The top of the sidebar is
+always visible — **Search**, **Category**, **Type**, **Source** — and below it is
+one collapsible section per feature (Known hashes, Faces & skin, Duplicates,
+Errors, Location); each section holds its filter controls *and* its buttons
+(import, re-check, screen, retry, re-scan). A section with an active filter shows
+a **dot** on its header — so you can see what's applied even when it's collapsed
+— and each section remembers whether you left it open. The top of the sidebar
+also shows a **filter count** with **Clear**; the header stat line shows the
+match count.
 
 ### Search
 Free text. Each whitespace-separated word must match somewhere (AND); within a
@@ -259,55 +266,52 @@ word it matches across relative path, absolute path, original device name and
 path, camera, notes, MIME, source, capture date, examiner, known-hash name, error
 text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
 
-### Type
-**image**, **video**, or **other** (non-decodable — archives, documents, unknown
-formats).
+### Category / Type / Source
+- **Category** — **Any**, a specific category, or **Uncategorized**. Uncategorized
+  enables the auto-advance review flow.
+- **Type** — **image**, **video**, or **other** (non-decodable — archives,
+  documents, unknown formats).
+- **Source** — restrict to one ingest source.
 
-### Category
-**Any**, a specific category, or **Uncategorized** (code 0). Uncategorized enables
-the auto-advance review flow.
-
-### Source
-Restrict to one ingest source.
-
-### Hash sets
-- **Import hash set… / Re-check** and the list of imported sets — see section 11
-  for the full workflow.
-- **Show** — a dropdown: *all files* (default), *any imported hash set*, or
-  *only* a single named set (e.g. one CyberTip). Filters to the files that set
-  flagged.
+### Known hashes
+- **Show** — *all files* (default), *any imported hash set*, or *only* one named
+  set (e.g. one CyberTip). Filters to the files that set flagged.
 - **Any known-hash hit** — matched *any* hash set at all, including the global
   store (NSRL) and the local hash stash.
 - **Hide known-NSRL** — hides every file that matched a *known-good* set (NSRL
   etc.), so OS/app files stop cluttering review. The count is how many are hidden.
+- **Import hash set… / Re-check**, the imported-set list, and the **Reference
+  data** and **hash stash** lines — see section 11 for the full workflow.
+
+### Faces & skin
+- **Has faces** — `faces > 0` from YuNet. Needs screening to have run.
+- **Skin-tone ratio** — **Any**, or 10 % / 30 % / 50 % or more of the frame
+  skin-toned. Needs screening.
+- **Run face / skin screening** — runs it now if it hasn't run.
 
 ### Duplicates
-Show only files with a relative in the collection:
+- **Show** — only files with a relative in the collection:
 
-| Option | Matches |
-|---|---|
-| Has any duplicate | in a ≥2 exact stack, a visual stack, or a near-dup cluster |
-| Has an exact copy | a byte-identical twin exists (same MD5) |
-| Has a visual copy | the same picture, re-encoded or resized |
-| In a near-dup cluster | burst shots, crops, filtered/annotated versions, video frame grabs |
+  | Option | Matches |
+  |---|---|
+  | Has any duplicate | in a ≥2 exact stack, a visual stack, or a near-dup cluster |
+  | Has an exact copy | a byte-identical twin exists (same MD5) |
+  | Has a visual copy | the same picture, re-encoded or resized |
+  | In a near-dup cluster | burst shots, crops, filtered/annotated versions, video frame grabs |
 
-### Screening
-- **Has faces** — `faces > 0` from YuNet. Needs screening to have run.
-- **Min skin ratio** — require at least that fraction of the frame to be
-  skin-toned. At 0 it does nothing.
-
-### Other
-- **Has GPS** — has latitude/longitude in its metadata.
-- **Processing error / no preview** — files that failed to decode. **Retry failed
-  files** re-runs processing on just those.
-
-### Display
 - **Collapse duplicates & visual matches** (on by default) — one tile per visual
   group. The representative is chosen from files that *match your other filters*,
   so a group still appears when only a non-head member carries the attribute you
   filtered on. Counts reflect groups, not individual files.
 - **Re-scan for duplicates** — rebuild the exact / visual / near-dup groupings
   without a full reprocess.
+
+### Errors
+- **Processing error / no preview** — files that failed to decode (the count is
+  on the section header). **Retry failed files** re-runs processing on just those.
+
+### Location
+- **Has GPS** — has latitude/longitude in its metadata.
 
 ### Sort
 Path, capture date, size, skin ratio (desc), faces (desc), or cluster.
