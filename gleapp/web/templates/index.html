@@ -28,6 +28,32 @@
   aside.filters label{display:block;margin:3px 0}
   aside.filters select,aside.filters input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
   aside.filters input[type=range]{width:100%}
+  aside.filters .fbar{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);padding-bottom:9px;border-bottom:1px solid var(--line)}
+  aside.filters .fbar #fbarN b{color:var(--fg)}
+  aside.filters .fbar a{color:var(--accent);cursor:pointer}
+  aside.filters .ffixed{padding:9px 0 11px;border-bottom:1px solid var(--line)}
+  aside.filters .ffixed .flabel:first-of-type{margin-top:9px}
+  .fsec{border-top:1px solid var(--line)}
+  aside.filters .ffixed + .fsec{border-top:0}
+  .fsec > summary{list-style:none;cursor:pointer;padding:9px 0 3px;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);display:flex;align-items:center;gap:7px}
+  .fsec > summary::-webkit-details-marker{display:none}
+  .fsec > summary::before{content:"\25b8";font-size:9px;color:var(--muted);transition:transform .12s}
+  .fsec[open] > summary::before{transform:rotate(90deg)}
+  .fsec > summary .fdot{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:auto;visibility:hidden;flex:none}
+  .fsec.active > summary .fdot{visibility:visible}
+  .fsec > summary .fcnt{font-size:10px;color:var(--muted);letter-spacing:0}
+  .fsec > summary .fcnt:empty{display:none}
+  .fbody{padding:2px 0 8px}
+  aside.filters .flabel{display:block;margin:8px 0 0;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  aside.filters .flabel select{margin-top:3px}
+  aside.filters .fck{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--fg);margin:7px 0 0}
+  aside.filters .fnote{font-size:11px;color:var(--muted);margin-top:5px;word-break:break-word}
+  aside.filters .fnote:empty{display:none}
+  aside.filters .fbtns{display:flex;gap:5px;margin-top:8px}
+  aside.filters .fbtns .btn{flex:1}
+  aside.filters .btn.block{display:block;width:100%;margin-top:8px}
+  aside.filters .linkish{cursor:pointer}
+  aside.filters .linkish:hover{text-decoration:underline}
   main{flex:1;min-width:0;overflow:auto;padding:10px;position:relative}
   .viewbar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:0 2px 8px;font-size:12px;color:var(--muted)}
   .viewbar label{display:flex;align-items:center;gap:5px}
@@ -299,60 +325,90 @@
 </header>
 <div class="layout">
   <aside class="filters">
-    <button class="btn sm" id="btnClearFilters" style="width:100%;margin-bottom:4px">Clear all filters</button>
-    <h3>Search</h3>
-    <input type="text" id="fq" placeholder="name, path, hash, date, camera, tag, notes…">
-    <div class="muted" style="font-size:10px;margin-top:2px">space-separated words all match</div>
-    <h3>Type</h3>
-    <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option></select>
-    <h3>Category</h3>
-    <select id="fcat"><option value="any">Any</option></select>
-    <h3>Source</h3>
-    <select id="fsrc"><option value="">All</option></select>
-    <div id="srcInfo" style="font-size:11px;margin-top:5px"></div>
-    <div class="prog jobbar" id="srcProg" style="display:none"><i></i></div>
-    <h3>Hash sets</h3>
-    <div style="display:flex;gap:4px">
-      <button class="btn sm" id="btnImportHash" title="Browse to an MD5/SHA hash list (e.g. from a CyberTip) and flag matching files">Import hash set…</button>
-      <button class="btn sm" id="btnRehash" title="Re-flag every file against every loaded hash set">Re-check</button>
+    <div class="fbar" id="fbar" hidden>
+      <span id="fbarN">0 filters</span>
+      <a id="btnClearFilters">Clear</a>
     </div>
-    <div id="caseSets" style="font-size:11px;margin-top:5px"></div>
-    <label style="margin-top:4px">Show
-      <select id="fhashset"><option value="">— all files —</option></select>
-    </label>
-    <label><input type="checkbox" id="fhit"> Any known-hash hit</label>
-    <label><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
-    <div id="rehashInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-    <div class="prog jobbar" id="rehashProg" style="display:none"><i></i></div>
-    <div id="refInfo" class="muted linkish" style="font-size:11px;margin-top:6px;cursor:pointer" title="Manage the shared NSRL / reference-hash store"></div>
-    <div class="prog jobbar" id="refProg" style="display:none"><i></i></div>
-    <div id="stashInfo" class="muted" style="font-size:11px;margin-top:6px;cursor:pointer" title="Open the local hash stash"></div>
-    <h3>Duplicates</h3>
-    <select id="fdup">
-      <option value="">Any file</option>
-      <option value="any">Has any duplicate</option>
-      <option value="exact">Has an exact copy</option>
-      <option value="visual">Has a visual copy</option>
-      <option value="cluster">In a near-dup cluster</option>
-    </select>
-    <h3>Screening</h3>
-    <label><input type="checkbox" id="ffaces"> Has faces</label>
-    <label>Min skin ratio: <span id="skinv">0</span></label>
-    <input type="range" id="fskin" min="0" max="0.9" step="0.05" value="0">
-    <div id="screenInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-    <div class="prog jobbar" id="screenProg" style="display:none"><i></i></div>
-    <button class="btn sm" id="btnScreen" style="margin-top:4px;display:none">Run face / skin screening</button>
-    <h3>Other</h3>
-    <label><input type="checkbox" id="fgps"> Has GPS</label>
-    <label style="margin-top:2px"><input type="checkbox" id="ferr"> Processing error / no preview <span id="errCount" class="muted"></span></label>
-    <button class="btn sm" id="btnRetryErr" style="margin-top:3px;display:none">Retry failed files</button>
-    <div id="retryInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-    <div class="prog jobbar" id="retryProg" style="display:none"><i></i></div>
-    <h3>Display</h3>
-    <label title="one tile per distinct image: exact copies + visual matches"><input type="checkbox" id="fcollapse" checked> Collapse duplicates &amp; visual matches</label>
-    <button class="btn sm" id="btnRedup" style="margin-top:3px">Re-scan for duplicates</button>
-    <div id="redupInfo" class="muted" style="font-size:11px;margin-top:4px"></div>
-    <div class="prog jobbar" id="redupProg" style="display:none"><i></i></div>
+
+    <div class="ffixed">
+      <input type="text" id="fq" placeholder="Search — name, path, hash, date, camera, tag…">
+      <label class="flabel">Category
+        <select id="fcat"><option value="any">Any</option></select></label>
+      <label class="flabel">Type
+        <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option></select></label>
+      <label class="flabel">Source
+        <select id="fsrc"><option value="">All</option></select></label>
+      <div id="srcInfo" class="fnote"></div>
+    </div>
+
+    <details class="fsec" data-sec="hash">
+      <summary>Known hashes <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="flabel">Show
+          <select id="fhashset"><option value="">— all files —</option></select></label>
+        <label class="fck"><input type="checkbox" id="fhit"> Any known-hash hit</label>
+        <label class="fck"><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
+        <div class="fbtns">
+          <button class="btn sm" id="btnImportHash" title="Browse to an MD5/SHA hash list (e.g. from a CyberTip) and flag matching files">Import hash set…</button>
+          <button class="btn sm" id="btnRehash" title="Re-flag every file against every loaded hash set">Re-check</button>
+        </div>
+        <div id="caseSets" class="fnote"></div>
+        <div id="rehashInfo" class="fnote"></div>
+        <div id="refInfo" class="fnote linkish" style="cursor:pointer" title="Manage the shared NSRL / reference-hash store"></div>
+        <div id="stashInfo" class="fnote" style="cursor:pointer" title="Open the local hash stash"></div>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="screen">
+      <summary>Faces &amp; skin <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="fck"><input type="checkbox" id="ffaces"> Has faces</label>
+        <label class="flabel">Skin-tone ratio
+          <select id="fskin">
+            <option value="0">Any</option>
+            <option value="0.1">10% or more</option>
+            <option value="0.3">30% or more</option>
+            <option value="0.5">50% or more</option>
+          </select></label>
+        <button class="btn sm block" id="btnScreen" style="display:none">Run face / skin screening</button>
+        <div id="screenInfo" class="fnote"></div>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="dup">
+      <summary>Duplicates <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="flabel">Show
+          <select id="fdup">
+            <option value="">Any file</option>
+            <option value="any">Has any duplicate</option>
+            <option value="exact">Has an exact copy</option>
+            <option value="visual">Has a visual copy</option>
+            <option value="cluster">In a near-dup cluster</option>
+          </select></label>
+        <label class="fck" title="one tile per distinct image: exact copies + visual matches"><input type="checkbox" id="fcollapse" checked> Collapse duplicates &amp; visual matches</label>
+        <button class="btn sm block" id="btnRedup">Re-scan for duplicates</button>
+        <div id="redupInfo" class="fnote"></div>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="err">
+      <summary>Errors <span class="fdot"></span><span id="errCount" class="fcnt"></span></summary>
+      <div class="fbody">
+        <label class="fck"><input type="checkbox" id="ferr"> Processing error / no preview</label>
+        <button class="btn sm block" id="btnRetryErr" style="display:none">Retry failed files</button>
+        <div id="retryInfo" class="fnote"></div>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="loc">
+      <summary>Location <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="fck"><input type="checkbox" id="fgps"> Has GPS</label>
+      </div>
+    </details>
+
+    <div class="prog jobbar" id="taskProg" style="display:none"><i></i></div>
   </aside>
   <main id="main">
     <div class="viewbar">

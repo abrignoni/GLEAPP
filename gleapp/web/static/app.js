@@ -112,6 +112,7 @@ async function load(opts = {}) {
   renderFiles(d.files);
   renderPager();
   updateStat();
+  refreshSections();
   if (opts.keepScroll) {
     $("#main").scrollTop = scroll.mainT; $("#main").scrollLeft = scroll.mainL;
     $("#grid").scrollTop = scroll.gridT; $("#grid").scrollLeft = scroll.gridL;
@@ -1402,7 +1403,50 @@ document.addEventListener("keydown", e => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
-$("#fskin").addEventListener("input", () => $("#skinv").textContent = $("#fskin").value);
+
+/* ---------- collapsible feature sections ---------- */
+const SEC_ACTIVE = {
+  hash:   () => !!$("#fhashset").value || $("#fhit").checked || $("#fhidegood").checked,
+  screen: () => $("#ffaces").checked || +$("#fskin").value > 0,
+  dup:    () => !!$("#fdup").value,
+  err:    () => $("#ferr").checked,
+  loc:    () => $("#fgps").checked,
+};
+function countActiveFilters() {
+  let n = 0;
+  if ($("#fq").value.trim()) n++;
+  ["#fcat", "#fkind", "#fsrc", "#fhashset", "#fdup"].forEach(s => {
+    const v = $(s).value;
+    if (v && v !== "any") n++;
+  });
+  ["#fhit", "#fhidegood", "#ffaces", "#ferr", "#fgps"].forEach(s => { if ($(s).checked) n++; });
+  if (+$("#fskin").value > 0) n++;
+  if (state.vstack) n++;
+  return n;
+}
+function refreshSections() {
+  document.querySelectorAll(".fsec").forEach(sec => {
+    const fn = SEC_ACTIVE[sec.dataset.sec];
+    sec.classList.toggle("active", !!(fn && fn()));
+  });
+  const n = countActiveFilters();
+  const bar = $("#fbar");
+  if (bar) {
+    bar.hidden = !n;
+    $("#fbarN").innerHTML = `<b>${n}</b> filter${n === 1 ? "" : "s"}`;
+  }
+}
+document.querySelectorAll(".fsec").forEach(sec => {
+  const key = "gleapp.fsec." + sec.dataset.sec;
+  try {
+    const v = localStorage.getItem(key);
+    if (v === "1") sec.open = true;
+    else if (v === "0") sec.open = false;
+  } catch (e) {}
+  sec.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, sec.open ? "1" : "0"); } catch (e) {}
+  });
+});
 $("#ftile").addEventListener("input", () => {
   document.documentElement.style.setProperty("--tile", $("#ftile").value + "px");
   try { localStorage.setItem("gleapp.tile", $("#ftile").value); } catch (e) {}
@@ -1521,7 +1565,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fhashset").value = "";
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
   $("#fcollapse").checked = true;
-  $("#fskin").value = 0; $("#skinv").textContent = "0";
+  $("#fskin").value = "0";
   $("#fsort").value = "path";
   state.vstack = null; state.similarOf = null;
   $("#simBanner").style.display = "none";
@@ -1531,6 +1575,7 @@ $("#btnClearFilters").onclick = () => {
     el.value = ""; el.classList.remove("on");
   });
   updateClearFiltersBtn();
+  refreshSections();
   persistListPrefs();
   reload();
   toast("Filters cleared");
@@ -1780,7 +1825,7 @@ $("#btnRetryErr").onclick = async () => {
   if (r.error) return toast(r.message || "Could not start");
   $("#btnRetryErr").disabled = true;
   toast(`Retrying ${r.count} failed files…`);
-  trackJob("#retryInfo", "#retryProg", "Retrying failed files", (ok, j) => {
+  trackJob("#retryInfo", "#taskProg", "Retrying failed files", (ok, j) => {
     $("#btnRetryErr").disabled = false;
     if (ok) {
       const fixed = j.stats?.recovered ?? 0;
@@ -1794,7 +1839,7 @@ $("#btnRehash").onclick = async () => {
   const r = await api("/api/rehash", { method: "POST" });
   if (r.error) return toast(r.message || "Could not start");
   $("#btnRehash").disabled = true;
-  trackJob("#rehashInfo", "#rehashProg", "Re-checking known hashes", async (ok, j) => {
+  trackJob("#rehashInfo", "#taskProg", "Re-checking known hashes", async (ok, j) => {
     $("#btnRehash").disabled = false;
     if (!ok) return;
     const hits = j.stats?.hashset_hits ?? 0;
@@ -1834,7 +1879,7 @@ function renderCaseSets(sets) {
           $("#fhashset").value = "";
         load();
       };
-      if (r.rematched) trackJob("#rehashInfo", "#rehashProg", "Updating flags", refresh);
+      if (r.rematched) trackJob("#rehashInfo", "#taskProg", "Updating flags", refresh);
       else { toast("Hash set removed"); refresh(); }
     });
   }
@@ -1886,7 +1931,7 @@ $("#hiGo").onclick = async () => {
   if (r.error) return toast(r.message || "Import failed");
   $("#hashImportDlg").style.display = "none";
   toast(`Imported ${r.entries.toLocaleString()} hashes as “${r.name}” — flagging files…`);
-  trackJob("#rehashInfo", "#rehashProg", "Flagging files", async (ok, j) => {
+  trackJob("#rehashInfo", "#taskProg", "Flagging files", async (ok, j) => {
     if (!ok) return;
     const hits = j.stats?.hashset_hits ?? 0;
     toast(`“${r.name}”: ${hits.toLocaleString()} file(s) flagged`);
@@ -1930,7 +1975,7 @@ function renderRefStore(sets, total) {
       try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
       load();
     };
-    if (r.rematched) trackJob("#rehashInfo", "#rehashProg", "Updating flags", after);
+    if (r.rematched) trackJob("#rehashInfo", "#taskProg", "Updating flags", after);
     else after();
   });
 }
@@ -1987,7 +2032,7 @@ $("#refGo").onclick = async () => {
   if (r.error) return toast(r.message || "Import failed");
   $("#refDlg").style.display = "none";
   toast(`Importing ${r.name} — this runs in the background`);
-  trackJob("#rehashInfo", "#refProg", "Importing reference data", async (ok, j) => {
+  trackJob("#rehashInfo", "#taskProg", "Importing reference data", async (ok, j) => {
     if (!ok) return;
     toast(j.message || "Reference data imported");
     try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
@@ -1999,7 +2044,7 @@ $("#btnRedup").onclick = async () => {
   const r = await api("/api/redup", { method: "POST" });
   if (r.error) return toast(r.message || "Could not start");
   $("#btnRedup").disabled = true;
-  trackJob("#redupInfo", "#redupProg", "Re-scanning for duplicates", (ok, j) => {
+  trackJob("#redupInfo", "#taskProg", "Re-scanning for duplicates", (ok, j) => {
     $("#btnRedup").disabled = false;
     if (ok) {
       const vs = j.stats?.visual_stacks ?? 0, cl = j.stats?.clusters ?? 0;
@@ -2015,7 +2060,7 @@ $("#btnScreen").onclick = async () => {
   const r = await api("/api/screen", { method: "POST" });
   if (r.error) return toast(r.message || "Could not start screening");
   $("#btnScreen").disabled = true;
-  trackJob("#screenInfo", "#screenProg", "Screening", async (ok) => {
+  trackJob("#screenInfo", "#taskProg", "Screening", async (ok) => {
     $("#btnScreen").disabled = false;
     if (!ok) return;                     // leave the failure text in place
     try {
