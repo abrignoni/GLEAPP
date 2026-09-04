@@ -716,7 +716,10 @@
 </div></div>
 
 <style>
-  .detmap{height:220px;border:1px solid var(--line);border-radius:6px;margin:8px 0;overflow:hidden}
+  .detmapwrap{position:relative;margin:8px 0}
+  .detmap{height:220px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .detmapwrap .mapexp{position:absolute;top:6px;left:6px;z-index:2;padding:2px 8px;
+    background:rgba(28,31,38,.85);border-color:var(--line)}
   #mapView{display:none;position:fixed;inset:0;z-index:60;background:var(--bg)}
   #mapView .bar{display:flex;align-items:center;gap:12px;height:44px;padding:0 14px;
     background:var(--panel);border-bottom:1px solid var(--line);font-size:13px}

@@ -1028,7 +1028,10 @@ async function showMeta(id) {
   const nm = (f.orig_name || f.rel_path || f.path || "").split(/[\\/]/).pop();
   m.innerHTML = `
     <div class="preview">${preview}</div>
-    ${f.gps_lat != null ? `<div id="detMap" class="detmap" style="display:none"></div>` : ""}
+    ${f.gps_lat != null ? `<div id="detMapWrap" class="detmapwrap" style="display:none">
+      <div id="detMap" class="detmap"></div>
+      <button class="btn sm mapexp" id="mMapFull" title="Open this map full size">⤢ Full size</button>
+    </div>` : ""}
     <div class="body">
       <h2>${esc(nm || "file #" + f.id)}</h2>
       <div class="path">${esc(dispPath)}</div>
@@ -1084,6 +1087,7 @@ async function showMeta(id) {
   $("#mTag").onclick = () => tagIds([id]);
   $("#mHex").onclick = () => openHex(id);
   if ($("#mFull")) $("#mFull").onclick = () => openViewer(id);
+  if ($("#mMapFull")) $("#mMapFull").onclick = () => openSingleMapView(f);
   if ($("#mVstack")) $("#mVstack").onclick = () => {
     state.vstack = f.vstack_id; state.page = 1; load();
     $("#simBanner").style.display = "flex";
@@ -2531,16 +2535,34 @@ function makeMap(container, style, opts = {}) {
   return m;
 }
 async function renderDetailMap(f) {
-  const box = $("#detMap");
+  const wrap = $("#detMapWrap"), box = $("#detMap");
   if (detailMap) { detailMap.remove(); detailMap = null; }
-  if (!box) return;
-  if (f.gps_lat == null || !state.basemap || !mapsAvailable()) { box.style.display = "none"; return; }
+  if (!box || !wrap) return;
+  if (f.gps_lat == null || !state.basemap || !mapsAvailable()) { wrap.style.display = "none"; return; }
   const style = await mapStyle();
-  if (!style) { box.style.display = "none"; return; }
-  box.style.display = "";
+  if (!style) { wrap.style.display = "none"; return; }
+  wrap.style.display = "";
   detailMap = makeMap(box, style, { center: [f.gps_lon, f.gps_lat], zoom: 14 });
   new maplibregl.Marker({ color: "#e74c3c" }).setLngLat([f.gps_lon, f.gps_lat]).addTo(detailMap);
   detailMap.on("load", () => noteBasemapUsed(style));
+}
+// The details-pane map (above) is a fixed 220px preview, same idea as the image
+// preview's "View full size": this reopens it centered on the same point in the
+// existing full-screen map dialog, just without the multi-file marker layer.
+async function openSingleMapView(f) {
+  if (f.gps_lat == null) return;
+  if (!state.basemap) { toast("Import a basemap first"); openMapsDlg(); return; }
+  const style = await mapStyle();
+  if (!style) { toast("The active basemap could not be loaded"); return; }
+  const nm = (f.orig_name || f.rel_path || f.path || "").split(/[\\/]/).pop() || `file #${f.id}`;
+  $("#mapViewInfo").textContent = nm;
+  $("#mapView").style.display = "block";
+  if (viewMap) { viewMap.remove(); viewMap = null; }
+  viewMap = makeMap("mapViewMap", style, { center: [f.gps_lon, f.gps_lat], zoom: 15 });
+  viewMap.on("load", () => {
+    noteBasemapUsed(style);
+    new maplibregl.Marker({ color: "#e74c3c" }).setLngLat([f.gps_lon, f.gps_lat]).addTo(viewMap);
+  });
 }
 async function openMapView() {
   if (!state.basemap) { toast("Import a basemap first"); openMapsDlg(); return; }
