@@ -12,7 +12,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-from . import categories, imaging, timeutil  # noqa: F401  (imaging: registers HEIF decoder)
+from . import basemaps, categories, imaging, staticmap, timeutil  # noqa: F401  (imaging: registers HEIF decoder)
 from .case import Case
 
 _CSV_FIELDS = [
@@ -284,6 +284,12 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .summary tr.tot td{{border-top:2px solid var(--ink);padding-top:7px;font-weight:700}}
  .summary .sw{{display:inline-block;width:9px;height:9px;border-radius:2px;
    margin-right:9px;vertical-align:1px;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ .overview{{margin:14px 0 4px}}
+ .overview .cap{{font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+   color:var(--mut);margin-bottom:9px}}
+ .overview img{{width:100%;max-width:900px;border:1px solid var(--line);border-radius:8px;
+   display:block;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ .overview .ovnote{{color:var(--mut);font-size:12px;margin-top:6px}}
  nav.toc{{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0 4px;align-items:center}}
  nav.toc .lbl{{color:var(--mut);font-size:12px;font-weight:600}}
  nav.toc a{{border:1px solid #2f6fd8;border-radius:6px;padding:3px 12px;text-decoration:none;
@@ -318,6 +324,9 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .card .playicon{{position:absolute;inset:0;margin:auto;width:48px;height:48px;
    border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:20px;
    line-height:48px;text-align:center;pointer-events:none}}
+ .card img.locmap{{height:150px;object-fit:cover;background:#e9e6df;
+   border-top:1px solid var(--line);-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ html.blur .card img.locmap{{filter:none}}   /* a locator map carries no evidence imagery */
  .card .catbar{{padding:3px 9px;color:#fff;font-weight:600;font-size:11px}}
  .card details.meta{{font-size:12px}}
  .card details.meta > summary{{padding:7px 10px;cursor:pointer;font-weight:600;
@@ -381,6 +390,76 @@ def _header_html(case: Case, header: dict | None) -> str:
     return (f"<header class='rpt'>{logo_html}<div class='hmeta'>"
             f"<h1>{case_name or 'Media report'}</h1>"
             f"<table>{meta}</table>{notes}{tznote}</div></header>")
+
+
+def _basemap_for_render() -> dict | None:
+    """The active basemap as a record ready for ``staticmap``, or None if there
+    is none or its file has gone. Reads nothing from the network."""
+    name = basemaps.get_active()
+    if not name:
+        return None
+    rec = basemaps.get(name)
+    if not rec or not Path(rec["path"]).is_file():
+        return None
+    try:
+        info = basemaps.inspect(rec["path"])
+    except (OSError, ValueError):
+        return None
+    return {"path": rec["path"], "format": rec["format"],
+            "tile_type": info.get("tile_type"),
+            "min_zoom": info.get("min_zoom", 0), "max_zoom": info.get("max_zoom", 19)}
+
+
+def _render_report_maps(case: Case, rows: list[dict], *, flavor: str,
+                        cap: int) -> tuple[str, dict[int, str]]:
+    """Draw the maps embedded in the HTML report from the active offline basemap.
+
+    Returns the overview image (a data URI, all geolocated files on one map) and
+    a ``{file_id: data URI}`` of per-file locator maps, capped at ``cap`` files.
+    Everything is rendered locally; nothing is fetched. On any trouble the report
+    still generates, just without the maps that failed.
+    """
+    rec = _basemap_for_render()
+    geo = [d for d in rows if d.get("gps_lat") is not None and d.get("gps_lon") is not None]
+    if rec is None or not geo:
+        return "", {}
+    # this report was drawn on this basemap: record the name and hash for the summary
+    try:
+        basemaps.record_use(case, basemaps.get_active())
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass  # provenance is best-effort, never fatal
+    cache: dict = {}
+    overview = ""
+    pts = [(d["gps_lon"], d["gps_lat"]) for d in geo]
+    try:
+        png = staticmap.render(rec, pts, width=900, height=540, flavor=flavor,
+                               cache=cache, fmt="png")
+        overview = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    except Exception:  # pylint: disable=broad-exception-caught
+        overview = ""
+    per: dict[int, str] = {}
+    for d in geo[:cap]:
+        try:
+            jpg = staticmap.render(rec, [(d["gps_lon"], d["gps_lat"])], width=360,
+                                   height=240, flavor=flavor, cache=cache, fmt="jpeg")
+            per[d["id"]] = "data:image/jpeg;base64," + base64.b64encode(jpg).decode("ascii")
+        except Exception:  # pylint: disable=broad-exception-caught
+            continue
+    return overview, per
+
+
+def _overview_html(overview: str, count: int, capped: bool) -> str:
+    if not overview:
+        return ""
+    note = f"{count:,} geolocated file(s), drawn on the imported offline basemap."
+    if capped:
+        note += " A per-file locator map appears on the first files below."
+    else:
+        note += " A per-file locator map appears on each geolocated file below."
+    return (f"<section class='overview'><div class='cap'>Locations</div>"
+            f"<img src='{html.escape(overview, quote=True)}' "
+            f"alt='map of all geolocated files'>"
+            f"<div class='ovnote'>{html.escape(note)}</div></section>")
 
 
 def _summary_html(case: Case, rows: list[dict], label: str) -> str:
@@ -524,7 +603,7 @@ def _fullview_data_uri(case: Case, d: dict, max_px: int = 2000) -> str:
 
 
 def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
-               full_images: bool, full_videos: bool) -> str:
+               full_images: bool, full_videos: bool, loc_map: str = "") -> str:
     code = d.get("category") or 0
     catbar = (f"<div class='catbar' style='background:"
               f"{html.escape(categories.color(case.db, code))}'>"
@@ -561,7 +640,10 @@ def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
             parts.append(f"<div class='f{' mono' if mono else ''}'>"
                          f"<span class='k'>{html.escape(lbl)}</span>"
                          f"<span class='v'>{html.escape(str(val))}</span></div>")
-    return (f"<div class='card'>{img}{catbar}"
+    locimg = (f"<img class='locmap' src='{html.escape(loc_map, quote=True)}' "
+              f"alt='location of {name}' title='drawn on the imported offline basemap'>"
+              if loc_map else "")
+    return (f"<div class='card'>{img}{catbar}{locimg}"
             f"<details class='meta'><summary>{name}</summary>"
             f"<div class='fields'>{''.join(parts)}</div></details></div>")
 
@@ -570,7 +652,8 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
                 thumbs: bool = True, header: dict | None = None,
                 fields: list[str] | None = None, scope_label: str = "",
                 full_images: bool = True, full_videos: bool = True,
-                tz: str | None = None) -> Path:
+                tz: str | None = None, maps: bool = True,
+                map_flavor: str = "light", map_cap: int = 400) -> Path:
     global _TZ
     _TZ = tz
     dest = Path(dest)
@@ -592,9 +675,17 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
         return (0, cmap.get(code, {}).get("position", code), code)
     codes = sorted(groups, key=_order)
 
+    overview_uri, loc_maps = ("", {})
+    if maps:
+        overview_uri, loc_maps = _render_report_maps(
+            case, rows, flavor=map_flavor, cap=map_cap)
+    geo_n = sum(1 for d in rows
+                if d.get("gps_lat") is not None and d.get("gps_lon") is not None)
+
     body = [_HTML_HEAD.format(case=cn)]
     body.append(_header_html(case, header))
     body.append(_summary_html(case, rows, scope_label))
+    body.append(_overview_html(overview_uri, geo_n, capped=geo_n > len(loc_maps)))
 
     if len(codes) > 1:
         toc = "".join(
@@ -621,7 +712,8 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
         body.append("<div class='grid'>")
         for d in groups[c]:
             body.append(_card_html(case, d, keys, thumb_root,
-                                   full_images, full_videos))
+                                   full_images, full_videos,
+                                   loc_map=loc_maps.get(d["id"], "")))
         body.append("</div>")
 
     body.append(_REPORT_JS)

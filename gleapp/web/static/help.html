@@ -746,8 +746,12 @@ data folder, records its SHA-256, and draws maps from it entirely offline. The d
 pane then shows a map for any file with GPS (plus a <strong>Copy</strong> button for the
 coordinates), and <strong>Show current filter on the map</strong> plots every
 geolocated file matching your filters; click a marker for its thumbnail and a
-<strong>Details</strong> button. The report's summary names the basemap and its hash,
-so a reader can obtain the same file and see the same map.</p>
+<strong>Details</strong> button. The HTML report also draws its own maps from the
+basemap and embeds them: a <strong>Locations</strong> overview of every geolocated file
+near the top, and a small locator map on each geolocated file. Those images are baked
+into the report file, so it stays self-contained and offline; the summary names the
+basemap and its hash so a reader can obtain the same file and see the same map. Use
+<code>--no-maps</code> (or the Export dialog) to leave the report maps out.</p>
 <p>Two file types are accepted. A <strong>.pmtiles</strong> region is the recommended
 one: install the <code>pmtiles</code> tool from
 <code>github.com/protomaps/go-pmtiles/releases</code>, pick a recent Protomaps planet

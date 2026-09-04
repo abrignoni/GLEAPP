@@ -203,6 +203,130 @@ def mbtiles_tile(path: str | Path, z: int, x: int, y: int) -> tuple[bytes, str] 
     return blob, _MIME.get(kind, "application/octet-stream")
 
 
+def _pm_uvarint(buf: bytes, pos: int):
+    result = shift = 0
+    while True:
+        b = buf[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, pos
+        shift += 7
+
+
+def _zxy_to_tile_id(z: int, x: int, y: int) -> int:
+    """The PMTiles v3 tile id for z/x/y: the per-zoom base plus the Hilbert index."""
+    acc = ((1 << (2 * z)) - 1) // 3               # sum of 4**t for t in 0..z-1
+    n = 1 << z
+    d = 0
+    rx = ry = 0
+    s = n >> 1
+    while s > 0:
+        rx = 1 if (x & s) else 0
+        ry = 1 if (y & s) else 0
+        d += s * s * ((3 * rx) ^ ry)
+        if ry == 0:
+            if rx == 1:
+                x = s - 1 - x
+                y = s - 1 - y
+            x, y = y, x
+        s >>= 1
+    return acc + d
+
+
+def _decode_pmtiles_dir(buf: bytes) -> list[tuple[int, int, int, int]]:
+    """A decompressed PMTiles directory into (tile_id, offset, length, run_length)."""
+    pos = 0
+    count, pos = _pm_uvarint(buf, pos)
+    ids = [0] * count
+    last = 0
+    for i in range(count):
+        v, pos = _pm_uvarint(buf, pos)
+        last += v
+        ids[i] = last
+    runs = [0] * count
+    for i in range(count):
+        runs[i], pos = _pm_uvarint(buf, pos)
+    lens = [0] * count
+    for i in range(count):
+        lens[i], pos = _pm_uvarint(buf, pos)
+    offs = [0] * count
+    for i in range(count):
+        v, pos = _pm_uvarint(buf, pos)
+        offs[i] = offs[i - 1] + lens[i - 1] if v == 0 and i > 0 else v - 1
+    return list(zip(ids, offs, lens, runs))
+
+
+def _find_entry(entries: list[tuple[int, int, int, int]], tid: int):
+    """The directory entry whose run covers ``tid`` (bisect on tile_id), or None."""
+    lo, hi = 0, len(entries) - 1
+    found = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if entries[mid][0] <= tid:
+            found = entries[mid]
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if found is None:
+        return None
+    tile_id, _off, _ln, run = found
+    if run == 0:                                   # a leaf-directory pointer
+        return found
+    return found if tid < tile_id + run else None
+
+
+def _pm_decompress(raw: bytes, name: str) -> bytes | None:
+    if name in ("none", "unknown"):
+        return raw
+    if name == "gzip":
+        try:
+            return gzip.decompress(raw)
+        except (OSError, EOFError):
+            return None
+    return None                                    # brotli / zstd not bundled
+
+
+def pmtiles_tile(path, z: int, x: int, y: int) -> bytes | None:
+    """The decompressed bytes of one tile (MVT for a vector map, image bytes for a
+    raster PMTiles), or None if the archive has no tile at z/x/y.
+
+    Reads the root directory and, when needed, one leaf directory, exactly as the
+    PMTiles v3 reader does, and never fetches anything: the file is opened
+    read-only and only the byte ranges a lookup needs are read.
+    """
+    head = read_pmtiles_header(path)
+    if not (head["min_zoom"] <= z <= head["max_zoom"]):
+        return None
+    n = 1 << z
+    if not (0 <= x < n and 0 <= y < n):            # z/x/y off the grid: not a tile
+        return None
+    root_off, root_len = head["offsets"]["root"]
+    leaf_off, _leaf_len = head["offsets"]["leaf"]
+    tile_off, _tile_len = head["offsets"]["tiles"]
+    dir_comp = head["internal_compression"]
+    tid = _zxy_to_tile_id(z, x, y)
+    with open(path, "rb") as fh:
+        fh.seek(root_off)
+        root = _pm_decompress(fh.read(root_len), dir_comp)
+        if root is None:
+            return None
+        entries = _decode_pmtiles_dir(root)
+        entry = _find_entry(entries, tid)
+        if entry and entry[3] == 0:                # descend into the leaf directory
+            _tid, off, ln, _run = entry
+            fh.seek(leaf_off + off)
+            leaf = _pm_decompress(fh.read(ln), dir_comp)
+            if leaf is None:
+                return None
+            entry = _find_entry(_decode_pmtiles_dir(leaf), tid)
+        if not entry or entry[3] == 0:
+            return None
+        _tid, off, ln, _run = entry
+        fh.seek(tile_off + off)
+        return _pm_decompress(fh.read(ln), head["tile_compression"])
+
+
 # ---- the store --------------------------------------------------------------
 def _sidecar(name: str) -> Path:
     return basemap_dir() / f"{name}.json"

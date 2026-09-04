@@ -290,6 +290,15 @@ imported becomes the active basemap. The details pane then shows a map for any f
 with GPS, and **Show current filter on the map** plots every geolocated file matching
 your filters, with a popup thumbnail that opens the file.
 
+**In the report**: the HTML report draws its own maps from the active basemap and embeds
+them in the file, so a saved report is self-contained and still fetches nothing. A
+"Locations" overview near the top plots every geolocated file on one map, and each
+geolocated file carries a small locator map with a marker. A raster basemap is drawn by
+compositing its tiles; a vector `.pmtiles` is drawn by decoding its tiles and filling
+land, water and land use and stroking roads, in a flat print-friendly palette (no labels:
+it is a locator, not the interactive map). Pass `--no-maps` to `gleapp report`, or turn
+off maps in the Export dialog, to leave them out.
+
 **Raster MBTiles also work**, as a fallback for a map you already have: a `.mbtiles`
 of image tiles made with QGIS, MapTiler Desktop or a GIS shop's own tooling. GLEAPP
 serves its tiles one query at a time. Vector MBTiles are not accepted.

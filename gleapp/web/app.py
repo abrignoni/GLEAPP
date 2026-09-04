@@ -1419,6 +1419,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         fields = body.get("fields") or None
         full_images = body.get("full_images", True)
         full_videos = body.get("full_videos", True)
+        want_maps = body.get("maps", True)
         if header is not None:  # remember for next time (logo can be large - cap it)
             store = dict(header)
             if isinstance(store.get("logo"), str) and len(store["logo"]) > 4_000_000:
@@ -1447,7 +1448,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             made.append(str(report.export_html(
                 case, out / f"report{tag}.html", where,
                 header=header, fields=fields, scope_label=label,
-                full_images=full_images, full_videos=full_videos, tz=tz)))
+                full_images=full_images, full_videos=full_videos, tz=tz,
+                maps=want_maps)))
         if "kml" in fmts:
             made.append(str(report.export_kml(case, out / f"geolocation{tag}.kmz", where)))
         if "md5" in fmts:
