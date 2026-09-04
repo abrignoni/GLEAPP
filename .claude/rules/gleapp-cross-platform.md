@@ -160,6 +160,16 @@ never as a link. `.gitattributes` marks `.pbf`, `.pmtiles` and `.mbtiles` binary
 line-ending normalisation cannot touch them. The PyInstaller spec bundles all of
 `gleapp/web/static`, so the assets ship with the frozen build unchanged.
 
+The HTML report renders its own location maps from the active basemap and embeds them,
+so a saved report is offline and self-contained. `gleapp/staticmap.py` composites raster
+tiles or rasterises vector tiles (decoded by `gleapp/mvt.py`, a small dependency-free MVT
+reader) with Pillow, the only dependency, and `gleapp/basemaps.py` reads a PMTiles tile by
+walking the archive's own root and leaf directories (Hilbert tile id, gzip-decompressed),
+never fetching anything. An overview map of all geolocated files goes near the top and a
+per-file locator map on each geolocated card, capped at 400 files, JPEG for the per-file
+maps and PNG for the overview. Measured 2026-09-04: six Orlando maps rendered from the
+41 MB vector basemap in 1.2 s. `report --no-maps` (or the Export dialog toggle) skips them.
+
 ## One file under several Android storage views is one row, not three exact copies
 
 Android exposes an app's data directory through several mount points and a full file

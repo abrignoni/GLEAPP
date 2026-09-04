@@ -353,7 +353,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     if "html" in fmts:
         made.append(report.export_html(case, out_dir / f"report{tag}.html", where,
                                        full_images=not args.thumbs_only,
-                                       full_videos=not args.thumbs_only))
+                                       full_videos=not args.thumbs_only,
+                                       maps=not args.no_maps))
     if "kml" in fmts:
         made.append(report.export_kml(case, out_dir / f"geolocation{tag}.kmz", where))
     if "md5" in fmts:
@@ -505,6 +506,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--where", help="raw SQL filter on the files table (overrides --scope)")
     s.add_argument("--thumbs-only", action="store_true",
                    help="HTML report: thumbnails only - no full-size images or videos")
+    s.add_argument("--no-maps", action="store_true",
+                   help="HTML report: skip the location maps (drawn from the active basemap)")
     s.set_defaults(func=cmd_report)
 
     s = sub.add_parser("web", help="launch the review gallery in a browser")
