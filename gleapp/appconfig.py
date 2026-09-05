@@ -100,17 +100,21 @@ def _case_summary(case_dir: Path) -> dict | None:
     return {"files": int(files), "name": row[0] if row and row[0] else None}
 
 
-def recent_cases(*, include_empty: bool = False) -> list[dict]:
+def recent_cases(*, include_empty: bool = False, limit: int | None = None) -> list[dict]:
     """Recent cases that still exist on disk, newest first.
 
     Each entry is annotated with a live ``files`` count and the case's own
     stored name.  Directories without a ``case.gleapp`` are dropped, and
     empty (0-file) cases are hidden unless ``include_empty`` is set - an
     abandoned freshly-created case must never be the thing a click lands on.
+    ``limit``, when given, caps the number of entries returned (the newest
+    ``limit`` survivors) without disturbing what is stored on disk.
     """
     out: list[dict] = []
     seen: set[str] = set()
     for i in load().get("recent", []):
+        if limit is not None and len(out) >= limit:
+            break
         p = Path(i.get("path", ""))
         key = str(p).lower()
         if key in seen:

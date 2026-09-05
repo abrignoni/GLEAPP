@@ -183,7 +183,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     # ---- launcher / case management ----------------------------
     @app.get("/api/recent")
     def recent():
-        return jsonify(appconfig.recent_cases())
+        return jsonify(appconfig.recent_cases(limit=3))
 
     @app.post("/api/pick")
     def pick():
@@ -1074,7 +1074,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         case = state["case"]
         if case is None:
             return jsonify({"needs_case": True,
-                            "recent": appconfig.recent_cases(),
+                            "recent": appconfig.recent_cases(limit=3),
                             "native": state["native"]})
         try:
             return jsonify(_context_payload(case))
