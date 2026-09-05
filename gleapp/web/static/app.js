@@ -11,7 +11,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
 const state = {
   files: [], total: 0, page: 1, pageSize: 200,
   sel: new Set(), lastClick: null, focus: null,
-  similarOf: null, vstack: null, ctxIds: [],
+  similarOf: null, vstack: null, stack: null, ctxIds: [],
   cats: [],                       // [{code,name,color,notable,position,active}]
   keyframeCache: new Map(),
   metaOpen: false,
@@ -79,6 +79,7 @@ function filterParams() {
   if ($("#fhidegood").checked) p.set("hidegood", "1");
   if ($("#ferr").checked) p.set("error", "1");
   if (state.vstack) p.set("vstack", state.vstack);
+  if (state.stack) p.set("stack", state.stack);
   if (+$("#fskin").value > 0) p.set("min_skin", $("#fskin").value);
   if ($("#fcollapse").checked) p.set("dupes", "collapse");
   if (state.view === "list") {
@@ -101,7 +102,7 @@ function filterParams() {
    while a processing job is running). */
 async function load(opts = {}) {
   state.similarOf = null;
-  if (!state.vstack) $("#simBanner").style.display = "none";
+  if (!state.vstack && !state.stack) $("#simBanner").style.display = "none";
   const scroll = { mainT: $("#main").scrollTop, mainL: $("#main").scrollLeft,
                    gridT: $("#grid").scrollTop, gridL: $("#grid").scrollLeft };
   const d = await api("/api/files?" + filterParams());
@@ -122,7 +123,7 @@ async function load(opts = {}) {
     if (state.view === "list") $("#main").scrollLeft = scroll.mainL;
   }
 }
-function reload() { state.page = 1; state.vstack = null; state.sel.clear(); load(); }
+function reload() { state.page = 1; state.vstack = null; state.stack = null; state.sel.clear(); load(); }
 
 function renderPager() {
   const pages = Math.max(1, Math.ceil(state.total / state.pageSize));
@@ -1064,7 +1065,8 @@ async function showMeta(id) {
 
       ${f.stack && f.stack.length > 1 ? `<div class="muted">Exact copies (${f.stack.length})</div>
         <div class="film">${f.stack.filter(s => s.thumb).map(s =>
-          `<img src="/thumb/${s.thumb}" title="${esc(s.rel_path)}" data-open="${s.id}">`).join("")}</div>` : ""}
+          `<img src="/thumb/${s.thumb}" title="${esc(s.rel_path)}" data-open="${s.id}">`).join("")}</div>
+        <div class="row"><button class="btn sm" id="mStack">Show all copies</button></div>` : ""}
       ${f.vstack && f.vstack.length > 1 ? `<div class="muted" style="color:var(--accent)">Visually similar (${f.vstack.length})</div>
         <div class="film">${f.vstack.filter(s => s.thumb || !s.error).map(s =>
           `<img src="/thumb/${s.thumb || ""}" title="${esc(s.orig_name || s.rel_path)}" data-open="${s.id}"
@@ -1092,6 +1094,11 @@ async function showMeta(id) {
     state.vstack = f.vstack_id; state.page = 1; load();
     $("#simBanner").style.display = "flex";
     $("#simId").textContent = `visual-match group (${f.vstack.length})`;
+  };
+  if ($("#mStack")) $("#mStack").onclick = () => {
+    state.stack = f.stack_id; state.page = 1; load();
+    $("#simBanner").style.display = "flex";
+    $("#simId").textContent = `exact-duplicate group (${f.stack.length})`;
   };
   m.querySelectorAll("[data-t]").forEach(b => b.onclick = () =>
     save("/api/tag", { ids: [id], remove: [b.dataset.t] }).then(() => showMeta(id)));
@@ -1220,11 +1227,21 @@ $("#hexJump").addEventListener("keydown", e => {
 function openCtx(x, y, ids) {
   state.ctxIds = ids;
   const many = ids.length > 1 ? ` (${ids.length})` : "";
+  // One row can be standing in for a whole group that "Collapse duplicates"
+  // hid - either an exact-copy stack or a visual-similarity group, whichever
+  // /api/files' own collapse picks a representative for: COALESCE(vstack_id,
+  // stack_id, id). Mirror that here so one menu entry reaches everything the
+  // grid is currently not showing for this tile, whichever kind it is.
+  const f0 = ids.length === 1 ? state.files.find(x => x.id === ids[0]) : null;
+  const groupField = f0 && f0.vstack_id ? "vstack" : "stack";
+  const groupId = f0 ? (f0.vstack_id || f0.stack_id) : null;
+  const groupN = f0 ? (f0.vstack_id ? f0.vstack_count : f0.stack_count) || 1 : 0;
   const catBtns = activeCats().map((c, i) =>
     `<button data-a="c${c.code}"><span class="dot" style="background:${c.color}"></span>
       ${esc(c.name || "Category " + c.code)}${many} <span class="muted">${i + 1}</span></button>`).join("");
   $("#ctx").innerHTML = `
     <button data-a="similar">\u{1F50D} Find similar images</button>
+    ${groupId && groupN > 1 ? `<button data-a="group">\u{1F4CB} Show all in group (${groupN})</button>` : ""}
     <button data-a="meta">ℹ Show details</button>
     <button data-a="full">⤢ View full size</button>
     <button data-a="hex">\u{1F524} Hex view</button>
@@ -1248,6 +1265,21 @@ $("#ctx").addEventListener("click", e => {
   const a = btn.dataset.a; const ids = state.ctxIds;
   closeCtx();
   if (a === "similar") return showSimilar(ids[0]);
+  if (a === "group") {
+    const f0 = state.files.find(x => x.id === ids[0]);
+    if (!f0) return;
+    if (f0.vstack_id) {
+      state.vstack = f0.vstack_id; state.stack = null; state.page = 1; load();
+      $("#simId").textContent = `visual-match group (${f0.vstack_count})`;
+    } else if (f0.stack_id) {
+      state.stack = f0.stack_id; state.vstack = null; state.page = 1; load();
+      $("#simId").textContent = `exact-duplicate group (${f0.stack_count})`;
+    } else {
+      return;
+    }
+    $("#simBanner").style.display = "flex";
+    return;
+  }
   if (a === "meta") { toggleMeta(true); return setFocus(ids[0]); }
   if (a === "full") return openViewer(ids[0]);
   if (a === "hex") return openHex(ids[0]);
@@ -1435,6 +1467,7 @@ function countActiveFilters() {
   ["#fhit", "#fhidegood", "#ffaces", "#ferr", "#fgps"].forEach(s => { if ($(s).checked) n++; });
   if (+$("#fskin").value > 0) n++;
   if (state.vstack) n++;
+  if (state.stack) n++;
   return n;
 }
 function refreshSections() {
@@ -1470,7 +1503,7 @@ $("#fpagesize").addEventListener("change", () => {
   try { localStorage.setItem("gleapp.pagesize", state.pageSize); } catch (e) {}
   state.page = 1; load();
 });
-$("#simBack").onclick = () => { state.vstack = null; load(); };
+$("#simBack").onclick = () => { state.vstack = null; state.stack = null; load(); };
 $("#btnMeta").onclick = () => toggleMeta();
 /* ---------- help / manual ---------- */
 let helpLoaded = false;
@@ -1581,7 +1614,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fcollapse").checked = true;
   $("#fskin").value = "0";
   $("#fsort").value = "path";
-  state.vstack = null; state.similarOf = null;
+  state.vstack = null; state.stack = null; state.similarOf = null;
   $("#simBanner").style.display = "none";
   // also drop the list-view per-column filters
   state.colFilters = {};

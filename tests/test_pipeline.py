@@ -293,6 +293,11 @@ def test_find_similar(case):
     hits = find_similar(case, row["id"], threshold=16)
     names = {Path(h["rel_path"]).name for h in hits}
     assert any("sunset" in n for n in names)
+    # right-clicking a file and choosing "Find similar" must not make that
+    # file disappear from its own results grid.
+    assert hits[0]["id"] == row["id"]
+    assert hits[0]["distance"] == 0
+    assert hits[0]["similarity"] == 100.0
 
 
 def test_hashset_match(case, tmp_path):
