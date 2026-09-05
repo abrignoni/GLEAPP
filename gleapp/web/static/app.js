@@ -1227,21 +1227,21 @@ $("#hexJump").addEventListener("keydown", e => {
 function openCtx(x, y, ids) {
   state.ctxIds = ids;
   const many = ids.length > 1 ? ` (${ids.length})` : "";
-  // "Show all copies" (exact, byte-identical) and "Show visually similar"
-  // (near-duplicate) are two different groupings a file can belong to - the
-  // grid badge shows whichever one is non-trivial (visual takes precedence,
-  // matching renderFiles' own badge logic), so both need a way in here or a
-  // right-click on a "≈ 28" tile has no menu entry that reaches those 28.
+  // One row can be standing in for a whole group that "Collapse duplicates"
+  // hid - either an exact-copy stack or a visual-similarity group, whichever
+  // /api/files' own collapse picks a representative for: COALESCE(vstack_id,
+  // stack_id, id). Mirror that here so one menu entry reaches everything the
+  // grid is currently not showing for this tile, whichever kind it is.
   const f0 = ids.length === 1 ? state.files.find(x => x.id === ids[0]) : null;
-  const nCopies = f0 ? (f0.stack_count || 1) : 0;
-  const nVisSim = f0 ? (f0.vstack_count || 0) : 0;
+  const groupField = f0 && f0.vstack_id ? "vstack" : "stack";
+  const groupId = f0 ? (f0.vstack_id || f0.stack_id) : null;
+  const groupN = f0 ? (f0.vstack_id ? f0.vstack_count : f0.stack_count) || 1 : 0;
   const catBtns = activeCats().map((c, i) =>
     `<button data-a="c${c.code}"><span class="dot" style="background:${c.color}"></span>
       ${esc(c.name || "Category " + c.code)}${many} <span class="muted">${i + 1}</span></button>`).join("");
   $("#ctx").innerHTML = `
     <button data-a="similar">\u{1F50D} Find similar images</button>
-    ${nVisSim > 1 ? `<button data-a="vsimilar">\u{2248} Show visually similar (${nVisSim})</button>` : ""}
-    ${nCopies > 1 ? `<button data-a="copies">\u{1F4CB} Show all copies (${nCopies})</button>` : ""}
+    ${groupId && groupN > 1 ? `<button data-a="group">\u{1F4CB} Show all in group (${groupN})</button>` : ""}
     <button data-a="meta">ℹ Show details</button>
     <button data-a="full">⤢ View full size</button>
     <button data-a="hex">\u{1F524} Hex view</button>
@@ -1265,20 +1265,19 @@ $("#ctx").addEventListener("click", e => {
   const a = btn.dataset.a; const ids = state.ctxIds;
   closeCtx();
   if (a === "similar") return showSimilar(ids[0]);
-  if (a === "copies") {
+  if (a === "group") {
     const f0 = state.files.find(x => x.id === ids[0]);
-    if (!f0 || !f0.stack_id) return;
-    state.stack = f0.stack_id; state.page = 1; load();
+    if (!f0) return;
+    if (f0.vstack_id) {
+      state.vstack = f0.vstack_id; state.stack = null; state.page = 1; load();
+      $("#simId").textContent = `visual-match group (${f0.vstack_count})`;
+    } else if (f0.stack_id) {
+      state.stack = f0.stack_id; state.vstack = null; state.page = 1; load();
+      $("#simId").textContent = `exact-duplicate group (${f0.stack_count})`;
+    } else {
+      return;
+    }
     $("#simBanner").style.display = "flex";
-    $("#simId").textContent = `exact-duplicate group (${f0.stack_count})`;
-    return;
-  }
-  if (a === "vsimilar") {
-    const f0 = state.files.find(x => x.id === ids[0]);
-    if (!f0 || !f0.vstack_id) return;
-    state.vstack = f0.vstack_id; state.page = 1; load();
-    $("#simBanner").style.display = "flex";
-    $("#simId").textContent = `visual-match group (${f0.vstack_count})`;
     return;
   }
   if (a === "meta") { toggleMeta(true); return setFocus(ids[0]); }
