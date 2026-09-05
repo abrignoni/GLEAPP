@@ -10,7 +10,9 @@ def find_similar(case: Case, file_id: int, *, threshold: int = 12, limit: int = 
     """Return files ranked by perceptual closeness to ``file_id``.
 
     Matches on the file pHash and, for videos, on any key-frame pHash so a still
-    can find the video it came from and vice-versa.
+    can find the video it came from and vice-versa. ``file_id`` itself is
+    returned first, at distance 0 / 100% similarity, so the file that was
+    right-clicked stays visible in its own results instead of disappearing.
     """
     target = case.db.get_file(file_id)
     if not target:
@@ -41,7 +43,7 @@ def find_similar(case: Case, file_id: int, *, threshold: int = 12, limit: int = 
             results[kf["file_id"]] = min(results.get(kf["file_id"], 999), best)
 
     ranked = sorted(results.items(), key=lambda kv: kv[1])[:limit]
-    out = []
+    out = [dict(target, distance=0, similarity=100.0)]
     for fid, dist in ranked:
         row = case.db.get_file(fid)
         if row:
