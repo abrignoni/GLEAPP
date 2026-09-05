@@ -293,13 +293,8 @@ def test_find_similar(case):
     hits = find_similar(case, row["id"], threshold=16)
     names = {Path(h["rel_path"]).name for h in hits}
     assert any("sunset" in n for n in names)
-
-
-def test_find_similar_includes_the_file_right_clicked(case):
     # right-clicking a file and choosing "Find similar" must not make that
     # file disappear from its own results grid.
-    row = case.db.iter_files("rel_path LIKE '%sunset_01%'")[0]
-    hits = find_similar(case, row["id"], threshold=16)
     assert hits[0]["id"] == row["id"]
     assert hits[0]["distance"] == 0
     assert hits[0]["similarity"] == 100.0
