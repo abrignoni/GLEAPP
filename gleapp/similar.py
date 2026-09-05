@@ -25,7 +25,7 @@ def find_similar(case: Case, file_id: int, *, threshold: int = 12, limit: int = 
         if kf["phash"]:
             probes.add(kf["phash"])
     if not probes:
-        return []
+        return [dict(target, distance=0, similarity=100.0)]
 
     results: dict[int, int] = {}
     for r in case.db.iter_files("phash IS NOT NULL AND id != ?", (file_id,)):
@@ -42,7 +42,7 @@ def find_similar(case: Case, file_id: int, *, threshold: int = 12, limit: int = 
         if best <= threshold:
             results[kf["file_id"]] = min(results.get(kf["file_id"], 999), best)
 
-    ranked = sorted(results.items(), key=lambda kv: kv[1])[:limit]
+    ranked = sorted(results.items(), key=lambda kv: kv[1])[:max(limit - 1, 0)]
     out = [dict(target, distance=0, similarity=100.0)]
     for fid, dist in ranked:
         row = case.db.get_file(fid)

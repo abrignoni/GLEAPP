@@ -853,10 +853,13 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 clause += " OR id IN (SELECT file_id FROM tags WHERE tag LIKE ?)"
                 where.append(f"({clause})")
                 params += [term] * (len(cols) + 1)
-        collapse = q.get("dupes") == "collapse"
         if q.get("vstack"):
             where.append("vstack_id = ?")
             params.append(int(q["vstack"]))
+        # Browsing one exact/visual-stack group (stack= / vstack= above) is exactly a
+        # request to see every member of it - collapsing to one representative row
+        # would hide the very copies the examiner asked for.
+        collapse = q.get("dupes") == "collapse" and not q.get("vstack") and not q.get("stack")
 
         # details list-view: per-column filters (JSON: [{col,op,val}, …])
         if q.get("colfilters"):
