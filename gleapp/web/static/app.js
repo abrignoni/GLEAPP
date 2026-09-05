@@ -1227,15 +1227,20 @@ $("#hexJump").addEventListener("keydown", e => {
 function openCtx(x, y, ids) {
   state.ctxIds = ids;
   const many = ids.length > 1 ? ` (${ids.length})` : "";
-  // "show all copies" only makes sense for a single right-clicked file that's
-  // actually part of an exact-duplicate stack (stack_count > 1).
+  // "Show all copies" (exact, byte-identical) and "Show visually similar"
+  // (near-duplicate) are two different groupings a file can belong to - the
+  // grid badge shows whichever one is non-trivial (visual takes precedence,
+  // matching renderFiles' own badge logic), so both need a way in here or a
+  // right-click on a "≈ 28" tile has no menu entry that reaches those 28.
   const f0 = ids.length === 1 ? state.files.find(x => x.id === ids[0]) : null;
   const nCopies = f0 ? (f0.stack_count || 1) : 0;
+  const nVisSim = f0 ? (f0.vstack_count || 0) : 0;
   const catBtns = activeCats().map((c, i) =>
     `<button data-a="c${c.code}"><span class="dot" style="background:${c.color}"></span>
       ${esc(c.name || "Category " + c.code)}${many} <span class="muted">${i + 1}</span></button>`).join("");
   $("#ctx").innerHTML = `
     <button data-a="similar">\u{1F50D} Find similar images</button>
+    ${nVisSim > 1 ? `<button data-a="vsimilar">\u{2248} Show visually similar (${nVisSim})</button>` : ""}
     ${nCopies > 1 ? `<button data-a="copies">\u{1F4CB} Show all copies (${nCopies})</button>` : ""}
     <button data-a="meta">ℹ Show details</button>
     <button data-a="full">⤢ View full size</button>
@@ -1266,6 +1271,14 @@ $("#ctx").addEventListener("click", e => {
     state.stack = f0.stack_id; state.page = 1; load();
     $("#simBanner").style.display = "flex";
     $("#simId").textContent = `exact-duplicate group (${f0.stack_count})`;
+    return;
+  }
+  if (a === "vsimilar") {
+    const f0 = state.files.find(x => x.id === ids[0]);
+    if (!f0 || !f0.vstack_id) return;
+    state.vstack = f0.vstack_id; state.page = 1; load();
+    $("#simBanner").style.display = "flex";
+    $("#simId").textContent = `visual-match group (${f0.vstack_count})`;
     return;
   }
   if (a === "meta") { toggleMeta(true); return setFocus(ids[0]); }
