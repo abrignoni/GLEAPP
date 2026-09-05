@@ -300,6 +300,45 @@ def test_find_similar(case):
     assert hits[0]["similarity"] == 100.0
 
 
+def test_find_similar_requires_dhash_agreement(tmp_path):
+    """A close pHash match must also agree on dHash, same tolerance as
+    dedupe's clustering (regression: two visually unrelated images landed
+    within the pHash threshold of each other by coincidence and "Find
+    similar" reported them as each other's only match)."""
+    c = open_case(tmp_path / "sim", create=True, examiner="t")
+    target_phash = f"{0xF0F0F0F0F0F0F0F0:016x}"
+    target_dhash = f"{0x0000000000000000:016x}"
+    close_phash = f"{0xF0F0F0F0F0F0F0F3:016x}"    # Hamming distance 2 from target
+    far_dhash = f"{0xFFFFFFFFFFFFFFFF:016x}"       # Hamming distance 64 from target's
+
+    a = c.db.upsert_file("/x/a.jpg", kind="image", md5="a" * 32,
+                          phash=target_phash, dhash=target_dhash)
+    c.db.upsert_file("/x/b.png", kind="image", md5="b" * 32,
+                     phash=close_phash, dhash=far_dhash)
+    c.db.commit()
+
+    hits = find_similar(c, a, threshold=12)
+    assert {h["id"] for h in hits} == {a}          # b excluded: dHash disagrees
+    c.close()
+
+
+def test_find_similar_skips_near_featureless_phash(tmp_path):
+    """A near-uniform pHash (flat/gradient image) is skipped outright, same
+    guard dedupe's clustering uses - it carries no real signal, so treating
+    it as a match is coincidence, not similarity."""
+    c = open_case(tmp_path / "flat", create=True, examiner="t")
+    flat_phash = f"{0x0000000000000000:016x}"      # bit_count 0 -> below the 12 floor
+    a = c.db.upsert_file("/x/a.jpg", kind="image", md5="a" * 32,
+                          phash=flat_phash, dhash=flat_phash)
+    c.db.upsert_file("/x/b.jpg", kind="image", md5="b" * 32,
+                     phash=flat_phash, dhash=flat_phash)
+    c.db.commit()
+
+    hits = find_similar(c, a, threshold=12)
+    assert {h["id"] for h in hits} == {a}          # only itself, not the other flat image
+    c.close()
+
+
 def test_hashset_match(case, tmp_path):
     row = case.db.iter_files("kind='image'")[0]
     hs = tmp_path / "known.csv"
