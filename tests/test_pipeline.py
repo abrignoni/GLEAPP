@@ -1126,6 +1126,32 @@ def test_collapse_matches_groups_via_any_member(tmp_path, evidence):
     c.close()
 
 
+def test_group_view_ignores_other_active_filters(tmp_path):
+    """vstack=/stack= must return the whole group regardless of any other
+    filter still active (regression: an examiner typically reaches a group by
+    searching for or filtering to the one file whose badge they right-clicked,
+    so a leftover q=/kind=/... used to intersect with the group and hide every
+    sibling that didn't also happen to match it)."""
+    from gleapp.web.app import create_app
+
+    c = open_case(tmp_path / "grp", create=True, examiner="t")
+    a = c.db.upsert_file("/x/only_this_one.jpg", kind="image", md5="a" * 32)
+    b = c.db.upsert_file("/x/other.jpg", kind="image", md5="b" * 32)
+    for fid in (a, b):                           # one visual stack, head = a
+        c.db.update_file(fid, vstack_id=a)
+    c.db.commit()
+
+    app = create_app(None)
+    app.config["STATE"]["case"] = c
+    cl = app.test_client()
+
+    # a search term that only "a" matches must not shrink the group
+    d = cl.get(f"/api/files?vstack={a}&q=only_this_one").get_json()
+    assert d["total"] == 2
+    assert {f["id"] for f in d["files"]} == {a, b}
+    c.close()
+
+
 def test_search_covers_all_metadata(tmp_path, evidence):
     from gleapp.web.app import create_app
 

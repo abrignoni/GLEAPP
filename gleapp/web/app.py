@@ -789,88 +789,94 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             where.append(f"{col} = ?")
             params.append(val)
 
-        if q.get("kind"):
-            eq("kind", q["kind"])
-        if q.get("source"):
-            eq("source", q["source"])
-        if q.get("category") not in (None, "", "any"):
-            eq("category", int(q["category"]))
-        if q.get("stack"):
-            eq("stack_id", int(q["stack"]))
-        if q.get("cluster"):
-            eq("cluster_id", int(q["cluster"]))
-        if q.get("hashset") == "1":
-            where.append("hashset_hit IS NOT NULL")
-        _hn = q.get("hashset_name", "")
-        if _hn == "*":                       # any set imported into this case
-            where.append("hashset_hit IN (SELECT name FROM hashsets)")
-        elif _hn:                            # one named set
-            where.append("hashset_hit = ?")
-            params.append(_hn)
-        if q.get("hidegood") == "1":
-            where.append("(hashset_kind IS NULL OR hashset_kind != 'known-good')")
-        if q.get("faces") == "1":
-            where.append("faces > 0")
-        # "has duplicates": a real >=2 exact stack, a visual stack, or a
-        # near-dup cluster (vstack_id/cluster_id are only set for groups of >=2)
-        _exact_dup = ("stack_id IN (SELECT stack_id FROM files WHERE stack_id "
-                      "IS NOT NULL GROUP BY stack_id HAVING COUNT(*) > 1)")
-        _dup = {
-            "exact": _exact_dup,
-            "visual": "vstack_id IS NOT NULL",
-            "cluster": "cluster_id IS NOT NULL",
-            "any": f"(vstack_id IS NOT NULL OR cluster_id IS NOT NULL OR {_exact_dup})",
-        }.get(q.get("hasdup"))
-        if _dup:
-            where.append(_dup)
-        if q.get("min_skin"):
-            where.append("skin_ratio >= ?")
-            params.append(float(q["min_skin"]))
-        if q.get("has_gps") == "1":
-            where.append("gps_lat IS NOT NULL")
-        if q.get("error") == "1":
-            where.append("error IS NOT NULL")
-        elif q.get("error") == "0":
-            where.append("error IS NULL")
-        if q.get("q", "").strip():
-            # every whitespace-separated term must match somewhere (AND);
-            # within a term, match across every text/metadata column (OR).
-            # Name/path resolve to the *device* name and path for a Project VIC
-            # file (MediaFiles.FileName / .FilePath); rel_path is only searched
-            # for a plain folder ingest (media_id IS NULL). Otherwise the local
-            # extraction folder the VIC files were unpacked into - which is on
-            # every row - would match every search.
-            _rp = "CASE WHEN media_id IS NULL THEN rel_path END"
-            cols = (f"COALESCE(NULLIF(orig_name, ''), {_rp})",
-                    f"COALESCE(NULLIF(orig_path, ''), {_rp})",
-                    "alt_paths",            # the other storage views a file sat under
-                    "camera", "notes", "mime", "source", "created_dt",
-                    "reviewed_by", "hashset_hit", "error",
-                    "md5", "sha1", "sha256", "phash")
-            for word in q["q"].split():
-                term = f"%{word}%"
-                clause = " OR ".join(f"{c} LIKE ?" for c in cols)
-                clause += " OR id IN (SELECT file_id FROM tags WHERE tag LIKE ?)"
-                where.append(f"({clause})")
-                params += [term] * (len(cols) + 1)
-        if q.get("vstack"):
-            where.append("vstack_id = ?")
-            params.append(int(q["vstack"]))
-        # Browsing one exact/visual-stack group (stack= / vstack= above) is exactly a
-        # request to see every member of it - collapsing to one representative row
-        # would hide the very copies the examiner asked for.
-        collapse = q.get("dupes") == "collapse" and not q.get("vstack") and not q.get("stack")
+        # Browsing one exact/visual-stack group (stack= / vstack=) is an explicit
+        # request to see every member of it. Any other active filter - a leftover
+        # search box, a category, "Has faces", ... - must not hide a sibling that
+        # doesn't happen to match it too (the usual way an examiner reaches a group
+        # is by searching for or filtering down to the one file whose badge they
+        # clicked), so a group request skips every other clause below entirely,
+        # not just collapse.
+        group = q.get("stack") or q.get("vstack")
+        if group:
+            eq("stack_id" if q.get("stack") else "vstack_id", int(group))
+        else:
+            if q.get("kind"):
+                eq("kind", q["kind"])
+            if q.get("source"):
+                eq("source", q["source"])
+            if q.get("category") not in (None, "", "any"):
+                eq("category", int(q["category"]))
+            if q.get("cluster"):
+                eq("cluster_id", int(q["cluster"]))
+            if q.get("hashset") == "1":
+                where.append("hashset_hit IS NOT NULL")
+            _hn = q.get("hashset_name", "")
+            if _hn == "*":                       # any set imported into this case
+                where.append("hashset_hit IN (SELECT name FROM hashsets)")
+            elif _hn:                            # one named set
+                where.append("hashset_hit = ?")
+                params.append(_hn)
+            if q.get("hidegood") == "1":
+                where.append("(hashset_kind IS NULL OR hashset_kind != 'known-good')")
+            if q.get("faces") == "1":
+                where.append("faces > 0")
+            # "has duplicates": a real >=2 exact stack, a visual stack, or a
+            # near-dup cluster (vstack_id/cluster_id are only set for groups of >=2)
+            _exact_dup = ("stack_id IN (SELECT stack_id FROM files WHERE stack_id "
+                          "IS NOT NULL GROUP BY stack_id HAVING COUNT(*) > 1)")
+            _dup = {
+                "exact": _exact_dup,
+                "visual": "vstack_id IS NOT NULL",
+                "cluster": "cluster_id IS NOT NULL",
+                "any": f"(vstack_id IS NOT NULL OR cluster_id IS NOT NULL OR {_exact_dup})",
+            }.get(q.get("hasdup"))
+            if _dup:
+                where.append(_dup)
+            if q.get("min_skin"):
+                where.append("skin_ratio >= ?")
+                params.append(float(q["min_skin"]))
+            if q.get("has_gps") == "1":
+                where.append("gps_lat IS NOT NULL")
+            if q.get("error") == "1":
+                where.append("error IS NOT NULL")
+            elif q.get("error") == "0":
+                where.append("error IS NULL")
+            if q.get("q", "").strip():
+                # every whitespace-separated term must match somewhere (AND);
+                # within a term, match across every text/metadata column (OR).
+                # Name/path resolve to the *device* name and path for a Project VIC
+                # file (MediaFiles.FileName / .FilePath); rel_path is only searched
+                # for a plain folder ingest (media_id IS NULL). Otherwise the local
+                # extraction folder the VIC files were unpacked into - which is on
+                # every row - would match every search.
+                _rp = "CASE WHEN media_id IS NULL THEN rel_path END"
+                cols = (f"COALESCE(NULLIF(orig_name, ''), {_rp})",
+                        f"COALESCE(NULLIF(orig_path, ''), {_rp})",
+                        "alt_paths",            # the other storage views a file sat under
+                        "camera", "notes", "mime", "source", "created_dt",
+                        "reviewed_by", "hashset_hit", "error",
+                        "md5", "sha1", "sha256", "phash")
+                for word in q["q"].split():
+                    term = f"%{word}%"
+                    clause = " OR ".join(f"{c} LIKE ?" for c in cols)
+                    clause += " OR id IN (SELECT file_id FROM tags WHERE tag LIKE ?)"
+                    where.append(f"({clause})")
+                    params += [term] * (len(cols) + 1)
+            # details list-view: per-column filters (JSON: [{col,op,val}, …])
+            if q.get("colfilters"):
+                try:
+                    for f in json.loads(q["colfilters"]):
+                        got = _col_filter_clause(f.get("col"), f.get("op"), f.get("val"))
+                        if got:
+                            where.append(got[0])
+                            params += got[1]
+                except (ValueError, TypeError):
+                    pass
 
-        # details list-view: per-column filters (JSON: [{col,op,val}, …])
-        if q.get("colfilters"):
-            try:
-                for f in json.loads(q["colfilters"]):
-                    got = _col_filter_clause(f.get("col"), f.get("op"), f.get("val"))
-                    if got:
-                        where.append(got[0])
-                        params += got[1]
-            except (ValueError, TypeError):
-                pass
+        # Browsing one exact/visual-stack group (above) is exactly a request to see
+        # every member of it - collapsing to one representative row would hide the
+        # very copies the examiner asked for.
+        collapse = q.get("dupes") == "collapse" and not group
 
         _legacy_sort = {
             "path": "rel_path", "date": "created_dt", "size": "size",
