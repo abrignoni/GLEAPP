@@ -243,16 +243,19 @@ continue. Turning off screening in the launcher roughly halves the time.
 
 `gleapp report --format lava` writes `reports/lava/`, a project the
 [LAVA](https://github.com/leapps-org/LAVA) viewer opens, so a case can be handed to
-an examiner who already reviews iLEAPP and ALEAPP output there. Seven artifacts:
+an examiner who already reviews iLEAPP and ALEAPP output there. Eight artifacts:
 every media file, the ones an examiner categorized, the ones carrying coordinates,
-exact-duplicate stacks, visually similar groups, known-hash-set hits, and the case
-audit log. Pictures and video show inline in LAVA and play from the report.
+a location overview, exact-duplicate stacks, visually similar groups, known-hash-set
+hits, and the case audit log. Pictures and video show inline in LAVA and play from
+the report.
 
 A geolocated file also carries a **locator map**, drawn from the offline basemap you
-imported and marked at the file's own coordinates. Nothing is fetched. A map is drawn
-only where the basemap actually holds tiles for those coordinates, because a point
-outside its coverage renders as an empty background with a mark on it, and the run log
-counts every file that got no map and why. `--no-maps` skips them.
+imported and marked at the file's own coordinates, with the street, water and place
+names the basemap carries. A **Location Overview** artifact puts every file it could
+map on one map. Nothing is fetched. A map is drawn only where the basemap actually
+holds tiles for those coordinates, because a point outside its coverage renders as an
+empty background with a mark on it, and the run log counts every file that got no map
+and why. `--no-maps` skips them.
 
 The case name, examiner, sources and counts go to LAVA's **Device Info** and
 **Screen Output** tabs. No path from the machine the case was made on is written

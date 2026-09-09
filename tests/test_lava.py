@@ -102,7 +102,7 @@ def test_manifest_and_database_agree(case, tmp_path):
             count = db.execute(
                 f'SELECT COUNT(*) FROM "{artifact["tablename"]}"').fetchone()[0]
             assert count == artifact["record_count"], artifact["name"]
-        assert seen == 7, "the artifact set changed; update this test deliberately"
+        assert seen == 8, "the artifact set changed; update this test deliberately"
     finally:
         db.close()
 
@@ -119,6 +119,41 @@ def test_only_column_types_lava_renders(case, tmp_path):
     for artifact in _artifacts(_manifest(out)):
         for column in artifact.get("object_columns", []):
             assert column["type"] in LAVA_TYPES, (artifact["name"], column)
+
+
+def test_numbers_are_stored_as_numbers_and_stay_out_of_the_manifest(case, tmp_path):
+    """A count in a TEXT column sorts 10 before 2, because LAVA orders in SQL.
+
+    So numeric columns are declared, which shapes the database. The declaration must
+    not reach ``object_columns`` though: LAVA renders four types and no report the
+    LEAPPs write carries any other, so a name it does not define would be a token
+    that is ignored today and live the day it grows a renderer for it.
+    """
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    manifest = _manifest(out)
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        declared = {c["name"] for a in _artifacts(manifest)
+                    for c in a.get("object_columns", [])}
+        assert "size" not in declared and "faces" not in declared
+        assert "latitude" not in declared and "copies" not in declared
+
+        size_type, faces_type = db.execute(
+            "SELECT typeof(size), typeof(faces) FROM media_files "
+            "WHERE size IS NOT NULL LIMIT 1").fetchone()
+        assert size_type == "integer", size_type
+        assert faces_type == "integer", faces_type
+        stack_copies = db.execute(
+            "SELECT typeof(copies) FROM exact_duplicate_stacks LIMIT 1").fetchone()
+        if stack_copies:
+            assert stack_copies[0] == "integer", stack_copies
+        # and they order as numbers rather than as text
+        sizes = [r[0] for r in db.execute(
+            "SELECT size FROM media_files WHERE size IS NOT NULL ORDER BY size")]
+        assert sizes == sorted(sizes), sizes
+    finally:
+        db.close()
 
 
 def test_capture_time_is_not_declared_an_instant(case, tmp_path):
@@ -247,7 +282,7 @@ def test_the_run_log_agrees_with_the_artifacts_it_describes(case, tmp_path):
         assert int(row.group(1).replace(",", "")) == artifact["record_count"], \
             artifact["name"]
         counted += 1
-    assert counted == 7
+    assert counted == 8
 
 
 def test_a_row_survives_its_bytes_being_unavailable(case, tmp_path, monkeypatch):
@@ -492,6 +527,63 @@ def test_a_case_with_no_basemap_still_exports(tmp_path, monkeypatch):
     finally:
         c.close()
     assert "no basemap 1" in " ".join(_map_section(out).split())
+
+
+def test_the_overview_frames_every_file_it_could_map(tmp_path, basemap):
+    """One row holding all the mapped coordinates on a single image.
+
+    The per-file locators answer where one file claims to be; this answers how a set
+    of them sits together, which is the question asked of a case rather than a file.
+    """
+    c = _geo_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    manifest = _manifest(out)
+    overview = next(a for a in _artifacts(manifest)
+                    if a["tablename"] == "location_overview")
+    assert overview["record_count"] == 1
+    assert {c["name"]: c["type"] for c in overview["object_columns"]}["map"] == "media"
+
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        row = db.execute(
+            "SELECT map, files_mapped, files_not_mapped, north, south, east, west "
+            "FROM location_overview").fetchone()
+        ref, mapped, not_mapped = row[0], row[1], row[2]
+        assert ref and mapped == 1 and not_mapped == 0
+        # the bounds describe the mapped points, so with one point they collapse to it
+        assert row[3] == row[4] == 10.0 and row[5] == row[6] == 20.0
+        item = db.execute(
+            "SELECT i.id, i.extraction_path FROM _lava_media_references r "
+            "JOIN _lava_media_items i ON i.id = r.media_item_id WHERE r.id = ?",
+            (ref,)).fetchone()
+        assert item[0].startswith("map-overview-")
+        assert (out / "_HTML" / item[1]).is_file() and (out / item[1]).is_file()
+    finally:
+        db.close()
+
+
+def test_the_overview_is_empty_rather_than_wrong_when_nothing_can_be_mapped(
+        tmp_path, basemap, monkeypatch):
+    """No coverage means no overview row, not an overview of nothing.
+
+    An image framed on points the basemap cannot draw would be an empty background,
+    and a bounding box around them would describe an area the map does not show.
+    """
+    from gleapp import basemaps
+    monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
+    c = _geo_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    overview = next(a for a in _artifacts(_manifest(out))
+                    if a["tablename"] == "location_overview")
+    assert overview["record_count"] == 0
 
 
 def test_coverage_is_read_from_the_archive_not_its_declared_bounds(basemap, monkeypatch):

@@ -8,6 +8,11 @@ import pytest
 from PIL import Image
 
 from gleapp import basemaps, mvt, staticmap
+
+# The label tests reach into the module on purpose: where a label was placed, and
+# with what font, have no public surface, and asserting on the finished image alone
+# cannot tell a label at the middle of a road from one at its end.
+# pylint: disable=protected-access
 from gleapp.case import Source, open_case
 from gleapp.pipeline import ingest_sources, process
 
@@ -53,16 +58,37 @@ def _geom(gtype: int, rings) -> bytes:
     return bytes(out)
 
 
-def _feature(gtype: int, rings) -> bytes:
+def _feature(gtype: int, rings, tag_indices=()) -> bytes:
     g = _geom(gtype, rings)
-    return _tag(3, 0) + _uv(gtype) + _tag(4, 2) + _uv(len(g)) + g
+    out = _tag(3, 0) + _uv(gtype)
+    if tag_indices:
+        packed = b"".join(_uv(i) for i in tag_indices)
+        out += _tag(2, 2) + _uv(len(packed)) + packed
+    return out + _tag(4, 2) + _uv(len(g)) + g
 
 
-def _layer(name: str, gtype: int, rings, extent: int = 4096) -> bytes:
+def _string_value(text: str) -> bytes:
+    return _tag(1, 2) + _uv(len(text.encode())) + text.encode()
+
+
+def _int_value(n: int) -> bytes:
+    return _tag(5, 0) + _uv(n)                      # uint64
+
+
+def _layer(name: str, gtype: int, rings, extent: int = 4096, attrs=None) -> bytes:
+    """One layer holding one feature. ``attrs`` is a dict written into the layer's
+    key and value tables and referenced by the feature, the way a real tile does."""
     body = _tag(15, 0) + _uv(2) + _tag(1, 2) + _uv(len(name)) + name.encode()
     body += _tag(5, 0) + _uv(extent)
-    feat = _feature(gtype, rings)
-    body += _tag(2, 2) + _uv(len(feat)) + feat
+    indices = []
+    keys_values = b""
+    for i, (key, value) in enumerate((attrs or {}).items()):
+        keys_values += _tag(3, 2) + _uv(len(key.encode())) + key.encode()
+        encoded = _string_value(value) if isinstance(value, str) else _int_value(value)
+        keys_values += _tag(4, 2) + _uv(len(encoded)) + encoded
+        indices += [i, i]
+    feat = _feature(gtype, rings, indices)
+    body += _tag(2, 2) + _uv(len(feat)) + feat + keys_values
     return body
 
 
@@ -196,3 +222,94 @@ def test_report_embeds_overview_and_per_file_maps(tmp_path):
     html2 = report.export_html(c2, tmp_path / "r2.html", maps=False).read_text(encoding="utf-8")
     c2.close()
     assert "class='overview'" not in html2 and "class='locmap'" not in html2
+
+
+# ---- labels ----------------------------------------------------------------
+# A locator that shows only shapes says where something is relative to nothing. The
+# names are in the tile already; these pin that they are read and drawn.
+
+def test_mvt_decode_exposes_feature_attributes():
+    """The key and value tables can follow the features that index them, so they are
+    resolved once the layer is read rather than as each feature is parsed."""
+    raw = _tile(_layer("roads", mvt.LINESTRING, [[(0, 2048), (4096, 2048)]],
+                       attrs={"name": "Rosalind Avenue", "min_zoom": 12}))
+    feat = mvt.decode(raw)["roads"]["features"][0]
+    assert feat["tags"] == {"name": "Rosalind Avenue", "min_zoom": 12}
+    assert feat["paths"][0] == [(0, 2048), (4096, 2048)]       # geometry still there
+    assert "tag_indices" not in feat, "the raw indices leaked into the result"
+
+
+def test_a_feature_with_no_attributes_still_decodes():
+    raw = _tile(_layer("water", mvt.POLYGON, [[(0, 0), (100, 0), (100, 100), (0, 100)]]))
+    feat = mvt.decode(raw)["water"]["features"][0]
+    assert feat["tags"] == {}
+
+
+def test_a_road_is_labelled_at_its_middle_not_at_a_vertex():
+    """A two-point line has no middle vertex, so taking one puts the label at an end.
+
+    On a real map that is the tile boundary, where the label is clipped or sits on
+    the next road along.
+    """
+    assert staticmap._path_midpoint([(0, 0), (100, 0)]) == (50.0, 0.0)
+    # detail bunched at one end must not drag the label there
+    bunched = [(0, 0), (1, 0), (2, 0), (3, 0), (103, 0)]
+    x, _ = staticmap._path_midpoint(bunched)
+    assert 50 <= x <= 53, x
+    assert staticmap._path_midpoint([(7, 9), (7, 9)]) == (7, 9)     # zero length
+
+    # and the label pass has to use it: a two-point road spanning the tile places
+    # its label at the tile's middle, not at the vertex the end of the line sits on
+    raw = _tile(_layer("roads", mvt.LINESTRING, [[(0, 2048), (4096, 2048)]],
+                       attrs={"name": "Rosalind Avenue", "min_zoom": 0}))
+    candidates = staticmap._label_points(mvt.decode(raw), 0.0, 0.0, 15)
+    assert len(candidates) == 1
+    _, _, x, y, text = candidates[0]
+    scale = staticmap.TILE * staticmap._SS / 4096
+    assert text == "Rosalind Avenue"
+    assert x == 2048 * scale, "the label is not at the middle of the road"
+    assert y == 2048 * scale
+
+
+def _render_road(monkeypatch, name, *, zoom=15, min_zoom=12, labels=True):
+    tile = _tile(_layer("roads", mvt.LINESTRING, [[(0, 2048), (4096, 2048)]],
+                        attrs={"name": name, "min_zoom": min_zoom}))
+    monkeypatch.setattr(basemaps, "pmtiles_tile", lambda p, z, x, y: tile)
+    rec = {"path": "x.pmtiles", "format": basemaps.FORMAT_PMTILES,
+           "tile_type": "mvt", "min_zoom": 0, "max_zoom": 18}
+    # wide enough that a tile's midpoint is inside the frame: at 0,0 four tiles meet
+    # at the centre, so on a small canvas every candidate falls off the edge
+    return staticmap.render(rec, [(0.0, 0.0)], width=700, height=500, zoom=zoom,
+                            fmt="png", labels=labels)
+
+
+def _ink(png: bytes) -> int:
+    """Distinct colours in the image: text with a halo adds many, a plain road few."""
+    im = Image.open(io.BytesIO(png)).convert("RGB")
+    return len(im.getcolors(maxcolors=1_000_000) or [])
+
+
+def test_a_named_road_is_labelled(monkeypatch):
+    with_label = _ink(_render_road(monkeypatch, "Rosalind Avenue"))
+    without = _ink(_render_road(monkeypatch, "Rosalind Avenue", labels=False))
+    assert with_label > without, "labels=True drew no more than labels=False"
+
+
+def test_a_feature_the_basemap_hides_at_this_zoom_is_not_labelled(monkeypatch):
+    """Every Protomaps feature carries ``min_zoom``. Honouring it means the tileset
+    decides what appears, rather than a rule invented in this renderer."""
+    shown = _ink(_render_road(monkeypatch, "Rosalind Avenue", zoom=15, min_zoom=12))
+    hidden = _ink(_render_road(monkeypatch, "Rosalind Avenue", zoom=10, min_zoom=12))
+    plain = _ink(_render_road(monkeypatch, "Rosalind Avenue", zoom=10, min_zoom=12,
+                              labels=False))
+    assert shown > hidden
+    assert hidden == plain, "a feature hidden at this zoom was labelled anyway"
+
+
+def test_labels_are_skipped_when_no_font_is_available(monkeypatch):
+    """Pillow's scalable default is used rather than a vendored font. A build without
+    it draws no labels instead of failing, so the map is still produced."""
+    monkeypatch.setattr(staticmap, "_font", lambda size: None)
+    with_font_gone = _ink(_render_road(monkeypatch, "Rosalind Avenue"))
+    plain = _ink(_render_road(monkeypatch, "Rosalind Avenue", labels=False))
+    assert with_font_gone == plain

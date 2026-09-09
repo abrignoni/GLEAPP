@@ -61,8 +61,17 @@ MODULE_NAME = "GLEAPP Media Triage"
 MODULE_FILENAME = "lava.py"
 AUTHOR = "@AlexisBrignoni"
 
-# LAVA renders exactly four column types and returns everything else as escaped
-# text (its DataRenderer switch). Emitting any other name would be inventing one.
+# LAVA renders exactly four column types, its DataRenderer switch returning
+# everything else as escaped text, and only these three appear in any report the
+# LEAPPs actually write. A column declared anything else must not reach the
+# manifest: an unknown name there is a token LAVA does not define, ignored today
+# and live the day it grows a renderer for it.
+LAVA_RENDER_TYPES = {"date", "datetime", "phonenumber", "media"}
+
+# What each declared type becomes in the database. "integer" and "real" are storage
+# only: they shape the column so LAVA's ORDER BY sorts numerically rather than
+# lexicographically, which is what a TEXT column holding 2 and 10 would do, and they
+# are deliberately kept out of object_columns.
 TYPE_SQL = {"integer": "INTEGER", "real": "REAL", "datetime": "INTEGER",
             "date": "TEXT", "phonenumber": "TEXT", "media": "TEXT"}
 
@@ -137,8 +146,11 @@ class _Writer:
         self.meta_artifacts: list[dict] = []
         self.media_written = 0
         self.media_bytes = 0
-        # (name, sha256) of the basemap any location maps were drawn on
+        # (name, sha256) of the basemap any location maps were drawn on, and the
+        # tile cache and record the overview reuses so its tiles are decoded once
         self.basemap: tuple[str, str] = ("", "")
+        self.map_cache: dict = {}
+        self.map_record: dict | None = None
 
     # -- LAVA's own tables -------------------------------------------------
     def _create_lava_tables(self) -> None:
@@ -307,7 +319,8 @@ class _Writer:
                 label, kind = header
                 key = _sanitize(label)
                 columns.append(f"{_quote(key)} {TYPE_SQL.get(kind, 'TEXT')}")
-                object_columns[key] = kind
+                if kind in LAVA_RENDER_TYPES:
+                    object_columns[key] = kind
             else:
                 label = header
                 key = _sanitize(label)
@@ -473,7 +486,8 @@ def _basemap_record() -> tuple[dict | None, str, str]:
 
 
 def _stage_location_maps(case: Case, writer: "_Writer", rows: list[dict], *,
-                         flavor: str, cap: int) -> tuple[dict[int, str], dict[str, int]]:
+                         flavor: str, cap: int
+                         ) -> tuple[dict[int, str], dict[str, int], list[tuple]]:
     """A locator image per geolocated file, drawn from the imported offline basemap.
 
     Returns ``(file id -> media id)`` and a tally of why the rest have none, which
@@ -489,17 +503,18 @@ def _stage_location_maps(case: Case, writer: "_Writer", rows: list[dict], *,
     geo = [r for r in rows
            if r.get("gps_lat") is not None and r.get("gps_lon") is not None]
     if not geo:
-        return {}, tally
+        return {}, tally, []
     record, name, digest = _basemap_record()
     if record is None:
         tally["no basemap"] = len(geo)
-        return {}, tally
+        return {}, tally, []
     # this report was drawn on this basemap; the case records which, as the HTML
     # report does, and Device Info prints the name and hash
     with suppress(Exception):                       # provenance is never fatal
         basemaps.record_use(case, name)
     cache: dict = {}
     drawn: dict[int, str] = {}
+    covered: list[tuple] = []
     for index, row in enumerate(geo):
         if index >= cap:
             tally["over the cap"] = len(geo) - cap
@@ -508,6 +523,7 @@ def _stage_location_maps(case: Case, writer: "_Writer", rows: list[dict], *,
         if not staticmap.covers(record, lon, lat):
             tally["outside the basemap"] += 1
             continue
+        covered.append((lon, lat))
         try:
             image = staticmap.render(record, [(lon, lat)], width=360, height=240,
                                      flavor=flavor, cache=cache, fmt="jpeg")
@@ -522,7 +538,9 @@ def _stage_location_maps(case: Case, writer: "_Writer", rows: list[dict], *,
             drawn[row["id"]] = media_id
             tally["drawn"] += 1
     writer.basemap = (name, digest)
-    return drawn, tally
+    writer.map_cache = cache
+    writer.map_record = record
+    return drawn, tally, covered
 
 
 # ---- the artifacts ---------------------------------------------------------
@@ -535,10 +553,11 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
         ("Accessed Timestamp", "datetime"), "Capture Time",
         "File Name", "Path", "Also Under", "Source", ("Media", "media"),
         "Kind", "Category", "Tags", "Reviewed By", "Examiner Notes",
-        "Size", "Dimensions", "Duration", "Camera",
+        ("Size", "integer"), "Dimensions", "Duration", "Camera",
         "MD5", "SHA1", "SHA256", "Perceptual Hash",
-        "Faces", "Skin Ratio", "Known Hash Set", "Known Hash Set Kind",
-        "Duplicate Stack", "Visual Group", "Error",
+        ("Faces", "integer"), ("Skin Ratio", "real"),
+        "Known Hash Set", "Known Hash Set Kind",
+        ("Duplicate Stack", "integer"), ("Visual Group", "integer"), "Error",
     ]
     data = []
     for row in rows:
@@ -572,7 +591,7 @@ def _artifact_categorized(writer: "_Writer", rows: list[dict],
     marked = [r for r in rows if (r.get("category") or 0) != 0]
     headers = [("Reviewed Timestamp", "datetime"), "Category", "File Name", "Path",
                ("Media", "media"), "Reviewed By", "Examiner Notes", "Tags",
-               "MD5", "SHA1", "Kind", "Size"]
+               "MD5", "SHA1", "Kind", ("Size", "integer")]
     data = [[
         _epoch(row.get("reviewed_at")), row.get("category_label") or "",
         row.get("disp_name") or "", row.get("disp_path") or "",
@@ -606,8 +625,8 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
     geo = [r for r in rows if r.get("gps_lat") is not None
            and r.get("gps_lon") is not None]
     headers = ["Capture Time", "File Name", ("Media", "media"), ("Map", "media"),
-               "Latitude", "Longitude", "Camera", "Path", "Category",
-               ("Modified Timestamp", "datetime"), "MD5"]
+               ("Latitude", "real"), ("Longitude", "real"), "Camera", "Path",
+               "Category", ("Modified Timestamp", "datetime"), "MD5"]
     data = [[
         row.get("created_dt") or "", row.get("disp_name") or "",
         writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
@@ -632,6 +651,54 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
             "not as an instant. " + _MAP_NOTE))
 
 
+def _artifact_overview(writer: "_Writer", covered: list[tuple], tally: dict[str, int],
+                       *, flavor: str) -> None:
+    """One row: every geolocated file this report could map, on one map.
+
+    The per-file locators say where each file claims to be; this says how they sit
+    together, which is the question an examiner asks of a set rather than of a file.
+    """
+    name = "Location Overview"
+    headers = [("Map", "media"), ("Files Mapped", "integer"),
+               ("Files Not Mapped", "integer"), "Basemap", "Basemap SHA-256",
+               ("North", "real"), ("South", "real"), ("East", "real"),
+               ("West", "real")]
+    data = []
+    if covered and writer.map_record is not None:
+        try:
+            image = staticmap.render(writer.map_record, covered, width=900, height=540,
+                                     flavor=flavor, cache=writer.map_cache, fmt="png")
+        except Exception:  # pylint: disable=broad-exception-caught
+            image = None
+        if image is not None:
+            basemap_name, digest = writer.basemap
+            media_id = "map-overview-" + hashlib.sha1(
+                repr(sorted(covered)).encode()).hexdigest()
+            writer.add_bytes(
+                media_id, image, ".png",
+                source_path=f"drawn by GLEAPP from the {basemap_name} basemap")
+            lons = [lon for lon, _ in covered]
+            lats = [lat for _, lat in covered]
+            data.append([
+                writer.reference(media_id, name, "all mapped locations"),
+                len(covered),
+                sum(v for k, v in tally.items() if k != "drawn"),
+                basemap_name, digest,
+                max(lats), min(lats), max(lons), min(lons),
+            ])
+    writer.add_artifact(
+        "GLEAPP Media", name, headers, data, icon="map",
+        source_path="case.gleapp",
+        description="Every geolocated file this report could map, on one map.",
+        notes=(
+            "One row, holding the same coordinates the Media Locations artifact "
+            "reports, framed together on a single image. North, South, East and West "
+            "are the extent of the mapped points only, so they bound what the map "
+            "shows and not the case: Files Not Mapped counts the geolocated files "
+            "left off, which the run log breaks down by reason. A file with no "
+            "coordinates is in neither count. " + _MAP_NOTE))
+
+
 def _artifact_duplicates(writer: "_Writer", rows: list[dict],
                          media: dict[int, str]) -> None:
     name = "Exact Duplicate Stacks"
@@ -640,8 +707,9 @@ def _artifact_duplicates(writer: "_Writer", rows: list[dict],
         if row.get("stack_id"):
             groups.setdefault(row["stack_id"], []).append(row)
     stacks = {k: v for k, v in groups.items() if len(v) > 1}
-    headers = ["Stack", "Copies", ("Media", "media"), "MD5", "SHA256",
-               "File Names", "Paths", "Sources", "Bytes Per Copy", "Bytes In Total"]
+    headers = [("Stack", "integer"), ("Copies", "integer"), ("Media", "media"),
+               "MD5", "SHA256", "File Names", "Paths", "Sources",
+               ("Bytes Per Copy", "integer"), ("Bytes In Total", "integer")]
     data = []
     for stack_id, members in sorted(stacks.items()):
         head = members[0]
@@ -680,8 +748,9 @@ def _artifact_similar(writer: "_Writer", rows: list[dict],
         if row.get("vstack_id"):
             groups.setdefault(row["vstack_id"], []).append(row)
     visual = {k: v for k, v in groups.items() if len(v) > 1}
-    headers = ["Group", "Members", ("Media", "media"), "File Names", "Paths",
-               "Perceptual Hashes", "Distinct MD5s"]
+    headers = [("Group", "integer"), ("Members", "integer"), ("Media", "media"),
+               "File Names", "Paths", "Perceptual Hashes",
+               ("Distinct MD5s", "integer")]
     data = []
     for group_id, members in sorted(visual.items()):
         head = members[0]
@@ -715,9 +784,9 @@ def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
                            media: dict[int, str]) -> None:
     name = "Known Hash Set Hits"
     hits = [r for r in rows if r.get("hashset_hit")]
-    headers = ["Hash Set", "Set Kind", "Asserted Category", "File Name", "Path",
-               ("Media", "media"), "MD5", "SHA1", "SHA256",
-               "Case Category", "Size", "Kind"]
+    headers = ["Hash Set", "Set Kind", ("Asserted Category", "integer"), "File Name",
+               "Path", ("Media", "media"), "MD5", "SHA1", "SHA256",
+               "Case Category", ("Size", "integer"), "Kind"]
     data = [[
         row.get("hashset_hit") or "", row.get("hashset_kind") or "",
         row.get("hashset_cat"), row.get("disp_name") or "", row.get("disp_path") or "",
@@ -1034,13 +1103,15 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
 
     location_maps: dict[int, str] = {}
     map_tally: dict[str, int] = {}
+    covered: list[tuple] = []
     if maps:
-        location_maps, map_tally = _stage_location_maps(
+        location_maps, map_tally, covered = _stage_location_maps(
             case, writer, rows, flavor=map_flavor, cap=map_cap)
 
     _artifact_media_files(writer, rows, media, unavailable, thumbs=thumbs)
     _artifact_categorized(writer, rows, media)
     _artifact_locations(writer, rows, media, location_maps)
+    _artifact_overview(writer, covered, map_tally, flavor=map_flavor)
     _artifact_duplicates(writer, rows, media)
     _artifact_similar(writer, rows, media)
     _artifact_hashset_hits(writer, rows, media)
