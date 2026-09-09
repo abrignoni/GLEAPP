@@ -102,8 +102,14 @@ def _lava_text(root) -> str:
 
 
 def test_lava_export_carries_no_local_path(tmp_path, monkeypatch):
-    from gleapp import hashstore, stash
+    from gleapp import hashdb, hashstore, stash
     c = _case(tmp_path, monkeypatch)
+    # a hash set records the path it was imported from, and the report names the
+    # lists that were checked, so that path is one more way out
+    hashes = tmp_path / "known hashes.csv"
+    hashes.write_text("md5\n" + "\n".join(
+        r["md5"] for r in c.db.iter_files() if r["md5"]) + "\n")
+    hashdb.import_hashset(c.db, hashes, name="Op-Paths known", kind="known")
     out = tmp_path / "out"
     out.mkdir()
     try:
@@ -118,3 +124,5 @@ def test_lava_export_carries_no_local_path(tmp_path, monkeypatch):
     assert "evidence folder" not in text
     # and the evidence-relative path is still there, which is what the report needs
     assert re.search(r"DCIM[\\/]ok\.jpg", text), "the source path was lost entirely"
+    # the hash list is named, by its file name and not by where it sat
+    assert "Op-Paths known" in text and "known hashes.csv" in text

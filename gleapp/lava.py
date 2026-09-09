@@ -44,7 +44,8 @@ from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
 
-from . import __version__, archive, basemaps, categories, staticmap, timeutil
+from . import (__version__, archive, basemaps, categories, hashstore, staticmap,
+               timeutil)
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
@@ -651,6 +652,204 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
             "not as an instant. " + _MAP_NOTE))
 
 
+def _stage_keyframes(case: Case, writer: "_Writer",
+                     rows: list[dict]) -> dict[int, list[tuple]]:
+    """The frames GLEAPP pulled out of each video, put in the report.
+
+    A video row in a table is a play button and nothing else. The frames are
+    already extracted, six per video by default, so an examiner can see what is in
+    a clip without playing it, and the per-frame perceptual hash is what lets a
+    still be matched against a video it came from.
+    """
+    staged: dict[int, list[tuple]] = {}
+    for row in rows:
+        if row.get("kind") != "video":
+            continue
+        frames = []
+        for frame in case.db.keyframes_for(row["id"]):
+            thumb = frame["thumb"]
+            if not thumb:
+                continue
+            local = case.thumb_dir / thumb
+            media_id = f"frame-{hashlib.sha1(thumb.encode()).hexdigest()}"
+            if not writer.add_item(media_id, local,
+                                   source_path=row.get("disp_path") or ""):
+                continue
+            frames.append((frame["ts"], media_id, frame["phash"]))
+        if frames:
+            staged[row["id"]] = frames
+    return staged
+
+
+def _artifact_keyframes(writer: "_Writer", rows: list[dict],
+                        frames: dict[int, list[tuple]]) -> None:
+    name = "Video Key Frames"
+    by_id = {r["id"]: r for r in rows}
+    headers = ["File Name", "Path", "Offset", ("Offset Seconds", "real"),
+               ("Frame", "media"), "Perceptual Hash", "Duration", "MD5", "Category"]
+    data = []
+    for file_id, entries in frames.items():
+        row = by_id.get(file_id)
+        if not row:
+            continue
+        for ts, media_id, phash in entries:
+            data.append([
+                row.get("disp_name") or "", row.get("disp_path") or "",
+                _offset(ts), float(ts) if ts is not None else None,
+                writer.reference(media_id, name,
+                                 f'{row.get("disp_name") or ""} at {_offset(ts)}'),
+                phash or "", _duration(row), row.get("md5") or "",
+                row.get("category_label") or "",
+            ])
+    writer.add_artifact(
+        "GLEAPP Media", name, headers, data, icon="film",
+        source_path="case.gleapp",
+        description="Frames GLEAPP extracted from the videos in this case.",
+        notes=(
+            "One row per extracted frame. Offset is how far into the video the frame "
+            "was taken, measured from the start of the file, and the frames are "
+            "spaced evenly rather than chosen for content: they are a sample of the "
+            "video, not its contents, and something between two of them is not shown "
+            "here. The frames are thumbnails this case already holds, so they are "
+            "shown even where the video's own bytes could not be produced, which is "
+            "why a video can have no picture in Media Files and still have rows here. "
+            "The count per video is set when the case is processed. Perceptual "
+            "Hash is that frame's own hash, which is what lets a still found "
+            "elsewhere be matched against the video it came from; it is an assessment "
+            "by this tool and not byte equality. A video with no rows here either had "
+            "no frames extracted or could not be decoded, and the Media Files "
+            "artifact carries the error where there was one."))
+
+
+def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) -> None:
+    name = "Project VIC Records"
+    vic = [r for r in rows if r.get("media_id") or r.get("vic_flags")]
+    headers = ["Media ID", "File Name", "Device Path", ("Media", "media"), "Category",
+               "Victim Identified", "Offender Identified", "Distributed", "Suspected",
+               "Self-Generated", "MD5", "SHA1", "MIME", ("Size", "integer")]
+    data = []
+    for row in vic:
+        flags = {}
+        raw = row.get("vic_flags")
+        if raw:
+            with suppress(ValueError, TypeError):
+                loaded = json.loads(raw)
+                if isinstance(loaded, dict):
+                    flags = loaded
+        data.append([
+            row.get("media_id"), row.get("orig_name") or row.get("disp_name") or "",
+            row.get("orig_path") or "",
+            writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
+            row.get("category_label") or "",
+            _flag(flags.get("victim_identified")),
+            _flag(flags.get("offender_identified")),
+            _flag(flags.get("is_distributed")),
+            _flag(flags.get("is_suspected")),
+            _flag(flags.get("self_generated")),
+            row.get("md5") or "", row.get("sha1") or "", row.get("mime") or "",
+            row.get("size"),
+        ])
+    writer.add_artifact(
+        "GLEAPP Case", name, headers, data, icon="shield",
+        source_path="case.gleapp",
+        description="Records imported from a Project VIC file, with the flags it carried.",
+        notes=(
+            "One row per file this case imported from a Project VIC 2.0 (US) file. "
+            "Every value here is what that file asserted, carried through unchanged: "
+            "the flags are the importing organisation's record, not findings this tool "
+            "made or checked. Media ID and Device Path are the identifiers the VIC file "
+            "used, so a row can be matched back to it. The five flags do not all "
+            "distinguish a false value from an absent one. Victim Identified, Offender "
+            "Identified and Distributed read 'no' both when the record said so and when "
+            "it carried no such field, because the import coerces an absent value to "
+            "false; measured on a record carrying none of the three, all three were "
+            "stored as false. Suspected and Self-Generated are kept as the record had "
+            "them, so a blank in those two means the field was absent and 'no' means it "
+            "was present and false. A case built from folders or an extraction rather "
+            "than a VIC file has no rows here."))
+
+
+def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> None:
+    name = "Known Hash Sets"
+    headers = ["Hash Set", "Kind", "Source", "Scope", ("Entries", "integer"),
+               ("Files Matched", "integer"), ("Imported", "datetime")]
+    data = []
+    seen = set()
+    for record in case.db.list_hashsets():
+        seen.add(record["name"])
+        data.append([record["name"], record["kind"] or "",
+                     _source_name(record["source"]), "this case",
+                     record["count"], record["hits"],
+                     _epoch(record["imported_at"])])
+    # the shared store is imported once and used by every case, so a hit can name a
+    # set this case never imported itself
+    matched = {r.get("hashset_hit") for r in rows if r.get("hashset_hit")}
+    try:
+        shared = hashstore.sets()
+    except Exception:  # pylint: disable=broad-exception-caught
+        shared = []
+    for record in shared:
+        if record.get("name") in seen:
+            continue
+        hits = sum(1 for r in rows if r.get("hashset_hit") == record.get("name"))
+        if not hits and record.get("name") not in matched:
+            continue
+        seen.add(record.get("name"))
+        data.append([record.get("name") or "", record.get("kind") or "",
+                     _source_name(record.get("source")), "shared store",
+                     record.get("count"), hits, _epoch(record.get("imported_at"))])
+    for orphan in sorted(matched - seen):
+        data.append([orphan, "", "", "no longer listed", None,
+                     sum(1 for r in rows if r.get("hashset_hit") == orphan), None])
+    writer.add_artifact(
+        "GLEAPP Hash Sets", name, headers, data, icon="list",
+        source_path="case.gleapp",
+        description="The known-hash lists this case's files were checked against.",
+        notes=(
+            "One row per list, so a reader can tell what was checked from what was "
+            "found: the Known Hash Set Hits artifact being empty means nothing unless "
+            "this artifact says which lists were in play, and a case with no rows here "
+            "was checked against nothing. Entries is the number of hashes the list "
+            "held when it was imported and Files Matched how many files in this report "
+            "carry its name. Scope says whether the list was imported into this case "
+            "or into the shared store every case on the machine uses. A row reading "
+            "'no longer listed' is a name files still carry from a list that has since "
+            "been removed, which records that the check happened and that the list is "
+            "no longer there to re-run it."))
+
+
+def _source_name(source) -> str:
+    """The name of the file a hash list came from, never where it sat.
+
+    ``hashsets.source`` records the path the list was imported from, which is a
+    location on the examiner's machine. The file's name is what identifies the list
+    to a reader; a value carrying no separator is already a name and passes through.
+    """
+    text = str(source or "").strip()
+    if not text:
+        return ""
+    return os.path.basename(text.replace("\\", "/").rstrip("/")) or text
+
+
+def _flag(value) -> str:
+    """A Project VIC boolean as text, with absent left blank rather than made false."""
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        return value
+    return "yes" if value else "no"
+
+
+def _offset(seconds) -> str:
+    if seconds is None:
+        return ""
+    try:
+        total = int(round(float(seconds)))
+    except (TypeError, ValueError):
+        return ""
+    return f"{total // 3600:d}:{total // 60 % 60:02d}:{total % 60:02d}"
+
+
 def _artifact_overview(writer: "_Writer", covered: list[tuple], tally: dict[str, int],
                        *, flavor: str) -> None:
     """One row: every geolocated file this report could map, on one map.
@@ -1081,8 +1280,8 @@ def _write_screen_output(case: Case, dest: Path, *, writer: "_Writer",
 
 def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
                 link: bool = False, maps: bool = True, map_flavor: str = "light",
-                map_cap: int = 400, tz_name: str | None = None,
-                progress=None) -> Path:
+                map_cap: int = 400, keyframes: bool = True,
+                tz_name: str | None = None, progress=None) -> Path:
     """Write the case as a LAVA project under ``dest`` and return the manifest path.
 
     ``where`` is a SQL filter on the files table, the same one the other exports
@@ -1093,6 +1292,9 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
     volume it was built on. ``maps`` draws a locator image for each geolocated file
     from the offline basemap the examiner imported, capped at ``map_cap`` files;
     nothing is fetched, and a case with no basemap simply gets no maps.
+    ``keyframes`` puts the frames already extracted from each video in the report,
+    which are the same thumbnails the gallery shows and add roughly one thumbnail
+    per frame per video.
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -1108,10 +1310,17 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
         location_maps, map_tally, covered = _stage_location_maps(
             case, writer, rows, flavor=map_flavor, cap=map_cap)
 
+    video_frames: dict[int, list[tuple]] = {}
+    if keyframes:
+        video_frames = _stage_keyframes(case, writer, rows)
+
     _artifact_media_files(writer, rows, media, unavailable, thumbs=thumbs)
     _artifact_categorized(writer, rows, media)
     _artifact_locations(writer, rows, media, location_maps)
     _artifact_overview(writer, covered, map_tally, flavor=map_flavor)
+    _artifact_keyframes(writer, rows, video_frames)
+    _artifact_vic(writer, rows, media)
+    _artifact_hash_sets(writer, case, rows)
     _artifact_duplicates(writer, rows, media)
     _artifact_similar(writer, rows, media)
     _artifact_hashset_hits(writer, rows, media)

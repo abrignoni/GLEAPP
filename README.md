@@ -243,11 +243,18 @@ continue. Turning off screening in the launcher roughly halves the time.
 
 `gleapp report --format lava` writes `reports/lava/`, a project the
 [LAVA](https://github.com/leapps-org/LAVA) viewer opens, so a case can be handed to
-an examiner who already reviews iLEAPP and ALEAPP output there. Eight artifacts:
+an examiner who already reviews iLEAPP and ALEAPP output there. Eleven artifacts:
 every media file, the ones an examiner categorized, the ones carrying coordinates,
-a location overview, exact-duplicate stacks, visually similar groups, known-hash-set
-hits, and the case audit log. Pictures and video show inline in LAVA and play from
-the report.
+a location overview, the frames extracted from each video, exact-duplicate stacks,
+visually similar groups, known-hash-set hits, the lists those hits were checked
+against, Project VIC records with the flags they carried, and the case audit log.
+Pictures and video show inline in LAVA and play from the report.
+
+The video frames GLEAPP already extracts go in with their time offsets, so a clip can
+be read without playing it, and they survive the evidence moving because they are
+thumbnails the case holds. `--no-keyframes` skips them. The hash-set listing is what
+makes an empty hits table readable: it says which lists were checked, so no hits and
+no lists are different findings.
 
 A geolocated file also carries a **locator map**, drawn from the offline basemap you
 imported and marked at the file's own coordinates, with the street, water and place

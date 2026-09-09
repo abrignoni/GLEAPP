@@ -102,7 +102,7 @@ def test_manifest_and_database_agree(case, tmp_path):
             count = db.execute(
                 f'SELECT COUNT(*) FROM "{artifact["tablename"]}"').fetchone()[0]
             assert count == artifact["record_count"], artifact["name"]
-        assert seen == 8, "the artifact set changed; update this test deliberately"
+        assert seen == 11, "the artifact set changed; update this test deliberately"
     finally:
         db.close()
 
@@ -282,7 +282,7 @@ def test_the_run_log_agrees_with_the_artifacts_it_describes(case, tmp_path):
         assert int(row.group(1).replace(",", "")) == artifact["record_count"], \
             artifact["name"]
         counted += 1
-    assert counted == 8
+    assert counted == 11
 
 
 def test_a_row_survives_its_bytes_being_unavailable(case, tmp_path, monkeypatch):
@@ -306,7 +306,15 @@ def test_a_row_survives_its_bytes_being_unavailable(case, tmp_path, monkeypatch)
     assert media_files["record_count"] == len(case.db.iter_files())
     db = sqlite3.connect(out / manifest["lava_db_name"])
     try:
-        assert db.execute("SELECT COUNT(*) FROM _lava_media_items").fetchone()[0] == 0
+        # no file's own bytes could be produced
+        assert db.execute(
+            "SELECT COUNT(*) FROM _lava_media_items WHERE id NOT LIKE 'frame-%'"
+        ).fetchone()[0] == 0
+        # but the frames already extracted from the videos are thumbnails this case
+        # holds, so they survive the evidence going away and are still shown
+        assert db.execute(
+            "SELECT COUNT(*) FROM _lava_media_items WHERE id LIKE 'frame-%'"
+        ).fetchone()[0] > 0
         errors = {r[0] for r in db.execute("SELECT error FROM media_files")}
         assert "source archive unavailable" in errors
     finally:
@@ -602,6 +610,151 @@ def test_coverage_is_read_from_the_archive_not_its_declared_bounds(basemap, monk
     assert staticmap.covers(rec, None, None) is False
     monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
     assert staticmap.covers(rec, 20.0, 10.0) is False
+
+
+# ---- key frames, Project VIC records, and the lists that were checked -------
+
+def _vic_case(tmp_path):
+    """A case imported from a Project VIC file whose records carry different flags:
+    all five, three of five, and none."""
+    import hashlib
+
+    root = tmp_path / "vicsrc"
+    (root / "media").mkdir(parents=True)
+    specs = [
+        {"VictimIdentified": True, "OffenderIdentified": False, "IsDistributed": True,
+         "IsSuspected": False, "SelfGenerated": False, "Category": 1},
+        {"VictimIdentified": False, "OffenderIdentified": True, "IsDistributed": False,
+         "Category": 2},
+        {"Category": 5},
+    ]
+    entries = []
+    for i, spec in enumerate(specs):
+        path = root / "media" / f"vic_{i}.jpg"
+        Image.new("RGB", (80, 60), (30 + i * 60, 90, 160)).save(path, "JPEG")
+        entries.append({
+            "MediaID": 9000 + i, "Category": spec["Category"],
+            "MD5": hashlib.md5(path.read_bytes()).hexdigest(),
+            "MimeType": "image/jpeg", "RelativeFilePath": f"media/{path.name}",
+            "MediaFiles": [{"FileName": f"IMG_{i:04d}.JPG",
+                            "FilePath": f"/DCIM/100APPLE/IMG_{i:04d}.JPG"}],
+            **{k: v for k, v in spec.items() if k != "Category"}})
+    (root / "case.json").write_text(json.dumps({
+        "@odata.context":
+            "http://x/ProjectVic/DataModels/2.0.xml/US/$metadata#Cases",
+        "value": [{"CaseID": "vic-1", "CaseNumber": "VIC-001",
+                   "SourceApplicationName": "test", "Media": entries}]}))
+    from gleapp.case import parse_source_spec
+
+    c = open_case(tmp_path / "viccase", create=True, examiner="tester")
+    sources, _ = parse_source_spec(root / "case.json")
+    ingest_sources(c, sources)
+    process(c, workers=1, keyframes=1, screen=False)
+    return c
+
+
+def test_video_key_frames_are_in_the_report(case, tmp_path):
+    """A video row in a table is a play button and nothing else without them."""
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    manifest = _manifest(out)
+    artifact = next(a for a in _artifacts(manifest)
+                    if a["tablename"] == "video_key_frames")
+    assert artifact["record_count"] > 0, "the sample case has videos but no frames"
+    assert {c["name"]: c["type"] for c in artifact["object_columns"]}["frame"] == "media"
+
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        rows = db.execute(
+            "SELECT offset, offset_seconds, frame FROM video_key_frames "
+            "ORDER BY offset_seconds").fetchall()
+        assert all(r[2] for r in rows), "a frame row carries no image"
+        # the offset is a real number, so LAVA sorts it as one, and is also
+        # rendered for reading
+        assert all(isinstance(r[1], float) for r in rows), rows[0]
+        assert rows[0][0].count(":") == 2, rows[0][0]
+        item = db.execute(
+            "SELECT i.id, i.extraction_path FROM _lava_media_references r "
+            "JOIN _lava_media_items i ON i.id = r.media_item_id WHERE r.id = ?",
+            (rows[0][2],)).fetchone()
+        assert item[0].startswith("frame-"), "a frame shares an id with a real file"
+        assert (out / "_HTML" / item[1]).is_file() and (out / item[1]).is_file()
+    finally:
+        db.close()
+
+
+def test_key_frames_can_be_turned_off(case, tmp_path):
+    out = tmp_path / "lava"
+    lava.export_lava(case, out, keyframes=False)
+    db = sqlite3.connect(out / _manifest(out)["lava_db_name"])
+    try:
+        assert db.execute("SELECT COUNT(*) FROM video_key_frames").fetchone()[0] == 0
+        assert db.execute(
+            "SELECT COUNT(*) FROM _lava_media_items WHERE id LIKE 'frame-%'"
+        ).fetchone()[0] == 0
+    finally:
+        db.close()
+
+
+def test_project_vic_flags_say_what_they_can_and_cannot_distinguish(tmp_path):
+    """Three of the five flags cannot tell false from absent, and the notes say so.
+
+    ``projectvic.py`` coerces VictimIdentified, OffenderIdentified and IsDistributed
+    with ``bool()``, so a record carrying none of them stores all three as false.
+    IsSuspected and SelfGenerated are kept as the record had them.
+    """
+    c = _vic_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    manifest = _manifest(out)
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        rows = {r[0]: r[1:] for r in db.execute(
+            "SELECT media_id, victim_identified, offender_identified, distributed, "
+            "suspected, selfgenerated, device_path FROM project_vic_records")}
+        assert len(rows) == 3
+        assert rows["9000"][:5] == ("yes", "no", "yes", "no", "no")
+        # the record that carried only three: the other two are blank, not false
+        assert rows["9001"][:5] == ("no", "yes", "no", "", "")
+        # the record that carried none: three read no anyway, two are blank
+        assert rows["9002"][:5] == ("no", "no", "no", "", "")
+        assert rows["9002"][5] == "/DCIM/100APPLE/IMG_0002.JPG"
+    finally:
+        db.close()
+    notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
+                 if a["tablename"] == "project_vic_records")["notes"]
+    assert "coerces an absent value to false" in notes
+    assert "Suspected and Self-Generated are kept as the record had them" in notes
+
+
+def test_the_lists_that_were_checked_are_named(case, tmp_path):
+    """Hits alone cannot be read: zero of them means nothing unless a reader can see
+    which lists were in play."""
+    path = tmp_path / "known list.csv"
+    md5s = [r["md5"] for r in case.db.iter_files() if r["md5"]][:2]
+    path.write_text("md5\n" + "\n".join(md5s) + "\n")
+    from gleapp import hashdb
+    hashdb.import_hashset(case.db, path, name="Op-Test known", kind="known")
+    process(case, workers=1, keyframes=1, screen=False, force=True)
+
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    db = sqlite3.connect(out / _manifest(out)["lava_db_name"])
+    try:
+        row = db.execute(
+            "SELECT hash_set, kind, source, scope, entries, files_matched "
+            "FROM known_hash_sets WHERE hash_set = 'Op-Test known'").fetchone()
+        assert row, "the imported list is not in the report"
+        assert row[1] == "known" and row[3] == "this case"
+        assert row[4] == 2 and row[5] == 2
+        # the list's own name, never where it sat on this machine
+        assert row[2] == "known list.csv", row[2]
+        assert str(tmp_path) not in (row[2] or "")
+    finally:
+        db.close()
 
 
 def test_identifiers_match_lavas_own_rule():

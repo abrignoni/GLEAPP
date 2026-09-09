@@ -371,7 +371,8 @@ def cmd_report(args: argparse.Namespace) -> int:
                 _p(f"  media {done}/{total}")
         made.append(lava.export_lava(case, out_dir / f"lava{tag}", where,
                                      thumbs=args.lava_thumbs, link=args.link,
-                                     maps=not args.no_maps, progress=prog))
+                                     maps=not args.no_maps,
+                                     keyframes=not args.no_keyframes, progress=prog))
     for m in made:
         _p(f"  wrote {m}")
     case.close()
@@ -523,6 +524,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--lava-thumbs", action="store_true",
                    help="LAVA report: put GLEAPP's thumbnail in the Media column "
                         "rather than the file, for a report meant to travel")
+    s.add_argument("--no-keyframes", action="store_true",
+                   help="LAVA report: skip the frames extracted from each video")
     s.add_argument("--link", action="store_true",
                    help="LAVA report: hardlink the media instead of copying it. Only "
                         "for a report staying on the volume it was built on: the "
