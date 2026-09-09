@@ -623,9 +623,10 @@ def _vic_case(tmp_path):
     (root / "media").mkdir(parents=True)
     specs = [
         {"VictimIdentified": True, "OffenderIdentified": False, "IsDistributed": True,
-         "IsSuspected": False, "SelfGenerated": False, "Category": 1},
+         "IsSuspected": False, "SelfGenerated": False, "Category": 1,
+         "Series": "Operation Bluebell", "Tags": ["indoor", "known set"]},
         {"VictimIdentified": False, "OffenderIdentified": True, "IsDistributed": False,
-         "Category": 2},
+         "Category": 2, "Series": {"Name": "Operation Cascade"}},
         {"Category": 5},
     ]
     entries = []
@@ -728,6 +729,31 @@ def test_project_vic_flags_say_what_they_can_and_cannot_distinguish(tmp_path):
                  if a["tablename"] == "project_vic_records")["notes"]
     assert "coerces an absent value to false" in notes
     assert "Suspected and Self-Generated are kept as the record had them" in notes
+
+
+def test_the_series_and_tags_a_vic_record_carried_are_kept(tmp_path):
+    """Both were parsed at import and dropped before this.
+
+    They are the importing organisation's record, so they are reported apart from
+    the examiner's own Tags rather than merged into them. Series can arrive as a
+    string or as an object naming one.
+    """
+    c = _vic_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    db = sqlite3.connect(out / _manifest(out)["lava_db_name"])
+    try:
+        rows = {r[0]: r[1:] for r in db.execute(
+            "SELECT media_id, series, vic_tags FROM project_vic_records")}
+        assert rows["9000"] == ("Operation Bluebell", "indoor\nknown set")
+        assert rows["9001"][0] == "Operation Cascade", "a Series object was not named"
+        assert rows["9001"][1] == ""
+        assert rows["9002"] == ("", "")
+    finally:
+        db.close()
 
 
 def test_the_lists_that_were_checked_are_named(case, tmp_path):

@@ -727,6 +727,7 @@ def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) ->
     name = "Project VIC Records"
     vic = [r for r in rows if r.get("media_id") or r.get("vic_flags")]
     headers = ["Media ID", "File Name", "Device Path", ("Media", "media"), "Category",
+               "Series", "VIC Tags",
                "Victim Identified", "Offender Identified", "Distributed", "Suspected",
                "Self-Generated", "MD5", "SHA1", "MIME", ("Size", "integer")]
     data = []
@@ -743,6 +744,7 @@ def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) ->
             row.get("orig_path") or "",
             writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
             row.get("category_label") or "",
+            row.get("vic_series") or "", _vic_tags(row.get("vic_tags")),
             _flag(flags.get("victim_identified")),
             _flag(flags.get("offender_identified")),
             _flag(flags.get("is_distributed")),
@@ -767,8 +769,11 @@ def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) ->
             "false; measured on a record carrying none of the three, all three were "
             "stored as false. Suspected and Self-Generated are kept as the record had "
             "them, so a blank in those two means the field was absent and 'no' means it "
-            "was present and false. A case built from folders or an extraction rather "
-            "than a VIC file has no rows here."))
+            "was present and false. Series is the known series the VIC record placed "
+            "the entry in, and VIC Tags are the labels that record carried; both are "
+            "the importing organisation's, and are kept apart from the Tags column "
+            "elsewhere in this report, which is the examiner's own. A case built from "
+            "folders or an extraction rather than a VIC file has no rows here."))
 
 
 def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> None:
@@ -831,6 +836,21 @@ def _source_name(source) -> str:
     if not text:
         return ""
     return os.path.basename(text.replace("\\", "/").rstrip("/")) or text
+
+
+def _vic_tags(raw) -> str:
+    """The VIC entry's own tags, one per line. Stored as JSON, shape not guaranteed."""
+    if not raw:
+        return ""
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return str(raw)
+    if isinstance(value, list):
+        return "\n".join(str(v) for v in value if v not in (None, ""))
+    if isinstance(value, dict):
+        return "\n".join(f"{k}: {v}" for k, v in value.items())
+    return str(value)
 
 
 def _flag(value) -> str:

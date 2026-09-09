@@ -225,8 +225,8 @@ media folder sitting next to the JSON. Missing files are registered with an
 error flag so the counts still line up for export.
 
 Each file carries its VIC MD5 (processing trusts it, skips re-hashing), MediaID,
-original filename and device path, MIME type, and victim/offender/distributed
-flags. Existing `Category` values are imported; GLEAPP category codes map 1:1 to
+original filename and device path, MIME type, victim/offender/distributed flags,
+and the Series and Tags the record carried, kept apart from the examiner's own tags. Existing `Category` values are imported; GLEAPP category codes map 1:1 to
 VIC codes (0 = uncategorized = `null`) — the codes 1–5 GLEAPP seeds *are* the
 Project VIC scheme, so an imported category lands on the matching locked preset.
 
@@ -248,7 +248,8 @@ every media file, the ones an examiner categorized, the ones carrying coordinate
 a location overview, the frames extracted from each video, all three grouping tiers
 (exact-duplicate stacks, visually similar groups and the looser clusters),
 known-hash-set hits, the lists those hits were checked against, Project VIC records
-with the flags they carried, what the category names mean, and the case audit log.
+with the flags, series and tags they carried, what the category names mean, and the
+case audit log.
 Pictures and video show inline in LAVA and play from the report.
 
 The video frames GLEAPP already extracts go in with their time offsets, so a clip can
