@@ -28,6 +28,21 @@ from typing import Iterator
 
 VIC_SOURCE_NAME = "Project VIC"
 
+
+def _as_text(value) -> str | None:
+    """A VIC field that may arrive as a string, a number or a nested object."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, dict):
+        for key in ("Name", "name", "Title", "title"):
+            if value.get(key):
+                return str(value[key])
+    return json.dumps(value)
+
 _DOTNET_DATE = re.compile(r"/Date\((-?\d+)(?:[+-]\d{4})?\)/")
 _TS_FORMATS = (
     "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z",
@@ -218,6 +233,12 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
             orig_path=r.orig_path,
             mime=r.mime,
             vic_flags=json.dumps(r.flags),
+            # Series names a known series the entry belongs to and Tags are the VIC
+            # file's own labels. Both were read and then dropped. They are the
+            # importing organisation's record, so they are kept apart from the
+            # examiner's own tags rather than merged into them.
+            vic_series=_as_text(r.series),
+            vic_tags=json.dumps(r.tags) if r.tags else None,
         )
         if r.category:
             fields["category"] = r.category
@@ -277,7 +298,11 @@ def _ensure_category(db, code: int) -> None:
 
 # --------------------------------------------------------------------------
 def export_vic(case, dest: str | Path, *, only_categorized: bool = False) -> Path:
-    """Write a VIC file: the original with Category/Comments/Tags updated."""
+    """Write a VIC file: the original with Category and Comments updated.
+
+    Tags and Series are not written back. The original document is re-read and
+    copied, so whatever it carried for them survives untouched.
+    """
     src = case.db.get_meta("vic_source_json")
     if not src or not Path(src).exists():
         raise FileNotFoundError(

@@ -585,6 +585,32 @@ def test_reorder_sets_position(tmp_path):
         c.close()
 
 
+def test_a_case_without_the_vic_series_columns_gains_them(tmp_path):
+    """Series and Tags were parsed at import and dropped, so cases exist that have
+    no column to hold them. Opening one adds the columns and keeps its rows."""
+    from gleapp.db import SCHEMA_VERSION, CaseDB
+    p = tmp_path / "old" / "case.gleapp"
+    p.parent.mkdir(parents=True)
+    db = CaseDB(p)
+    db.upsert_file("/a/b.jpg", kind="image", md5="deadbeef")
+    db.conn.execute("ALTER TABLE files DROP COLUMN vic_series")
+    db.conn.execute("ALTER TABLE files DROP COLUMN vic_tags")
+    db.conn.execute("UPDATE meta SET value='10' WHERE key='schema_version'")
+    db.commit()
+    db.close()
+
+    db2 = CaseDB(p)                                # reopen -> migration runs
+    try:
+        columns = {r["name"] for r in db2.conn.execute("PRAGMA table_info(files)")}
+        assert {"vic_series", "vic_tags"} <= columns
+        assert db2.get_meta("schema_version") == str(SCHEMA_VERSION)
+        assert db2.conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+        assert db2.conn.execute(
+            "SELECT md5 FROM files").fetchone()["md5"] == "deadbeef"
+    finally:
+        db2.close()
+
+
 def test_category_migration_seeds_used_codes(tmp_path, evidence):
     """A v1-style case with a custom category code on files gets a placeholder
     row, and the locked VIC presets are back-filled on open."""
