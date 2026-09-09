@@ -154,9 +154,27 @@ different question and answers it worse for files that are still there:
 | inside another live file | | **90.2%**, icons in DLLs, browser caches |
 | in space no file claims | | **2.1%**, what carving is uniquely for |
 
-So a walk is the primary read and a carve reaches the deleted material a walk cannot. The
-2.1% is the case for scoping a future carve to unallocated space rather than the whole
-disk, which needs free-space reporting the reader does not have yet.
+So a walk is the primary read and a carve reaches the deleted material a walk cannot.
+
+**A carve can be asked for later, and can be scoped.** `gleapp source carve <name>` carves
+a source already ingested, so the choice is not stuck at ingest time; the pipeline runs over
+just the new rows because `process()` takes a where clause. `--unallocated-only` reads only
+the space a volume reports free, which on the same acquisition is 149.0 GiB instead of
+238.5, 8.3 minutes instead of about 40, and 7,233 hits instead of 384,386.
+
+**A volume that cannot report its free space drops the scope for the WHOLE image.** Reading
+part of a disk while reporting the carve finished is worse than reading all of it, so
+`_unclaimed_space()` returns None the moment any volume cannot answer, and None means scan
+everything. Only NTFS answers so far, through `$Bitmap`, and the copy vendored here does
+not have that yet, so today the fallback is what always happens and a Mac image still gets
+a whole-disk carve. When the
+scope is used the case meta records the runs and bytes scanned, so a report can say what was
+covered rather than implying the whole disk was.
+
+Testing that fallback needs **two** volumes, one that answers and one that does not. With a
+single volume, "skip the quiet one" and "drop the scope" both produce the same empty answer,
+and a control against a deliberately broken build passed until the fixture grew a second
+volume.
 
 **A walked row records a node, not an offset**, because a walked file can be fragmented
 across extents, can be compressed, and on NTFS can be resident with its bytes inside its own
