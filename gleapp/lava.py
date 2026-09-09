@@ -44,8 +44,8 @@ from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
 
-from . import (__version__, archive, basemaps, categories, hashstore, staticmap,
-               timeutil)
+from . import (__version__, archive, basemaps, categories, hashstore, stash,
+               staticmap, timeutil)
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
@@ -605,17 +605,19 @@ def _artifact_categorized(writer: "_Writer", rows: list[dict],
     ] for row in marked]
     writer.add_artifact(
         "GLEAPP Media", name, headers, data, icon="tag", source_path="case.gleapp",
-        description="Files an examiner assigned a category to in this case.",
+        description="Files carrying a category in this case, whoever set it.",
         notes=(
             "One row per file whose category is not the default. Reviewed By and "
             "Examiner Notes are the examiner's own record, entered during review, "
             "and are not properties of the file. Category is usually theirs too, but "
             "a file can reach this artifact without an examiner having chosen "
-            "anything: an uncategorised file whose hash matched an imported list is "
-            "categorised automatically, to the category a 'known' list asserts or to "
-            "Non-pertinent for a 'known-good' hit. The Known Hash Set Hits artifact "
-            "lists every file that happened to. Codes 0 to 5 are the "
-            "Project VIC 2.0 (US) presets every GLEAPP case is seeded with; a case "
+            "anything: an uncategorised file that matched a known-hash source is "
+            "categorised automatically, to the category a 'known' source asserts or to "
+            "Non-pertinent for a 'known-good' hit, and that match may have been on a "
+            "hash or on perceptual similarity. The Known Hash Set Hits artifact "
+            "lists every file that matched a source, which is all of those and "
+            "also files already categorised when the match was made. Codes 0 to 5 "
+            "are the Project VIC 2.0 (US) presets every GLEAPP case is seeded with; a case "
             "may add its own above those. Reviewed Timestamp is when the row was "
             "last marked, not when the file was made. A file with no category is in "
             "the Media Files artifact and absent here, which records that it was not "
@@ -718,9 +720,11 @@ def _artifact_keyframes(writer: "_Writer", rows: list[dict],
             "The count per video is set when the case is processed. Perceptual "
             "Hash is that frame's own hash, which is what lets a still found "
             "elsewhere be matched against the video it came from; it is an assessment "
-            "by this tool and not byte equality. A video with no rows here either had "
-            "no frames extracted or could not be decoded, and the Media Files "
-            "artifact carries the error where there was one."))
+            "by this tool and not byte equality. A video with no rows here had no "
+            "frames extracted, could not be decoded, or is in a report written with "
+            "them turned off; where the case recorded a failure the Media Files "
+            "artifact carries it, and where the report was written without frames no "
+            "video has rows at all."))
 
 
 def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) -> None:
@@ -791,6 +795,9 @@ def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> None
     # the shared store is imported once and used by every case, so a hit can name a
     # set this case never imported itself
     matched = {r.get("hashset_hit") for r in rows if r.get("hashset_hit")}
+    # Every file is checked against the shared store as well as the case's own
+    # lists, so a set that matched nothing is still something that was checked and
+    # is listed. Leaving it out made an empty table look like an unchecked case.
     try:
         shared = hashstore.sets()
     except Exception:  # pylint: disable=broad-exception-caught
@@ -798,31 +805,47 @@ def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> None
     for record in shared:
         if record.get("name") in seen:
             continue
-        hits = sum(1 for r in rows if r.get("hashset_hit") == record.get("name"))
-        if not hits and record.get("name") not in matched:
-            continue
         seen.add(record.get("name"))
         data.append([record.get("name") or "", record.get("kind") or "",
                      _source_name(record.get("source")), "shared store",
-                     record.get("count"), hits, _epoch(record.get("imported_at"))])
-    for orphan in sorted(matched - seen):
+                     record.get("count"),
+                     sum(1 for r in rows if r.get("hashset_hit") == record.get("name")),
+                     _epoch(record.get("imported_at"))])
+    # The examiner's own stash is a third source, checked on MD5 before the shared
+    # store, and a hit from it carries its name rather than a list's.
+    if stash.STASH_NAME not in seen:
+        try:
+            total = stash.summary().get("total")
+        except Exception:  # pylint: disable=broad-exception-caught
+            total = None
+        stash_hits = sum(1 for r in rows if r.get("hashset_hit") == stash.STASH_NAME)
+        if total or stash_hits:
+            seen.add(stash.STASH_NAME)
+            data.append([stash.STASH_NAME, "known", "", "examiner's local stash",
+                         total, stash_hits, None])
+    for orphan in sorted(n for n in matched - seen if n):
         data.append([orphan, "", "", "no longer listed", None,
                      sum(1 for r in rows if r.get("hashset_hit") == orphan), None])
     writer.add_artifact(
         "GLEAPP Hash Sets", name, headers, data, icon="list",
         source_path="case.gleapp",
-        description="The known-hash lists this case's files were checked against.",
+        description="The known-hash sources this case's files were checked against.",
         notes=(
             "One row per list, so a reader can tell what was checked from what was "
             "found: the Known Hash Set Hits artifact being empty means nothing unless "
-            "this artifact says which lists were in play, and a case with no rows here "
-            "was checked against nothing. Entries is the number of hashes the list "
-            "held when it was imported and Files Matched how many files in this report "
-            "carry its name. Scope says whether the list was imported into this case "
-            "or into the shared store every case on the machine uses. A row reading "
-            "'no longer listed' is a name files still carry from a list that has since "
-            "been removed, which records that the check happened and that the list is "
-            "no longer there to re-run it."))
+            "this artifact says which lists were in play. Entries is the number of "
+            "hashes the list held when it was imported and Files Matched how many "
+            "files in this report carry its name; a list that matched nothing is "
+            "still listed, because what was checked is the point. Scope says where "
+            "the list came from. Every file is checked against three sources in turn: "
+            "the lists imported into this case, then the examiner's local stash on "
+            "MD5, then the shared store every case on this machine uses. The stash is "
+            "listed with the number of hashes it held when this report was written "
+            "rather than at the time of the check. A row reading 'no longer listed' "
+            "is a name files still carry from a list that has since been removed, "
+            "which records that the check happened and that the list is no longer "
+            "there to re-run it. No rows at all means none of the three sources held "
+            "anything, not that no check was made."))
 
 
 def _source_name(source) -> str:
@@ -912,8 +935,10 @@ def _artifact_overview(writer: "_Writer", covered: list[tuple], tally: dict[str,
         source_path="case.gleapp",
         description="Every geolocated file this report could map, on one map.",
         notes=(
-            "One row, holding the same coordinates the Media Locations artifact "
-            "reports, framed together on a single image. North, South, East and West "
+            "One row, holding the coordinates from the Media Locations artifact "
+            "that could be drawn, framed together on a single image. It is a subset "
+            "of them whenever any fell outside the basemap or past the cap, which is "
+            "what Files Not Mapped counts. North, South, East and West "
             "are the extent of the mapped points only, so they bound what the map "
             "shows and not the case: Files Not Mapped counts the geolocated files "
             "left off, which the run log breaks down by reason. A file with no "
@@ -954,11 +979,11 @@ def _artifact_duplicates(writer: "_Writer", rows: list[dict],
             "every member of a stack is the same bytes. The Media column shows one "
             "member; the Paths column lists every path the bytes were found at, one "
             "per line. A row is only written for a stack with more than one member. "
-            "Copies of one photograph that Android exposes under several storage "
-            "views are folded into a single file row before this runs, so they are "
-            "not counted here as duplication; a folder source is registered as it "
-            "was found, so one photograph ingested from two folders is a stack of "
-            "two." + SCOPE_NOTE))
+            "Where the case ingested an extraction archive, copies of one "
+            "photograph that Android exposes under several storage views are folded "
+            "into a single file row before this runs, so they are not counted here as "
+            "duplication. A folder source is registered as it was found, so one "
+            "photograph ingested from two folders is a stack of two." + SCOPE_NOTE))
 
 
 def _artifact_similar(writer: "_Writer", rows: list[dict],
@@ -988,11 +1013,13 @@ def _artifact_similar(writer: "_Writer", rows: list[dict],
         source_path="case.gleapp",
         description="Groups GLEAPP assessed as the same picture to the eye.",
         notes=(
-            "Two files are grouped when their pHash and their dHash are both "
-            "within a set distance, so membership is an assessment made by this tool "
-            "and not byte equality: members may differ in resolution, compression, "
-            "crop or edits, and the Distinct MD5s column says how many different "
-            "files a group holds. Near-featureless images such as gradients and flat "
+            "Two files are grouped when their pHashes are within a set distance "
+            "and, where both files have a dHash, their dHashes are within a slightly "
+            "wider one; a file with no dHash is grouped on its pHash alone. "
+            "Membership is therefore an assessment made by this tool and not byte "
+            "equality: members may differ in resolution, compression, crop or edits, "
+            "and the Distinct MD5s column says how many different files a group "
+            "holds. Near-featureless images such as gradients and flat "
             "screenshots are excluded from the comparison outright, so their absence "
             "from every group is a property of this method and not evidence that no "
             "similar file exists. Two files being grouped is "
@@ -1059,14 +1086,23 @@ def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
     writer.add_artifact(
         "GLEAPP Hash Sets", name, headers, data, icon="check-square",
         source_path="case.gleapp",
-        description="Files whose hash matched a known-hash set imported into the case.",
+        description="Files that matched a known-hash source, by hash or by "
+                    "perceptual similarity.",
         notes=(
-            "Hash Set names the imported list the file's hash was found in and "
-            "Asserted Category is the category that list carries for it, which is the "
-            "list's claim and not this tool's finding. Set Kind is how the list was "
-            "imported: 'known' marks files an examiner wants surfaced and 'known-good' "
-            "files a list asserts are benign. A file with no hit is absent from this "
-            "artifact, which records only that no imported list held its hash."))
+            "Hash Set names the source the file matched and Asserted Category is "
+            "the category that source carries for it, which is its claim and not this "
+            "tool's finding. The source may be a list imported into this case, the "
+            "shared store, or the examiner's local stash; the Known Hash Sets artifact "
+            "says which, and lists everything that was checked. Set Kind is how it was "
+            "imported: 'known' marks files an examiner wants surfaced, 'known-good' "
+            "files a source asserts are benign, and 'other' neither. A match is not "
+            "always an equal hash: a file is compared on SHA-256, SHA-1 and MD5 and "
+            "then, if none matched, on perceptual hash within a set distance, and the "
+            "first hit wins. The case records the source, category and kind but not "
+            "which of those found it, so this artifact cannot say whether a row "
+            "matched byte-for-byte or only looked alike. A file with no hit is absent "
+            "from this artifact, which records only that none of the sources checked "
+            "held a matching entry."))
 
 
 def _artifact_categories(writer: "_Writer", case: Case, rows: list[dict]) -> None:
@@ -1135,7 +1171,9 @@ def _media_note(thumbs: bool) -> str:
     if thumbs:
         return ("The Media column shows the thumbnail GLEAPP generated for the file, "
                 "at most 320 pixels on its long side, not the file itself")
-    return ("The Media column shows the file itself, copied into this report")
+    return ("The Media column shows the file itself, placed in this report as a "
+            "copy, or as a hard link to the file the case read where the export was "
+            "asked for one")
 
 
 SCOPE_NOTE = (
@@ -1168,10 +1206,10 @@ _MEDIA_NOTES = (
     "processing trusts rather than recomputing. Tags, Reviewed By and Examiner Notes "
     "are the examiner's own record and are not properties of the file. Category is "
     "usually theirs as well, with one exception this row records in its own columns: "
-    "an uncategorised file whose hash matched an imported list is categorised "
-    "without an examiner, to the category a 'known' list asserts for it or to "
-    "Non-pertinent for a 'known-good' hit, so a row carrying a Known Hash Set value "
-    "may never have been looked at. Modified, Created and Accessed do not have one "
+    "an uncategorised file that matched a known-hash source is categorised without "
+    "an examiner, to the category a 'known' source asserts for it or to Non-pertinent "
+    "for a 'known-good' hit, so a row carrying a Known Hash Set value may never have "
+    "been looked at. Modified, Created and Accessed do not have one "
     "provenance, and the Device Info page states which applies to each source: for a "
     "folder they are the filesystem times of the copy this case read; for an "
     "extraction archive they are the times the archive recorded for that member, "

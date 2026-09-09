@@ -386,8 +386,11 @@ def test_the_notes_do_not_overstate_who_categorised_a_file(case, tmp_path):
             _manifest(out)["meta"]["modules"][0]["artifacts"]}
     for table in ("media_files", "categorized_media"):
         notes = meta[table]["notes"]
-        assert "hash matched an imported list" in notes, table
+        assert "matched a known-hash source is categorised" in notes, table
         assert "Non-pertinent" in notes, table
+        # the source is not always a list imported into this case, and the match
+        # is not always on a hash
+        assert "hash matched an imported list" not in notes, table
         # the claim this replaced said Category was always the examiner's
         assert "Category, Tags, Reviewed By and Examiner Notes are the examiner" \
             not in notes, table
@@ -892,6 +895,97 @@ def test_a_filtered_export_does_not_report_a_group_of_one(tmp_path, evidence):
         notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
                      if a["tablename"] == table)["notes"]
         assert "not a count of the case" in notes, table
+
+
+# ---- claims the notes make about matching ----------------------------------
+# `hashdb.match_file` checks the case's own lists, then the examiner's stash on
+# MD5, then the shared store, and finally compares perceptual hashes. Only the
+# source, category and kind are stored, never which of those found the file, and
+# these pin the prose to that.
+
+def test_a_source_that_matched_nothing_is_still_listed(case, tmp_path):
+    """Every file is checked against the shared store, so a set there that matched
+    nothing is still something that was checked.
+
+    Leaving it out made an empty table read as an unchecked case, which the notes
+    then said outright.
+    """
+    from gleapp import hashstore
+
+    unrelated = tmp_path / "nsrl-ish.csv"
+    unrelated.write_text("md5\n" + "\n".join(f"{i:032x}" for i in range(5)) + "\n")
+    hashstore.import_path(unrelated, name="Reference set", kind="known-good")
+
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    manifest = _manifest(out)
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        row = db.execute(
+            "SELECT scope, entries, files_matched FROM known_hash_sets "
+            "WHERE hash_set = 'Reference set'").fetchone()
+        assert row, "a shared-store set that matched nothing was left out"
+        assert row[0] == "shared store"
+        assert row[2] == 0, row
+    finally:
+        db.close()
+    notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
+                 if a["tablename"] == "known_hash_sets")["notes"]
+    assert "No rows at all means none of the three sources held anything" in notes
+    # the claim this replaced was false: a case is always checked against the
+    # shared store and the stash whether or not either holds anything
+    assert "was checked against nothing" not in notes
+
+
+def test_the_hits_notes_do_not_promise_an_equal_hash(case, tmp_path):
+    """A hit can come from the perceptual pass, and the case does not record which.
+
+    ``match_file`` falls through to comparing perceptual hashes within a distance,
+    so 'whose hash matched' would tell a reader a row is byte-identical to a listed
+    file when it may only look like one.
+    """
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    manifest = _manifest(out)
+    artifact = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
+                    if a["tablename"] == "known_hash_set_hits")
+    assert "perceptual" in artifact["description"].lower()
+    assert "A match is not always an equal hash" in artifact["notes"]
+    assert "cannot say whether a row matched byte-for-byte" in artifact["notes"]
+    assert "the examiner's local stash" in artifact["notes"]
+    assert "'other' neither" in artifact["notes"]
+    assert "no imported list held its hash" not in artifact["notes"]
+
+
+def test_no_description_claims_more_than_its_own_notes_concede(case, tmp_path):
+    """A description is read alone, so it must not out-claim the notes beside it.
+
+    Categorized Media said an examiner assigned the category while its own notes
+    conceded that a hash match assigns it with nobody looking.
+    """
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    for artifact in _manifest(out)["meta"]["modules"][0]["artifacts"]:
+        description, notes = artifact["description"], artifact["notes"]
+        assert description.count(".") <= 2, description
+        if "without an examiner" in notes or "whoever set it" in description:
+            assert "an examiner assigned" not in description, artifact["name"]
+    categorized = next(a for a in _manifest(out)["meta"]["modules"][0]["artifacts"]
+                       if a["tablename"] == "categorized_media")
+    assert categorized["description"] == (
+        "Files carrying a category in this case, whoever set it.")
+
+
+def test_the_similarity_notes_match_what_the_comparison_does(case, tmp_path):
+    """dHash is optional and its distance is wider, so 'both within a set distance'
+    described a rule the code does not apply."""
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    notes = next(a for a in _manifest(out)["meta"]["modules"][0]["artifacts"]
+                 if a["tablename"] == "visually_similar_groups")["notes"]
+    assert "where both files have a dHash" in notes
+    assert "grouped on its pHash alone" in notes
+    assert "their pHash and their dHash are both within a set distance" not in notes
 
 
 def test_identifiers_match_lavas_own_rule():
