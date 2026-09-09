@@ -95,6 +95,21 @@ def main():
             print('Only root launchers changed; nothing to lint.')
             return 0
 
+    # Vendored files are copies, kept byte-identical to what upstream published and
+    # checked against a recorded hash by the suite. Their style is not this repo's to
+    # change: editing one to satisfy a linter is the edit the vendoring convention
+    # exists to prevent, and it would be reverted by the next re-vendor anyway. The
+    # __init__.py of the vendor package is ours, so it stays in the set.
+    vendored = sorted(p for p in paths
+                      if 'vendor' in p.split(os.sep)
+                      and os.path.basename(p) != '__init__.py')
+    if vendored:
+        print('Not linting vendored copies: ' + ', '.join(vendored) + '\n')
+        paths = [p for p in paths if p not in vendored]
+        if not paths:
+            print('Only vendored copies changed; nothing to lint.')
+            return 0
+
     print('Linting:\n' + '\n'.join(f'  {p}' for p in paths) + '\n')
     after = run_pylint('.', paths)
 

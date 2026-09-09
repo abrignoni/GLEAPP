@@ -12,7 +12,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from ewfwriter import write_ewf
+# ewfwriter.py sits beside this file. pytest puts that directory on the path, so the
+# import resolves at run time; whether pylint resolves it depends on the interpreter it
+# runs under, and on 3.14 it does not.
+from ewfwriter import write_ewf  # pylint: disable=import-error
 from gleapp import archive
 from gleapp.case import open_case, parse_source_spec
 from gleapp.pipeline import ingest_sources, process
