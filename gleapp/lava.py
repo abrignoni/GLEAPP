@@ -558,7 +558,8 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
         "MD5", "SHA1", "SHA256", "Perceptual Hash",
         ("Faces", "integer"), ("Skin Ratio", "real"),
         "Known Hash Set", "Known Hash Set Kind",
-        ("Duplicate Stack", "integer"), ("Visual Group", "integer"), "Error",
+        ("Duplicate Stack", "integer"), ("Visual Group", "integer"),
+        ("Similar Cluster", "integer"), "Triage", "Error",
     ]
     data = []
     for row in rows:
@@ -576,7 +577,8 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
             row.get("phash") or "",
             row.get("faces"), row.get("skin_ratio"),
             row.get("hashset_hit") or "", row.get("hashset_kind") or "",
-            row.get("stack_id"), row.get("vstack_id"),
+            row.get("stack_id"), row.get("vstack_id"), row.get("cluster_id"),
+            row.get("triage") or "",
             row.get("error") or unavailable.get(row["id"], ""),
         ])
     writer.add_artifact(
@@ -936,7 +938,7 @@ def _artifact_duplicates(writer: "_Writer", rows: list[dict],
             "views are folded into a single file row before this runs, so they are "
             "not counted here as duplication; a folder source is registered as it "
             "was found, so one photograph ingested from two folders is a stack of "
-            "two."))
+            "two." + SCOPE_NOTE))
 
 
 def _artifact_similar(writer: "_Writer", rows: list[dict],
@@ -976,7 +978,48 @@ def _artifact_similar(writer: "_Writer", rows: list[dict],
             "similar file exists. Two files being grouped is "
             "not evidence that one was made from the other, and the direction of any "
             "such relationship is not established here. A row is only written for a "
-            "group with more than one member."))
+            "group with more than one member." + SCOPE_NOTE))
+
+
+def _artifact_clusters(writer: "_Writer", rows: list[dict],
+                       media: dict[int, str]) -> None:
+    name = "Similar Clusters"
+    groups: dict[int, list[dict]] = {}
+    for row in rows:
+        if row.get("cluster_id"):
+            groups.setdefault(row["cluster_id"], []).append(row)
+    clusters = {k: v for k, v in groups.items() if len(v) > 1}
+    headers = [("Cluster", "integer"), ("Members", "integer"), ("Media", "media"),
+               "File Names", "Paths", "Perceptual Hashes",
+               ("Distinct MD5s", "integer"), ("Visual Groups Inside", "integer")]
+    data = []
+    for cluster_id, members in sorted(clusters.items()):
+        head = members[0]
+        data.append([
+            cluster_id, len(members),
+            writer.reference(media.get(head["id"]), name, head.get("disp_name") or ""),
+            "\n".join(m.get("disp_name") or "" for m in members),
+            "\n".join(m.get("disp_path") or "" for m in members),
+            "\n".join(m.get("phash") or "" for m in members),
+            len({m.get("md5") for m in members if m.get("md5")}),
+            len({m.get("vstack_id") for m in members if m.get("vstack_id")}),
+        ])
+    writer.add_artifact(
+        "GLEAPP Duplicates", name, headers, data, icon="grid",
+        source_path="case.gleapp",
+        description="The loosest of the three grouping tiers, for browsing what is "
+                    "roughly alike.",
+        notes=(
+            "Grouped by the same perceptual-hash comparison the Visually Similar "
+            "Groups artifact uses, at a wider distance, so a cluster contains those "
+            "groups rather than competing with them and Visual Groups Inside counts "
+            "how many it holds. It is the loosest tier of the three and so the most "
+            "likely to put unrelated files together: membership is an assessment made "
+            "by this tool, not byte equality, and two files being in one cluster is "
+            "not evidence of a relationship between them. Near-featureless images are "
+            "excluded from the comparison outright, so their absence from every "
+            "cluster is a property of the method. A row is only written for a cluster "
+            "with more than one member." + SCOPE_NOTE))
 
 
 def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
@@ -1004,6 +1047,37 @@ def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
             "imported: 'known' marks files an examiner wants surfaced and 'known-good' "
             "files a list asserts are benign. A file with no hit is absent from this "
             "artifact, which records only that no imported list held its hash."))
+
+
+def _artifact_categories(writer: "_Writer", case: Case, rows: list[dict]) -> None:
+    name = "Category Definitions"
+    counts: dict[int, int] = {}
+    for row in rows:
+        code = row.get("category") or 0
+        counts[code] = counts.get(code, 0) + 1
+    headers = [("Code", "integer"), "Category", "Origin", "Treated As Evidential",
+               "Shown In The Picker", ("Files In This Report", "integer")]
+    data = [[
+        record["code"], record["name"] or "",
+        "Project VIC preset" if record["locked"] else "added in this case",
+        "yes" if record["notable"] else "no",
+        "yes" if record["active"] else "no",
+        counts.get(record["code"], 0),
+    ] for record in case.db.list_categories()]
+    writer.add_artifact(
+        "GLEAPP Case", name, headers, data, icon="bookmark",
+        source_path="case.gleapp",
+        description="What the category names used elsewhere in this report mean.",
+        notes=(
+            "Every other artifact prints a category by name, and a name alone does not "
+            "say where it came from. Origin separates the locked Project VIC 2.0 (US) "
+            "presets, codes 0 to 5, which every GLEAPP case is seeded with and which "
+            "cannot be renamed or removed, from categories added in this case, which "
+            "are whatever the examiner chose to call them. Treated As Evidential is the "
+            "case's own flag for whether a category counts as pertinent; it is a "
+            "setting, not a finding. Files In This Report counts rows in this export, "
+            "so it follows any filter the export was run with and is not a count of the "
+            "case."))
 
 
 def _artifact_audit(writer: "_Writer", case: Case) -> None:
@@ -1043,6 +1117,13 @@ def _media_note(thumbs: bool) -> str:
                 "at most 320 pixels on its long side, not the file itself")
     return ("The Media column shows the file itself, copied into this report")
 
+
+SCOPE_NOTE = (
+    " A group is built from the rows in this report, so an export run with a filter "
+    "describes only what it holds: where the filter left some members out, the rest "
+    "are not reported as a group at all, and a count of groups here is not a count "
+    "of the case."
+)
 
 _MAP_NOTE = (
     "Map is a locator image this tool drew for the row, not something the evidence "
@@ -1085,7 +1166,12 @@ _MEDIA_NOTES = (
     "identifies anyone, and neither establishes what an image depicts. Where a case "
     "was processed with screening turned off, Faces is zero and Skin Ratio empty on "
     "every row, which records that nothing looked rather than that nothing was "
-    "found. Error carries what went wrong reading a file, where anything did."
+    "found. Duplicate Stack, Visual Group and Similar Cluster are the three "
+    "grouping tiers, from byte-identical through same-picture to loosely alike; each "
+    "holds the id of the group the file is in, so files sharing one are in the same "
+    "group, and the Duplicates artifacts describe the groups themselves. Triage is a "
+    "free-text bucket an examiner may set and is their own record. Error carries what "
+    "went wrong reading a file, where anything did."
 )
 
 
@@ -1320,7 +1406,9 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
     _artifact_overview(writer, covered, map_tally, flavor=map_flavor)
     _artifact_keyframes(writer, rows, video_frames)
     _artifact_vic(writer, rows, media)
+    _artifact_clusters(writer, rows, media)
     _artifact_hash_sets(writer, case, rows)
+    _artifact_categories(writer, case, rows)
     _artifact_duplicates(writer, rows, media)
     _artifact_similar(writer, rows, media)
     _artifact_hashset_hits(writer, rows, media)

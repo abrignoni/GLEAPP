@@ -102,7 +102,7 @@ def test_manifest_and_database_agree(case, tmp_path):
             count = db.execute(
                 f'SELECT COUNT(*) FROM "{artifact["tablename"]}"').fetchone()[0]
             assert count == artifact["record_count"], artifact["name"]
-        assert seen == 11, "the artifact set changed; update this test deliberately"
+        assert seen == 13, "the artifact set changed; update this test deliberately"
     finally:
         db.close()
 
@@ -282,7 +282,7 @@ def test_the_run_log_agrees_with_the_artifacts_it_describes(case, tmp_path):
         assert int(row.group(1).replace(",", "")) == artifact["record_count"], \
             artifact["name"]
         counted += 1
-    assert counted == 11
+    assert counted == 13
 
 
 def test_a_row_survives_its_bytes_being_unavailable(case, tmp_path, monkeypatch):
@@ -755,6 +755,117 @@ def test_the_lists_that_were_checked_are_named(case, tmp_path):
         assert str(tmp_path) not in (row[2] or "")
     finally:
         db.close()
+
+
+def test_the_category_names_used_everywhere_are_explained(case, tmp_path):
+    """A category name alone does not say whether a person invented it.
+
+    Codes 0 to 5 are locked Project VIC presets seeded into every case; anything
+    above is whatever this examiner chose to call it, and a reader of any other
+    artifact cannot tell the two apart from the name.
+    """
+    code = case.db.add_category("Vehicle of interest", notable=True)
+    marked = case.db.iter_files()[0]
+    case.db.update_file(marked["id"], category=code)
+    case.db.commit()
+
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    manifest = _manifest(out)
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        rows = {r[0]: r[1:] for r in db.execute(
+            "SELECT code, category, origin, treated_as_evidential, "
+            "files_in_this_report FROM category_definitions")}
+        assert rows[0][1] == "Project VIC preset"
+        assert rows[1][1] == "Project VIC preset"
+        assert rows[code][0] == "Vehicle of interest"
+        assert rows[code][1] == "added in this case", rows[code]
+        assert rows[code][2] == "yes"
+        assert rows[code][3] == 1
+        # and the count follows this report, so it agrees with the rows exported
+        total = db.execute("SELECT COUNT(*) FROM media_files").fetchone()[0]
+        assert sum(v[3] for v in rows.values()) == total
+    finally:
+        db.close()
+
+
+def test_the_loosest_grouping_tier_is_reported(tmp_path, evidence):
+    """The exact and visual tiers each have an artifact; the third one did not.
+
+    The near-duplicate pair in the sample evidence sits across two folders, so this
+    ingests the whole tree rather than the single folder the shared fixture uses.
+    """
+    c = open_case(tmp_path / "clustercase", create=True, examiner="tester")
+    ingest_sources(c, [Source(name="all", path=str(evidence))])
+    process(c, workers=1, keyframes=1, screen=False)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    manifest = _manifest(out)
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        rows = db.execute(
+            "SELECT cluster, members, visual_groups_inside FROM similar_clusters"
+        ).fetchall()
+        assert rows, "the sample case has a cluster but none was reported"
+        for _cluster, members, inside in rows:
+            assert members > 1, "a cluster of one was written"
+            assert inside >= 1, "a cluster holding no visual group"
+        # and the file rows carry the id, the way they do for the other two tiers
+        cols = {r[1] for r in db.execute("PRAGMA table_info(media_files)")}
+        assert {"duplicate_stack", "visual_group", "similar_cluster",
+                "triage"} <= cols
+        clustered = db.execute(
+            "SELECT COUNT(*) FROM media_files WHERE similar_cluster IS NOT NULL"
+        ).fetchone()[0]
+        assert clustered >= sum(r[1] for r in rows)
+    finally:
+        db.close()
+
+
+def test_a_filtered_export_does_not_report_a_group_of_one(tmp_path, evidence):
+    """A grouping artifact describes the rows in the report, not the case.
+
+    ``cluster_near`` never stores a cluster of one, so the guard against writing one
+    looks like dead code until an export is filtered. With one member of a group in
+    scope and the rest filtered away, reporting the survivor would invent a group of
+    one, so nothing is reported and the notes say a count here is not a count of the
+    case.
+    """
+    c = open_case(tmp_path / "filtcase", create=True, examiner="tester")
+    ingest_sources(c, [Source(name="all", path=str(evidence))])
+    process(c, workers=1, keyframes=1, screen=False)
+    try:
+        clustered = [r for r in c.db.iter_files() if r["cluster_id"]]
+        assert clustered, "the evidence no longer produces a cluster"
+        # exactly one member of a real group, everything else filtered away
+        lone = clustered[0]
+        siblings = [r for r in clustered if r["cluster_id"] == lone["cluster_id"]]
+        assert len(siblings) > 1, "the fixture cluster has only one member"
+        out = tmp_path / "lava"
+        lava.export_lava(c, out, where=f"id = {lone['id']}")
+    finally:
+        c.close()
+
+    manifest = _manifest(out)
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        assert db.execute("SELECT COUNT(*) FROM media_files").fetchone()[0] == 1
+        for table, column in (("exact_duplicate_stacks", "copies"),
+                              ("visually_similar_groups", "members"),
+                              ("similar_clusters", "members")):
+            counts = [r[0] for r in db.execute(f"SELECT {column} FROM {table}")]
+            assert counts == [], f"{table} reported a group of one: {counts}"
+    finally:
+        db.close()
+    for table in ("exact_duplicate_stacks", "visually_similar_groups",
+                  "similar_clusters"):
+        notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
+                     if a["tablename"] == table)["notes"]
+        assert "not a count of the case" in notes, table
 
 
 def test_identifiers_match_lavas_own_rule():
