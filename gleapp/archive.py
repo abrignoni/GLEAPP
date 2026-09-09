@@ -71,7 +71,7 @@ from pathlib import Path, PurePosixPath
 
 from . import storage_views
 from .ingest import IMAGE_EXTS, VIDEO_EXTS, _kind_from_magic
-from .vendor import ewfprobe, mediacarve
+from .vendor import ewfprobe, mediacarve, qnxprobe
 
 _SLUG = re.compile(r"[^A-Za-z0-9._-]+")
 _SHA256_LINE = re.compile(r"^\s*(?P<name>[^=]+?)\s*=\s*(?P<hex>[0-9A-Fa-f]{64})\s*$")
@@ -307,6 +307,9 @@ def source_record(case, name: str) -> dict | None:
         "media_size": num("media_size", int, 0),
         "media_hash": case.db.get_meta(f"{key}:media_hash") or "",
         "segments": num("segments", int, 0),
+        # the volumes a walked image was read from, so a later read can rebuild
+        # the walker for the one a given row came out of
+        "volumes": case.db.get_meta(f"{key}:volumes") or "",
     }
 
 
@@ -360,6 +363,41 @@ _EWF_READ: dict[str, threading.Lock] = {}
 _EWF_LOCK = threading.Lock()
 
 
+# One walker per volume per image. A walker holds a decoded object map, so it is
+# built once and kept: rebuilding it per file would walk the tree once per file.
+_WALKERS: dict[tuple[str, int], object] = {}
+
+
+def _volumes(image) -> list[tuple[int, int | None, str, str]]:
+    """[(base offset, size, filesystem, label)] for every volume in an image.
+
+    Built from qnxprobe's own partition parsers and its identify, because it has
+    no single call that answers this. A GPT is tried first, then an MBR, then the
+    whole image as one volume, which is what an acquisition of a single
+    partitionless volume looks like.
+    """
+    out: list[tuple[int, int | None, str, str]] = []
+    parts = qnxprobe.parse_gpt(image)
+    if parts:
+        regions = [(start * qnxprobe.SECTOR, (end - start + 1) * qnxprobe.SECTOR, name)
+                   for _idx, name, _guid, start, end in parts]
+    else:
+        mbr = qnxprobe.parse_mbr(image)
+        # parse_mbr yields (index, type byte, first sector, sector count)
+        regions = ([(start * qnxprobe.SECTOR, count * qnxprobe.SECTOR, "")
+                    for _i, _t, start, count in mbr] if mbr else [])
+    if not regions:
+        regions = [(0, None, "")]
+    for base, size, name in regions:
+        got = qnxprobe.identify_fs(image, base, size)
+        # identify_fs answers (name, details) and names a region it does not
+        # recognise None, which is truthy as a tuple. A region it cannot name is
+        # not a volume: taking it would hand walker_for a kind of None.
+        if got and got[0]:
+            out.append((base, size, got[0], name))
+    return out
+
+
 def _open_ewf(path: str):
     """The cached EwfImage for ``path`` and the lock that serialises reads of it."""
     with _EWF_LOCK:
@@ -379,6 +417,8 @@ def _drop_ewf(path: str) -> None:
     with _EWF_LOCK:
         img = _EWFS.pop(path, None)
         _EWF_READ.pop(path, None)
+        for key in [k for k in _WALKERS if k[0] == path]:
+            _WALKERS.pop(key, None)
     if img is not None:
         with contextlib.suppress(Exception):
             img.close()
@@ -502,6 +542,104 @@ class _ImageRange(io.RawIOBase):
         return self._left
 
 
+def _row_get(row, name: str):
+    """One field of a row, whether it arrived as a mapping or a sqlite3.Row."""
+    try:
+        return row[name]
+    except (KeyError, IndexError):
+        return None
+
+
+def _open_walker(path: str, base: int, fskind: str, size):
+    """The cached walker for one volume of ``path``.
+
+    A walked file is read through its walker rather than by seeking, because the
+    file can be fragmented across extents, can be compressed, and on NTFS can be
+    resident with its bytes inside the MFT record and no extent at all. None of
+    those is one offset, which is why a walked row records a node and not one.
+    """
+    img, lock = _open_ewf(path)
+    key = (path, int(base))
+    with _EWF_LOCK:
+        w = _WALKERS.get(key)
+        if w is None:
+            try:
+                w = qnxprobe.walker_for(fskind, img, int(base), size)
+            except Exception as exc:                 # pylint: disable=broad-except
+                raise ArchiveUnavailable(
+                    f"cannot read the {fskind} volume at offset {int(base):,} "
+                    f"in {path}: {exc}") from exc
+            _WALKERS[key] = w
+        return w, lock
+
+
+def _walk_reader(w, node: int, size: int):
+    """A minimal file-like over a walked file, so _write_stream can copy it."""
+
+    class _Reader:
+        def __init__(self) -> None:
+            self._it = w.read_file(node, size)
+            self._buf = b""
+
+        def read(self, n: int = -1) -> bytes:
+            while n < 0 or len(self._buf) < n:
+                try:
+                    self._buf += next(self._it)
+                except StopIteration:
+                    break
+            if n < 0:
+                out, self._buf = self._buf, b""
+                return out
+            out, self._buf = self._buf[:n], self._buf[n:]
+            return out
+
+    return _Reader()
+
+
+def _walk_head(w, node: int, size: int, want: int = 16) -> bytes:
+    """The first bytes of a walked file, for the content sniff."""
+    got = b""
+    for chunk in w.read_file(node, min(size, want) if size else want):
+        got += chunk
+        if len(got) >= want:
+            break
+    return got[:want]
+
+
+def _extract_walked_member(rec: dict, row, dest: Path) -> None:
+    """Write one walked file by asking its volume's walker for the bytes."""
+    path = rec["path"]
+    node, base = _row_get(row, "member_node"), _row_get(row, "volume_base")
+    if isinstance(node, str):
+        node = json.loads(node)
+        # JSON has no tuple, and a walker that keys on one unpacks it either way;
+        # this keeps the value the shape the walker handed out.
+        if isinstance(node, list):
+            node = tuple(node)
+    size = int(row["size"] or 0)
+    vols = {v["base"]: v for v in json.loads(rec.get("volumes") or "[]")}
+    vol = vols.get(int(base)) if base is not None else None
+    if node is None or vol is None:
+        raise ArchiveUnavailable(
+            f"{row['orig_path']!r} has no recorded volume to be read from: {path}")
+    w, _lock = _open_walker(path, int(base), vol["kind"], vol["size"])
+    try:
+        _write_stream(_walk_reader(w, node, size), dest)
+    except Exception as exc:                         # pylint: disable=broad-except
+        with contextlib.suppress(OSError):
+            dest.unlink()
+        if not Path(path).exists():
+            _drop_ewf(path)
+            raise ArchiveUnavailable(
+                f"the source image is no longer at its recorded location: {path}") from exc
+        # A file the reader declines, such as one compressed with a method it
+        # does not inflate, is reported as unread. It must never be written out
+        # short or empty, which would read as a real file of that size.
+        raise ArchiveUnavailable(
+            f"could not read {row['orig_path']!r} from the source image ({exc}): "
+            f"{path}") from exc
+
+
 def _extract_ewf_member(rec: dict, row, dest: Path) -> None:
     """Write one carved item by seeking to its offset in the reconstructed image
     and copying its length out. The offset is into the acquired disk, not into the
@@ -534,7 +672,12 @@ def _materialize(rec: dict, row, dest: Path) -> None:
     if fmt == FORMAT_ZIP:
         _extract_member(rec["path"], row["orig_path"], dest)
     elif fmt == FORMAT_EWF:
-        _extract_ewf_member(rec, row, dest)
+        # An image source holds both kinds once carving runs beside a walk: a
+        # walked row names the node it came from, a carved row an offset.
+        if _row_get(row, "member_node") is not None:
+            _extract_walked_member(rec, row, dest)
+        else:
+            _extract_ewf_member(rec, row, dest)
     else:
         _extract_tar_member(rec, row, dest)
 
@@ -669,6 +812,7 @@ class _Tally:
         self.skipped_encrypted = 0
         self.skipped_size = 0
         self.skipped_links = 0
+        self.failed = 0                 # walked files the reader could not read
         self.ts_extended = 0
         self.ts_dos = 0
         self.mirrored = 0               # members that were another storage view of a kept one
@@ -677,7 +821,9 @@ class _Tally:
 
 def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, size: int,
               mtime: float, ctime: float | None, crc32: int | None,
-              member_offset: int | None, alt_paths: list[str] | None = None) -> None:
+              member_offset: int | None, alt_paths: list[str] | None = None,
+              origin: str | None = None, member_node: int | None = None,
+              volume_base: int | None = None) -> None:
     case.db.upsert_file(
         str(dest),
         rel_path=rel,
@@ -693,6 +839,9 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
         mtime=mtime,
         ctime=ctime,
         atime=None,
+        origin=origin,
+        member_node=member_node,
+        volume_base=volume_base,
     )
 
 
@@ -715,6 +864,7 @@ def _finish(case, src, path: Path, *, fmt: str, root: str, stage: bool, reason: 
     case.db.set_meta(f"{key}:skipped_encrypted", str(tally.skipped_encrypted))
     case.db.set_meta(f"{key}:skipped_over_max", str(tally.skipped_size))
     case.db.set_meta(f"{key}:skipped_links", str(tally.skipped_links))
+    case.db.set_meta(f"{key}:failed", str(tally.failed))
     case.db.set_meta(f"{key}:mirrored", str(tally.mirrored))
     case.db.set_meta(f"{key}:views_differ", str(tally.views_differ))
     case.db.commit()
@@ -742,7 +892,13 @@ def ingest_archive(case, src, *, count: int = 0, progress=None) -> int:
     if fmt == FORMAT_ZIP:
         return _ingest_zip(case, src, path, count=count, progress=progress)
     if fmt == FORMAT_EWF:
-        return _ingest_ewf(case, src, path, count=count, progress=progress)
+        # An acquisition holds filesystems, so it is walked: the files in it have
+        # names, paths and dates, and a walk keeps them. Carving reaches what a
+        # walk cannot, the deleted material in unallocated space, and it is asked
+        # for rather than assumed.
+        if getattr(src, "carve", False):
+            return _ingest_ewf(case, src, path, count=count, progress=progress)
+        return _ingest_image_walk(case, src, path, count=count, progress=progress)
     return _ingest_tar(case, src, path, fmt, count=count, progress=progress)
 
 
@@ -822,6 +978,113 @@ def _carved_name(hit) -> str:
     return f"carved/{hit.offset:016x}{hit.ext}"
 
 
+def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> int:
+    """Register the media in the filesystems an acquisition holds, by walking them.
+
+    An acquisition of a computer holds filesystems, so its files have names,
+    paths and dates of their own. Carving the same disk answers a different
+    question, and answers it worse for files that are still there: measured on a
+    238.5 GiB Windows acquisition, a walk found 44,884 media files with paths and
+    timestamps in 11 seconds, while a carve of the same image took about 40
+    minutes to return 384,386 hits with no names, of which 90.2% were resources
+    embedded inside live non-media files and 2.1% lay in space no file claimed.
+    Carving still reaches what a walk cannot, which is that 2.1%, and it runs as
+    its own pass rather than as the way an image is read.
+
+    A volume the reader cannot open is recorded and the rest still register: one
+    unreadable filesystem must not cost the others.
+    """
+    slug = _slug(image_path.stem)
+    staged_dir = case.staged_dir
+    stage = bool(getattr(src, "stage", False))
+    max_bytes = src.max_bytes
+    tally = _Tally()
+    n = count
+    refused: list[str] = []
+
+    img = ewfprobe.open_ewf(str(image_path))
+    try:
+        media_size = img.media_size
+        segments = len(img.paths)
+        stored = _stored_hash(img)
+        vols = _volumes(img)
+        for base, size, fskind, label in vols:
+            vol = label or f"lba{base // qnxprobe.SECTOR}"
+            try:
+                walker = qnxprobe.walker_for(fskind, img, base, size)
+                entries = qnxprobe.collect(walker, walker.root)
+            except Exception as exc:                 # pylint: disable=broad-except
+                refused.append(f"{vol} ({fskind}): {exc}")
+                continue
+            for path, node, fsize, mtime in entries:
+                # collect() reports a symlink or special file with no size. It
+                # carries no bytes of its own, as a tar link member does not.
+                if fsize is None:
+                    tally.skipped_links += 1
+                    continue
+                if max_bytes and fsize > max_bytes:
+                    tally.skipped_size += 1
+                    continue
+                name = f"{vol}/{path}"
+                ext = PurePosixPath(path).suffix.lower()
+                head = b""
+                if ext in IMAGE_EXTS:
+                    kind = "image"
+                elif ext in VIDEO_EXTS:
+                    kind = "video"
+                else:
+                    try:
+                        head = _walk_head(walker, node, fsize)
+                    except Exception:                # pylint: disable=broad-except
+                        tally.failed += 1
+                        continue
+                    kind = _kind_from_magic(head)
+                    if kind == "other" and not src.include_other:
+                        continue
+                dest = _staged_path(staged_dir, slug, name)
+                if stage:
+                    try:
+                        _write_stream(_walk_reader(walker, node, fsize), dest, head)
+                    except Exception:                # pylint: disable=broad-except
+                        with contextlib.suppress(OSError):
+                            dest.unlink()
+                        tally.failed += 1
+                        continue
+                    if mtime:
+                        with contextlib.suppress(OSError):
+                            os.utime(dest, (mtime, mtime))
+                # A walked row is read back through its volume's walker, so it
+                # records the node and the volume rather than a byte offset.
+                _register(case, src, dest, name, name, kind, ext, fsize,
+                          mtime or None, None, None, None,
+                          origin="walk", member_node=json.dumps(node),
+                          volume_base=int(base))
+                tally.registered += 1
+                n += 1
+                if n % 200 == 0:
+                    case.db.commit()
+                    if progress:
+                        progress(n)
+    finally:
+        _drop_ewf(str(image_path))
+    case.db.commit()
+    key = _meta_key(src.name)
+    case.db.set_meta(f"{key}:media_size", str(media_size))
+    case.db.set_meta(f"{key}:segments", str(segments))
+    if stored:
+        case.db.set_meta(f"{key}:media_hash", stored)
+    case.db.set_meta(f"{key}:volumes", json.dumps(
+        [{"base": b, "size": s, "kind": k, "label": lb} for b, s, k, lb in vols]))
+    if refused:
+        case.db.set_meta(f"{key}:volumes_not_read", json.dumps(refused))
+    _finish(case, src, image_path, fmt=FORMAT_EWF, root="", stage=stage,
+            reason="the filesystems in the acquisition were walked, so every file "
+                   "keeps the name, path and date the filesystem recorded for it",
+            tally=tally,
+            timestamps="from the filesystem the file was walked from")
+    return n
+
+
 def _ingest_ewf(case, src, image_path: Path, *, count: int, progress) -> int:
     """Register the media carved out of an EnCase/EWF acquisition.
 
@@ -872,7 +1135,7 @@ def _ingest_ewf(case, src, image_path: Path, *, count: int, progress) -> int:
             # property of the copy on this machine and would read as the carved
             # file's date in every report column that shows it.
             _register(case, src, dest, name, name, kind, hit.ext, hit.length,
-                      None, None, None, hit.offset)
+                      None, None, None, hit.offset, origin="carve")
             tally.registered += 1
             state["n"] += 1
             if state["n"] % 200 == 0:

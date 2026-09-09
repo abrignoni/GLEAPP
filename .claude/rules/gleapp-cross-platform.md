@@ -129,30 +129,62 @@ written to. An extraction surfaces app streaming caches, ExoPlayer `.exo` fragme
 the like, which are not standalone videos; the pipeline reports them with its existing
 messages rather than silently dropping them.
 
-## An E01 acquisition is a fourth source, and its members are carved extents
+## An E01 acquisition is a fourth source, and it is WALKED, not carved
 
 A computer acquisition arrives as an EnCase/EWF set: `image.E01` plus numbered segments
-beside it. It holds a disk, not a list of members, so there is nothing to enumerate.
-`archive_format` recognises it by the `EVF\x09\x0d\x0a\xff\x00` signature before the
-zip and tar checks, so the extension is never consulted and the first segment of a set is
-enough to open the whole thing.
+beside it. `archive_format` recognises it by the `EVF\x09\x0d\x0a\xff\x00` signature
+before the zip and tar checks, so the extension is never consulted and the first segment of
+a set is enough to open the whole thing.
 
-Two vendored single-file MIT tools do the work, copied verbatim into `gleapp/vendor/` with
-their provenance in `vendored.json` and their hashes asserted by the suite. `ewfprobe`
+It holds filesystems, so its files have names, paths and dates of their own, and reading
+them is what a walk is for. `_volumes()` finds every volume through qnxprobe's own GPT and
+MBR parsers and its `identify_fs`, then each is walked and its media registered under
+`<volume>/<path>`. A volume the reader cannot open is recorded in the case meta and the
+others still register: one unreadable filesystem must not cost the rest of an image.
+
+**Carving is a separate pass and is asked for** (`"carve": true` on the source). It is not
+the way an image is read, because measured on a 238.5 GiB Windows acquisition it answers a
+different question and answers it worse for files that are still there:
+
+| | walk | carve |
+| --- | --- | --- |
+| what it found | 44,884 media files with paths and dates | 384,386 hits with neither |
+| how long | 11 seconds | about 40 minutes |
+| inside a live media file | | 7.7%, already named by the walk |
+| inside another live file | | **90.2%**, icons in DLLs, browser caches |
+| in space no file claims | | **2.1%**, what carving is uniquely for |
+
+So a walk is the primary read and a carve reaches the deleted material a walk cannot. The
+2.1% is the case for scoping a future carve to unallocated space rather than the whole
+disk, which needs free-space reporting the reader does not have yet.
+
+**A walked row records a node, not an offset**, because a walked file can be fragmented
+across extents, can be compressed, and on NTFS can be resident with its bytes inside its own
+MFT record and no extent at all. None of those is one byte offset. The node is stored as
+JSON because it is not always a number: an MFT record and an APFS object id are, and a FAT
+directory entry is `(cluster, size, is_dir)`. `origin` says which kind a row is, `walk` or
+`carve`, so a report can state it rather than infer it from a name.
+
+Three vendored single-file MIT tools do the work, copied verbatim into `gleapp/vendor/`
+with their provenance in `vendored.json` and their hashes asserted by the suite. `ewfprobe`
 presents the acquired disk as a seekable stream, reconstructing chunks across segments;
-`mediacarve` scans that stream for image and video signatures and reports each hit as an
-offset and a length. Both are standard library only, which is why they are vendored rather
-than required: GLEAPP ships as a frozen desktop app, and a dependency with a build step is
-a cost with nothing behind it. Fix them upstream (`abrignoni/ewfprobe`,
-`abrignoni/mediacarve`) and re-vendor with `tools/check_vendored.py --update`; an edit made
-in `gleapp/vendor/` fails the suite.
+`qnxprobe` reads the filesystems inside it (NTFS, APFS including the sealed system volume
+of macOS 11 and later, HFS+, ext, FAT32, exFAT and the QNX ones), importing ewfprobe from
+beside it to open an .E01; `mediacarve` scans the stream for image and video signatures and
+reports each hit as an offset and a length. All three are standard library only, which is
+why they are vendored rather than required: GLEAPP ships as a frozen desktop app, and a
+dependency with a build step is a cost with nothing behind it. Fix them upstream
+(`abrignoni/ewfprobe`, `abrignoni/mediacarve`, `abrignoni/qnxprobe`) and re-vendor with
+`tools/check_vendored.py --update`; an edit made in `gleapp/vendor/` fails the suite.
 
-Everything after the scan is the machinery a tar already uses, because a carved hit and a
-tar member are registered the same way: `member_offset` is a byte offset, and reference
-mode reads the bytes back by seeking to it. For a tar that is an offset into the file; for
-an acquisition it is an offset into the reconstructed disk, so the reader decompresses the
-chunks it spans. One `EwfImage` per image per process is cached, with its own lock, because
-a segmented set holds several file handles and a chunk table.
+A CARVED hit is registered the way a tar member is: `member_offset` is a byte offset and
+reference mode reads the bytes back by seeking to it. For a tar that is an offset into the
+file; for an acquisition it is an offset into the reconstructed disk, so the reader
+decompresses the chunks it spans. A WALKED row instead names its volume and its node, and
+its bytes come from that volume's walker. One `EwfImage` per image per process is cached,
+with its own lock, because a segmented set holds several file handles and a chunk table,
+and one walker per volume beside it, because a walker holds a decoded object map and
+rebuilding it per file would walk the tree once per file.
 
 Measured on a 232.9 GiB acquisition of a Windows drive, 15 segments, written by FTK
 Imager (ADI4.7.4.01 in its header): the scan registered 118,930 files (118,724 images,

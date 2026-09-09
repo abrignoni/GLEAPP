@@ -1,6 +1,19 @@
 {
   "vendored": [
     {
+      "path": "gleapp/vendor/qnxprobe.py",
+      "name": "qnxprobe",
+      "version": "1.18",
+      "upstream": "https://github.com/abrignoni/qnxprobe",
+      "upstream_file": "qnxprobe.py",
+      "commit": "db45809c9d55c603567815e5150c3d436392858f",
+      "commit_date": "2026-09-09T15:03:58-04:00",
+      "sha256": "90194e45f959d8e6af64940b2adefca5389fda646557509b98cb55b2d5974e25",
+      "licence": "MIT",
+      "licence_file": "gleapp/vendor/LICENSE-qnxprobe",
+      "note": "Copied verbatim. Fix upstream and re-vendor; edits here are reverted by the next sync. Reads the filesystems inside a disk image; it imports ewfprobe from beside it to open an .E01."
+    },
+    {
       "path": "gleapp/vendor/ewfprobe.py",
       "name": "ewfprobe",
       "version": "0.1.0",

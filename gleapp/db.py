@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS files (
     vic_flags     TEXT,                   -- JSON: victim/offender/distributed etc.
     vic_series    TEXT,                   -- VIC Series: the known series a media entry belongs to
     vic_tags      TEXT,                   -- JSON: the Tags the VIC entry carried, not the examiner's
+    origin        TEXT,                   -- 'walk' read from a filesystem, 'carve' recovered by signature
+    member_node   TEXT,                   -- JSON: the walker's node for a walked file. Not always a
+                                          -- number: an MFT record and an APFS object id are, a FAT
+                                          -- directory entry is (cluster, size, is_dir).
+    volume_base   INTEGER,                -- byte offset of the volume that file was walked from
     crc32         INTEGER,                -- the CRC-32 the source archive records for the member (zip)
     member_offset INTEGER,                -- byte offset of the member's data in a plain tar source
     alt_paths     TEXT                    -- JSON: the other storage views this file was also under
@@ -224,6 +229,8 @@ class CaseDB:
             ("atime", "REAL"), ("crc32", "INTEGER"), ("member_offset", "INTEGER"),
             ("alt_paths", "TEXT"),
             ("vic_series", "TEXT"), ("vic_tags", "TEXT"),
+            ("origin", "TEXT"), ("member_node", "TEXT"),
+            ("volume_base", "INTEGER"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
