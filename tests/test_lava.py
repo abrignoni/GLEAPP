@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from gleapp import lava
 from gleapp.lava import _sanitize
@@ -276,6 +277,77 @@ def test_a_row_survives_its_bytes_being_unavailable(case, tmp_path, monkeypatch)
     screen = (out / "_HTML" / "_Script_Logs" / "Screen_Output.html").read_text(
         encoding="utf-8")
     assert "Media not written" in screen
+
+
+def test_a_sources_own_timestamp_provenance_is_reported(tmp_path, monkeypatch):
+    """The date columns do not have one provenance, so the report states each source's.
+
+    A folder row carries the filesystem times of the copy the case read. An archive
+    row carries the times the archive recorded for that member. A carved row has no
+    timestamp at all. The ingest writes which of those applies, in its own words, and
+    the Device Info page prints it rather than the notes generalising about it.
+    """
+    import io
+    import zipfile
+
+    monkeypatch.setenv("GLEAPP_CONFIG_DIR", str(tmp_path / "cfg"))
+    buf = io.BytesIO()
+    Image.new("RGB", (48, 36), (10, 120, 200)).save(buf, "JPEG")
+    archive_path = tmp_path / "EXTRACTION_FFS.zip"
+    with zipfile.ZipFile(archive_path, "w") as zf:
+        zf.writestr("Dump/data/media/0/DCIM/photo.jpg", buf.getvalue())
+
+    c = open_case(tmp_path / "case", create=True, examiner="tester")
+    try:
+        ingest_sources(c, [Source(name=archive_path.name, path=str(archive_path),
+                                  kind="archive")])
+        process(c, workers=1, keyframes=1, screen=False)
+        out = tmp_path / "lava"
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+
+    device = (out / "_HTML" / "_Script_Logs" / "DeviceInfo.html").read_text(
+        encoding="utf-8")
+    assert "Timestamps" in device, "the sources table lost its provenance column"
+    # whatever the ingest recorded for this source is what the page prints
+    from gleapp import archive as archive_mod
+    c2 = open_case(tmp_path / "case")
+    try:
+        record = archive_mod.source_record(c2, archive_path.name)
+    finally:
+        c2.close()
+    assert record["timestamps"], "the ingest recorded no timestamp provenance"
+    assert record["timestamps"] in device
+
+    notes = next(a for a in _manifest(out)["meta"]["modules"][0]["artifacts"]
+                 if a["tablename"] == "media_files")["notes"]
+    assert "Device Info page states which applies to each source" in notes
+    # the claim this replaced was that an archive member's times describe the copy
+    assert "describe that copy" not in notes
+
+
+def test_the_notes_do_not_overstate_who_categorised_a_file(case, tmp_path):
+    """An imported hash list can categorise a file with no examiner involved.
+
+    ``process`` applies a 'known' list's own category, and Non-pertinent for a
+    'known-good' hit, to any file still uncategorised. Notes that call Category the
+    examiner's own record would tell a reader a person made a decision that a hash
+    list made, so both artifacts that report Category have to say so.
+    """
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    meta = {a["tablename"]: a for a in
+            _manifest(out)["meta"]["modules"][0]["artifacts"]}
+    for table in ("media_files", "categorized_media"):
+        notes = meta[table]["notes"]
+        assert "hash matched an imported list" in notes, table
+        assert "Non-pertinent" in notes, table
+        # the claim this replaced said Category was always the examiner's
+        assert "Category, Tags, Reviewed By and Examiner Notes are the examiner" \
+            not in notes, table
+        assert "Category, Reviewed By and Examiner Notes are the examiner" \
+            not in notes, table
 
 
 def test_identifiers_match_lavas_own_rule():

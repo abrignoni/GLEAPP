@@ -481,9 +481,14 @@ def _artifact_categorized(writer: "_Writer", rows: list[dict],
         "GLEAPP Media", name, headers, data, icon="tag", source_path="case.gleapp",
         description="Files an examiner assigned a category to in this case.",
         notes=(
-            "One row per file whose category is not the default. Category, Reviewed "
-            "By and Examiner Notes are the examiner's own record, entered during "
-            "review, and are not properties of the file. Codes 0 to 5 are the "
+            "One row per file whose category is not the default. Reviewed By and "
+            "Examiner Notes are the examiner's own record, entered during review, "
+            "and are not properties of the file. Category is usually theirs too, but "
+            "a file can reach this artifact without an examiner having chosen "
+            "anything: an uncategorised file whose hash matched an imported list is "
+            "categorised automatically, to the category a 'known' list asserts or to "
+            "Non-pertinent for a 'known-good' hit. The Known Hash Set Hits artifact "
+            "lists every file that happened to. Codes 0 to 5 are the "
             "Project VIC 2.0 (US) presets every GLEAPP case is seeded with; a case "
             "may add its own above those. Reviewed Timestamp is when the row was "
             "last marked, not when the file was made. A file with no category is in "
@@ -549,13 +554,16 @@ def _artifact_duplicates(writer: "_Writer", rows: list[dict],
         source_path="case.gleapp",
         description="Groups of byte-identical files in this case.",
         notes=(
-            "Membership is equality of the file's cryptographic hash, not of its "
-            "name, size or date, so every member of a stack is the same bytes. The "
-            "Media column shows one member; the Paths column lists every path the "
-            "bytes were found at, one per line. A row is only written for a stack "
-            "with more than one member. Copies of one photograph that Android exposes "
-            "under several storage views are folded into a single file row before "
-            "this runs, so they are not counted here as duplication."))
+            "Membership is equality of the file's recorded SHA-256, or of its MD5 "
+            "where no SHA-256 was computed, and never of its name, size or date, so "
+            "every member of a stack is the same bytes. The Media column shows one "
+            "member; the Paths column lists every path the bytes were found at, one "
+            "per line. A row is only written for a stack with more than one member. "
+            "Copies of one photograph that Android exposes under several storage "
+            "views are folded into a single file row before this runs, so they are "
+            "not counted here as duplication; a folder source is registered as it "
+            "was found, so one photograph ingested from two folders is a stack of "
+            "two."))
 
 
 def _artifact_similar(writer: "_Writer", rows: list[dict],
@@ -584,10 +592,14 @@ def _artifact_similar(writer: "_Writer", rows: list[dict],
         source_path="case.gleapp",
         description="Groups GLEAPP assessed as the same picture to the eye.",
         notes=(
-            "Membership is a distance between perceptual hashes, so it is an "
-            "assessment made by this tool and not byte equality: members may differ "
-            "in resolution, compression, crop or edits, and the Distinct MD5s column "
-            "says how many different files a group holds. Two files being grouped is "
+            "Two files are grouped when their pHash and their dHash are both "
+            "within a set distance, so membership is an assessment made by this tool "
+            "and not byte equality: members may differ in resolution, compression, "
+            "crop or edits, and the Distinct MD5s column says how many different "
+            "files a group holds. Near-featureless images such as gradients and flat "
+            "screenshots are excluded from the comparison outright, so their absence "
+            "from every group is a property of this method and not evidence that no "
+            "similar file exists. Two files being grouped is "
             "not evidence that one was made from the other, and the direction of any "
             "such relationship is not established here. A row is only written for a "
             "group with more than one member."))
@@ -659,20 +671,34 @@ def _media_note(thumbs: bool) -> str:
 
 
 _MEDIA_NOTES = (
-    "One row per file registered in the case, after Android storage-view copies of "
-    "one file have been folded together; the paths the other views used are in Also "
-    "Under. {media}. Hashes, dimensions, duration and the perceptual hash are "
-    "computed by GLEAPP from the file's bytes. Category, Tags, Reviewed By and "
-    "Examiner Notes are the examiner's own record and are not properties of the "
-    "file. Modified, Created and Accessed are filesystem times taken from the source "
-    "the case ingested, so for a file copied out of an archive they describe that "
-    "copy; Capture Time is the camera's own clock as recorded in the file, carries "
-    "no timezone, and is reported as text rather than as an instant so nothing "
-    "downstream can shift it. Faces is a count from a screening pass and Skin Ratio "
-    "the fraction of the frame it measured as skin-toned: both are triage signals "
-    "produced by this tool, neither identifies anyone, and neither establishes what "
-    "an image depicts. Error carries what went wrong reading a file, where anything "
-    "did."
+    "One row per file registered in the case. Where the case ingested an extraction "
+    "archive, copies of one file that Android exposes under several storage views "
+    "are folded into a single row and the other spellings are in Also Under; a "
+    "folder source is registered as it was found. {media}. Dimensions, duration and "
+    "the perceptual hashes are computed by GLEAPP from the file's bytes, as are the "
+    "cryptographic hashes except where a Project VIC import supplied an MD5, which "
+    "processing trusts rather than recomputing. Tags, Reviewed By and Examiner Notes "
+    "are the examiner's own record and are not properties of the file. Category is "
+    "usually theirs as well, with one exception this row records in its own columns: "
+    "an uncategorised file whose hash matched an imported list is categorised "
+    "without an examiner, to the category a 'known' list asserts for it or to "
+    "Non-pertinent for a 'known-good' hit, so a row carrying a Known Hash Set value "
+    "may never have been looked at. Modified, Created and Accessed do not have one "
+    "provenance, and the Device Info page states which applies to each source: for a "
+    "folder they are the filesystem times of the copy this case read; for an "
+    "extraction archive they are the times the archive recorded for that member, "
+    "which is its extended timestamp field where it has one and otherwise the DOS "
+    "date, local to whichever machine wrote the archive and at two-second "
+    "resolution; a file carved from an acquisition has no timestamp of its own and "
+    "its date columns are empty. Capture Time is the camera's own clock as recorded "
+    "in the file, carries no timezone, and is reported as text rather than as an "
+    "instant so nothing downstream can shift it. Faces is a count from an optional "
+    "screening pass and Skin Ratio the fraction of pixels that pass found in a broad "
+    "skin-tone band; both are triage signals produced by this tool, neither "
+    "identifies anyone, and neither establishes what an image depicts. Where a case "
+    "was processed with screening turned off, Faces is zero and Skin Ratio empty on "
+    "every row, which records that nothing looked rather than that nothing was "
+    "found. Error carries what went wrong reading a file, where anything did."
 )
 
 
@@ -769,14 +795,17 @@ def _write_device_info(case: Case, dest: Path, *, tz_name: str | None) -> None:
                 record["mode"], f'{record["size"]:,}', record["files"],
                 record["status"],
                 record.get("media_hash") or record.get("sha256") or "",
+                record.get("timestamps") or "",
             ])
         body += ["<h2>Sources</h2>",
                  _grid(["Source", "File", "Format", "Mode", "Bytes", "Files",
-                        "Status", "Recorded hash"], grid)]
+                        "Status", "Recorded hash", "Timestamps"], grid)]
         body.append('<p class="muted">Status is this case\'s own check that the file '
                     'is still where it was recorded, by size and modification time; '
                     'it does not re-hash the evidence. Recorded hash is the value the '
-                    'acquiring tool wrote, where the format carries one.</p>')
+                    'acquiring tool wrote, where the format carries one. Timestamps is '
+                    'what the ingest recorded about where this source\'s date columns '
+                    'came from.</p>')
     folder_sources = sorted({(r["source"] or "") for r in case.db.iter_files()}
                             - {s["name"] for s in statuses} - {""})
     if folder_sources:
