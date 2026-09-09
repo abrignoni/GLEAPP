@@ -1085,7 +1085,8 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
     return n
 
 
-def _ingest_ewf(case, src, image_path: Path, *, count: int, progress) -> int:
+def _ingest_ewf(case, src, image_path: Path, *, count: int, progress,
+                skip_offsets: set[int] | None = None) -> int:
     """Register the media carved out of an EnCase/EWF acquisition.
 
     An .E01 holds a disk, not a list of members, so there is nothing to
@@ -1120,9 +1121,16 @@ def _ingest_ewf(case, src, image_path: Path, *, count: int, progress) -> int:
         media_size = img.media_size
         segments = len(img.paths)
         stored = _stored_hash(img)
+        seen = skip_offsets or set()
         for hit in mediacarve.carve(img, progress=scan_progress):
             if max_bytes and hit.length > max_bytes:
                 tally.skipped_size += 1
+                continue
+            # Carving after a walk re-finds every live file, because its bytes
+            # are on the disk either way. A hit already registered at this offset
+            # is that file, and adding it again would read as a second copy.
+            if hit.offset in seen:
+                tally.mirrored += 1
                 continue
             # Every kind the carver reports is media, so include_other has
             # nothing to decide here: there is no third kind to keep or drop.
@@ -1421,6 +1429,60 @@ def stage_source(case, name: str, *, progress=None) -> int:
     case.db.audit_log(case.examiner, "stage-source",
                       f"{name}: {written} members copied under the case")
     return written
+
+
+def carve_source(case, name: str, *, progress=None) -> int:
+    """Carve an image source that has already been walked, adding what the walk
+    could not reach. Returns the number of rows added.
+
+    A walk reports the files a filesystem still lists. Carving reads the disk
+    itself, so it also reaches what was deleted, and that is the whole reason to
+    run it: measured on a 238.5 GiB Windows acquisition, 2.1% of the carver's
+    hits lay in space no file claimed, while 90.2% were resources embedded
+    inside live non-media files the walk had already registered by name.
+
+    Two things this does NOT do yet, stated because the counts are large enough
+    to matter. It scans the whole disk, not just the space no file claims, so on
+    a used drive most of what it returns is resources embedded inside live files:
+    on that same acquisition, 384,386 hits of which 8,154 were in unclaimed
+    space. Scoping the scan needs a volume's free space, which the reader cannot
+    report yet. And a hit is only skipped when this source was already carved at
+    that same offset, so re-running adds nothing; a hit whose bytes are also a
+    walked file IS added, because a walked row records a node and not an offset
+    and the two cannot be compared directly. Those pairs share a sha256, so the
+    case grades them as the exact duplicates they are, and ``origin`` says which
+    row came from where.
+    """
+    rec = _require(case, name)
+    if rec["format"] != FORMAT_EWF:
+        raise ValueError(f"{name} is not an image source; only an acquisition is carved")
+    src_obj = _CarveSource(name, rec["path"], case)
+    already = {int(r["member_offset"]) for r in case.db.iter_files(
+        "source = ? AND member_offset IS NOT NULL", (name,))}
+    before_rows = len(case.db.iter_files("source = ?", (name,)))
+    n = _ingest_ewf(case, src_obj, Path(rec["path"]), count=before_rows,
+                    progress=progress, skip_offsets=already)
+    added = n - before_rows
+    case.db.audit_log(case.examiner, "carve-source",
+                      f"{name}: {added} rows recovered by signature")
+    return added
+
+
+class _CarveSource:
+    """The source shape _ingest_ewf expects, for a carve of an already-ingested one."""
+
+    def __init__(self, name: str, path: str, case) -> None:
+        self.name = name
+        self.path = path
+        self.kind = "archive"
+        self.include_other = False
+        self.stage = (case.db.get_meta(f"{_meta_key(name)}:mode") or MODE_STAGED) == MODE_STAGED
+        self.carve = True
+        self.max_mb = None
+
+    @property
+    def max_bytes(self):
+        return None
 
 
 def unstage_source(case, name: str) -> int:

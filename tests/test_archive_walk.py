@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import io
 import sys
+
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -151,4 +153,48 @@ def test_a_volume_the_reader_cannot_open_does_not_cost_the_others(tmp_path):
     image = Path(write_ewf(folder, "mixed", good + junk)[0])
     case, _ = _ingest(tmp_path, image, name="mixed")
     assert "lba0/KEEP.JPG" in _rows(case)
+    case.close()
+
+
+# ---- carving after a walk ---------------------------------------------------
+
+def test_a_walked_source_can_be_carved_afterwards(tmp_path):
+    """The examiner's choice, and it can be made later: walk at ingest, then
+    carve when the deleted material is wanted too."""
+    image = _image(tmp_path)
+    case, _ = _ingest(tmp_path, image, name="later")
+    walked = _rows(case)
+    assert walked and all(r["origin"] == "walk" for r in walked.values())
+
+    added = archive.carve_source(case, "acq.E01")
+    assert added > 0, "carving found nothing in a volume that holds media"
+    after = _rows(case)
+    assert len(after) == len(walked) + added
+    origins = {r["origin"] for r in after.values()}
+    assert origins == {"walk", "carve"}
+    # the walked rows are untouched: still named, still read by node
+    for rel in walked:
+        assert after[rel]["origin"] == "walk"
+        assert after[rel]["member_node"] is not None
+    case.close()
+
+
+def test_carving_twice_does_not_register_the_same_extent_again(tmp_path):
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="twice")
+    first = archive.carve_source(case, "acq.E01")
+    assert first > 0
+    second = archive.carve_source(case, "acq.E01")
+    assert second == 0, "a second carve added rows for extents already registered"
+    case.close()
+
+
+def test_only_an_acquisition_can_be_carved(tmp_path):
+    """A zip has members, not a disk; there is nothing to scan for signatures."""
+    import zipfile
+    zpath = tmp_path / "ext.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("dcim/a.jpg", JPG)
+    case, _ = _ingest(tmp_path, zpath, name="azip")
+    with pytest.raises(ValueError):
+        archive.carve_source(case, "ext.zip")
     case.close()

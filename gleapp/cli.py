@@ -223,6 +223,16 @@ def cmd_source(args: argparse.Namespace) -> int:
             print()
             _p(f"Copied {n:,} files into the case; {args.name} is self-contained now.")
             return 0
+        if args.action == "carve":
+            def carve_progress(done: int) -> None:
+                print(f"\r  {done:,} files", end="", flush=True)
+
+            n = archive.carve_source(case, args.name, progress=carve_progress)
+            print()
+            _p(f"Recovered {n:,} files by signature from {args.name}. "
+               f"They are marked as carved, and carry no name, path or date of "
+               f"their own; run 'process' to hash and thumbnail them.")
+            return 0
         n = archive.unstage_source(case, args.name)
         _p(f"Removed {n:,} copies; {args.name} is read from the archive on demand again.")
         return 0
@@ -436,9 +446,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_ingest)
 
     s = sub.add_parser("source",
-                       help="extraction archives: list them, relink a moved one, or copy one "
-                            "into the case (stage) and back (unstage)")
-    s.add_argument("action", choices=["list", "relink", "stage", "unstage"])
+                       help="extraction archives: list them, relink a moved one, copy one "
+                            "into the case (stage) and back (unstage), or carve an "
+                            "acquisition for what a walk of it could not reach")
+    s.add_argument("action",
+                   choices=["list", "relink", "stage", "unstage", "carve"])
     s.add_argument("name", nargs="?", help="source name, as shown by 'source list'")
     s.add_argument("path", nargs="?", help="relink: where the archive is now")
     s.set_defaults(func=cmd_source)
