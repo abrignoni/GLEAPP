@@ -227,7 +227,9 @@ def cmd_source(args: argparse.Namespace) -> int:
             def carve_progress(done: int) -> None:
                 print(f"\r  {done:,} files", end="", flush=True)
 
-            n = archive.carve_source(case, args.name, progress=carve_progress)
+            n = archive.carve_source(case, args.name,
+                                     unallocated_only=args.unallocated_only,
+                                     progress=carve_progress)
             print()
             _p(f"Recovered {n:,} files by signature from {args.name}. "
                f"They are marked as carved, and carry no name, path or date of "
@@ -453,6 +455,11 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=["list", "relink", "stage", "unstage", "carve"])
     s.add_argument("name", nargs="?", help="source name, as shown by 'source list'")
     s.add_argument("path", nargs="?", help="relink: where the archive is now")
+    s.add_argument("--unallocated-only", action="store_true",
+                   help="carve: scan only the space no volume claims, which is the "
+                        "only part a walk cannot reach. Falls back to the whole "
+                        "image when a volume cannot report its free space, rather "
+                        "than leaving part of the disk unscanned")
     s.set_defaults(func=cmd_source)
 
     s = sub.add_parser("process", help="(re)run processing on the current case")

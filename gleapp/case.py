@@ -58,6 +58,8 @@ class Source:
                                   # off, the default, reads them from the zip on demand
     carve: bool = False           # image: recover media by signature instead of
                                   # walking the filesystems the acquisition holds
+    unallocated_only: bool = False  # carve: scan only the space no volume claims,
+                                  # which is the only part a walk cannot reach
 
     @property
     def max_bytes(self) -> int | None:
@@ -139,6 +141,7 @@ def _norm_source(entry: object, base: Path) -> Source | None:
             max_mb=low.get("max_mb"),
             stage=bool(low.get("stage", False)),
             carve=bool(low.get("carve", False)),
+            unallocated_only=bool(low.get("unallocated_only", False)),
         )
     return None
 

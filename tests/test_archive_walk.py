@@ -198,3 +198,102 @@ def test_only_an_acquisition_can_be_carved(tmp_path):
     with pytest.raises(ValueError):
         archive.carve_source(case, "ext.zip")
     case.close()
+
+
+# ---- scoping a carve to the space no volume claims --------------------------
+
+def test_unallocated_only_falls_back_when_a_volume_cannot_say(tmp_path):
+    """A volume that cannot report its free space must not be quietly skipped.
+
+    Leaving part of a disk unscanned while reporting the carve as finished is
+    worse than scanning all of it, so the scope is dropped rather than the data.
+    FAT reports nothing, so this fixture exercises exactly that path.
+    """
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="fb")
+    scoped = archive.carve_source(case, "acq.E01", unallocated_only=True)
+    case.close()
+    case2, _ = _ingest(tmp_path, _image(tmp_path), name="fb2")
+    whole = archive.carve_source(case2, "acq.E01")
+    case2.close()
+    assert scoped == whole > 0, "the fallback scanned less than the whole image"
+
+
+def test_unallocated_only_scans_only_what_a_volume_reports_free(monkeypatch, tmp_path):
+    """With a volume that can answer, only its free runs are read."""
+    image = _image(tmp_path)
+    case, _ = _ingest(tmp_path, image, name="scoped")
+    rec = list(archive.source_records(case).values())[0]
+    img = archive.ewfprobe.open_ewf(rec["path"])
+    vols = archive._volumes(img)                     # pylint: disable=protected-access
+    base, size, _kind, _label = vols[0]
+    # an unpartitioned image reports no size for its one volume, so the window
+    # is measured from the image itself
+    end = size if size is not None else img.media_size
+    window = [(base + end - 8192, 4096)]
+
+    class _Says:
+        def free_extents(self, min_bytes=0):         # pylint: disable=unused-argument
+            return window
+
+    monkeypatch.setattr(archive.qnxprobe, "walker_for",
+                        lambda *a, **k: _Says())
+    got = archive._unclaimed_space(img, vols)        # pylint: disable=protected-access
+    assert got == window
+    img.close()
+    case.close()
+
+
+def test_one_volume_that_cannot_say_drops_the_scope_for_the_whole_image(monkeypatch, tmp_path):
+    """The case a single-volume fixture cannot show.
+
+    With two volumes where only one reports its free space, skipping the quiet
+    one would return just the other one's runs, and the carve would then read
+    part of the disk while reporting itself finished. Everything is scanned
+    instead. A fixture with one volume passes either way, which is why this one
+    has two.
+    """
+    image = _image(tmp_path)
+    case, _ = _ingest(tmp_path, image, name="twovol")
+    rec = list(archive.source_records(case).values())[0]
+    img = archive.ewfprobe.open_ewf(rec["path"])
+    real = archive._volumes(img)                     # pylint: disable=protected-access
+    base, size, kind, label = real[0]
+    two = [(base, size, kind, label), (base + 4096, size, kind, "second")]
+
+    class _Says:
+        def free_extents(self, min_bytes=0):         # pylint: disable=unused-argument
+            return [(base, 4096)]
+
+    class _Cannot:
+        pass                                         # no free_extents at all
+
+    made = []
+
+    def _pick(_kind, _img, at, _size=None):
+        made.append(at)
+        return _Says() if at == base else _Cannot()
+
+    monkeypatch.setattr(archive.qnxprobe, "walker_for", _pick)
+    got = archive._unclaimed_space(img, two)         # pylint: disable=protected-access
+    assert got is None, (
+        "one volume could not report its free space, so the scan must cover the "
+        f"whole image rather than only the other volume's runs; got {got}")
+    img.close()
+    case.close()
+
+
+def test_a_volume_that_raises_does_not_silently_narrow_the_scan(monkeypatch, tmp_path):
+    image = _image(tmp_path)
+    case, _ = _ingest(tmp_path, image, name="raises")
+    rec = list(archive.source_records(case).values())[0]
+    img = archive.ewfprobe.open_ewf(rec["path"])
+    vols = archive._volumes(img)                     # pylint: disable=protected-access
+
+    def _boom(*_a, **_k):
+        raise ValueError("cannot read this volume")
+
+    monkeypatch.setattr(archive.qnxprobe, "walker_for", _boom)
+    # None means scan everything, which is the safe answer
+    assert archive._unclaimed_space(img, vols) is None   # pylint: disable=protected-access
+    img.close()
+    case.close()
