@@ -23,8 +23,10 @@ from gleapp.case import Source, open_case
 from gleapp.pipeline import ingest_sources, process
 
 # A pytest fixture is a module-level name that its tests take as a parameter, so
-# every test that uses one shadows it. That is the framework's design.
-# pylint: disable=redefined-outer-name
+# every test that uses one shadows it, and a fixture requested only to make its side
+# effect happen (``basemap`` activates one) is never referenced in the body. Both are
+# the framework's design.
+# pylint: disable=redefined-outer-name,unused-argument
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -348,6 +350,166 @@ def test_the_notes_do_not_overstate_who_categorised_a_file(case, tmp_path):
             not in notes, table
         assert "Category, Reviewed By and Examiner Notes are the examiner" \
             not in notes, table
+
+
+# ---- location maps ---------------------------------------------------------
+# The committed tiny.pmtiles holds PNG tiles at zoom 0 and 1, so a basemap imported
+# from it covers the whole world at the zoom a single-point render uses. Coverage is
+# taken away by patching the tile reader, which is how the staticmap tests do it.
+FIXTURE_BASEMAP = ROOT / "tests" / "fixtures" / "tiny.pmtiles"
+
+
+@pytest.fixture()
+def basemap(tmp_path, monkeypatch):
+    from gleapp import basemaps
+    monkeypatch.setenv("GLEAPP_CONFIG_DIR", str(tmp_path / "cfg"))
+    record = basemaps.import_basemap(FIXTURE_BASEMAP, name="fixture")
+    basemaps.set_active("fixture")
+    return record
+
+
+def _geo_case(tmp_path, lat=10.0, lon=20.0):
+    """A case holding one file that carries GPS and one that does not."""
+    import piexif
+    from fractions import Fraction
+
+    def dms(value):
+        value = abs(value)
+        deg = int(value)
+        minutes = int((value - deg) * 60)
+        seconds = Fraction((((value - deg) * 60) - minutes) * 60).limit_denominator(10000)
+        return ((deg, 1), (minutes, 1), (seconds.numerator, seconds.denominator))
+
+    folder = tmp_path / "geoev" / "DCIM"
+    folder.mkdir(parents=True)
+    tagged = Image.new("RGB", (64, 48), (30, 140, 90))
+    exif = {"0th": {}, "Exif": {}, "1st": {}, "thumbnail": None,
+            "GPS": {piexif.GPSIFD.GPSLatitudeRef: b"N" if lat >= 0 else b"S",
+                    piexif.GPSIFD.GPSLatitude: dms(lat),
+                    piexif.GPSIFD.GPSLongitudeRef: b"E" if lon >= 0 else b"W",
+                    piexif.GPSIFD.GPSLongitude: dms(lon)}}
+    tagged.save(folder / "tagged.jpg", "JPEG", exif=piexif.dump(exif))
+    Image.new("RGB", (64, 48), (200, 40, 40)).save(folder / "plain.jpg", "JPEG")
+    c = open_case(tmp_path / "geocase", create=True, examiner="tester")
+    ingest_sources(c, [Source(name="ev", path=str(folder.parent))])
+    process(c, workers=1, keyframes=1, screen=False)
+    return c
+
+
+def _map_section(out: Path) -> str:
+    screen = (out / "_HTML" / "_Script_Logs" / "Screen_Output.html").read_text(
+        encoding="utf-8")
+    match = re.search(r"<h2>Location maps</h2>(.*?)</table>", screen, re.S)
+    return re.sub(r"<[^>]+>", " ", match.group(1)) if match else ""
+
+
+def test_a_geolocated_file_gets_a_locator_map(tmp_path, basemap):
+    """The Map column holds an image this tool drew, and it resolves where LAVA looks."""
+    c = _geo_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    manifest = _manifest(out)
+    locations = next(a for a in _artifacts(manifest)
+                     if a["tablename"] == "media_locations")
+    types = {col["name"]: col["type"] for col in locations["object_columns"]}
+    assert types["map"] == "media", "Map is not declared a media column"
+
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        ref = db.execute("SELECT map FROM media_locations").fetchone()[0]
+        assert ref, "the geolocated row got no map"
+        item = db.execute(
+            "SELECT i.id, i.extraction_path, i.source_path, i.type "
+            "FROM _lava_media_references r JOIN _lava_media_items i "
+            "ON i.id = r.media_item_id WHERE r.id = ?", (ref,)).fetchone()
+        assert item[0].startswith("map-"), "a drawn map shares an id with a real file"
+        assert (out / "_HTML" / item[1]).is_file()
+        assert (out / item[1]).is_file()
+        # a drawn map must not claim to be a file the evidence carried
+        assert "drawn by GLEAPP" in item[2], item[2]
+        assert item[3] == "image/jpeg"
+    finally:
+        db.close()
+    assert "drawn 1" in " ".join(_map_section(out).split())
+
+
+def test_no_map_is_drawn_where_the_basemap_has_no_tiles(tmp_path, basemap,
+                                                        monkeypatch):
+    """A point the basemap does not cover gets no map, and the run log says why.
+
+    Rendering it anyway produces the background colour with a mark on it, which reads
+    as a location with nothing around it. Measured on a real regional basemap: an
+    out-of-coverage point drew an image that was 98.3% one colour against 13.0% for a
+    point inside it.
+    """
+    from gleapp import basemaps
+    monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
+    c = _geo_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    db = sqlite3.connect(out / _manifest(out)["lava_db_name"])
+    try:
+        assert db.execute(
+            "SELECT COUNT(*) FROM _lava_media_items WHERE id LIKE 'map-%'"
+        ).fetchone()[0] == 0
+        assert not db.execute("SELECT map FROM media_locations").fetchone()[0]
+    finally:
+        db.close()
+    assert "outside the basemap 1" in " ".join(_map_section(out).split())
+
+
+def test_maps_can_be_turned_off(tmp_path, basemap):
+    c = _geo_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out, maps=False)
+    finally:
+        c.close()
+    db = sqlite3.connect(out / _manifest(out)["lava_db_name"])
+    try:
+        assert db.execute(
+            "SELECT COUNT(*) FROM _lava_media_items WHERE id LIKE 'map-%'"
+        ).fetchone()[0] == 0
+    finally:
+        db.close()
+    assert _map_section(out) == ""
+
+
+def test_a_case_with_no_basemap_still_exports(tmp_path, monkeypatch):
+    """No basemap is the ordinary case, not an error: the report is complete without
+    maps and the run log accounts for the files that did not get one."""
+    monkeypatch.setenv("GLEAPP_CONFIG_DIR", str(tmp_path / "cfg-empty"))
+    c = _geo_case(tmp_path)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    assert "no basemap 1" in " ".join(_map_section(out).split())
+
+
+def test_coverage_is_read_from_the_archive_not_its_declared_bounds(basemap, monkeypatch):
+    """``covers`` asks the basemap for the tile it would draw.
+
+    An MBTiles that records no bounds in its metadata is taken to cover the whole
+    world, so a check against declared bounds would pass every point.
+    """
+    from gleapp import basemaps, staticmap
+    record = basemaps.get("fixture")
+    info = basemaps.inspect(record["path"])
+    rec = {"path": record["path"], "format": record["format"],
+           "tile_type": info.get("tile_type"),
+           "min_zoom": info.get("min_zoom", 0), "max_zoom": info.get("max_zoom", 19)}
+    assert staticmap.covers(rec, 20.0, 10.0) is True
+    assert staticmap.covers(rec, None, None) is False
+    monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
+    assert staticmap.covers(rec, 20.0, 10.0) is False
 
 
 def test_identifiers_match_lavas_own_rule():

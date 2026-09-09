@@ -44,7 +44,7 @@ from collections import OrderedDict
 from contextlib import suppress
 from pathlib import Path
 
-from . import __version__, archive, categories, timeutil
+from . import __version__, archive, basemaps, categories, staticmap, timeutil
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
@@ -137,6 +137,8 @@ class _Writer:
         self.meta_artifacts: list[dict] = []
         self.media_written = 0
         self.media_bytes = 0
+        # (name, sha256) of the basemap any location maps were drawn on
+        self.basemap: tuple[str, str] = ("", "")
 
     # -- LAVA's own tables -------------------------------------------------
     def _create_lava_tables(self) -> None:
@@ -228,6 +230,31 @@ class _Writer:
         """Whether this file is already in the report, so its bytes are not fetched
         a second time for the next artifact that reports it."""
         return media_id in self._items
+
+    def add_bytes(self, media_id: str, data: bytes, suffix: str, *,
+                  source_path: str) -> bool:
+        """Put an image this tool generated in the report, rather than a file the
+        evidence carried. ``source_path`` says where it came from, since there is no
+        path inside the evidence that would be true of it."""
+        if media_id in self._items:
+            return True
+        relative = f"media/{media_id}{suffix}"
+        canonical = self.dest / relative
+        canonical.write_bytes(data)
+        self.media_written += 1
+        self.media_bytes += len(data)
+        html_copy = self.dest / "_HTML" / relative
+        if not html_copy.exists():
+            try:
+                os.link(canonical, html_copy)
+            except OSError:
+                shutil.copy2(canonical, html_copy)
+        self.db.execute(
+            "INSERT INTO _lava_media_items VALUES (?,?,?,?,?,?,?,?)",
+            (media_id, source_path, relative, _mime_for(canonical),
+             "not parsed yet", 0, 0, 0))
+        self._items.add(media_id)
+        return True
 
     def reference(self, media_id: str | None, artifact_name: str,
                   name: str = "") -> str | None:
@@ -421,6 +448,83 @@ def _stage_media(case: Case, writer: "_Writer", rows: list[dict], *,
     return resolved, unavailable
 
 
+def _basemap_record() -> tuple[dict | None, str, str]:
+    """The active offline basemap ready for ``staticmap``, with its name and hash.
+
+    ``(None, "", "")`` when the examiner has imported none or its file has gone,
+    which is the ordinary case rather than an error: a report without maps is a
+    complete report.
+    """
+    name = basemaps.get_active()
+    if not name:
+        return None, "", ""
+    record = basemaps.get(name)
+    if not record or not Path(record["path"]).is_file():
+        return None, "", ""
+    try:
+        info = basemaps.inspect(record["path"])
+    except (OSError, ValueError):
+        return None, "", ""
+    return ({"path": record["path"], "format": record["format"],
+             "tile_type": info.get("tile_type"),
+             "min_zoom": info.get("min_zoom", 0),
+             "max_zoom": info.get("max_zoom", 19)},
+            name, record.get("sha256") or "")
+
+
+def _stage_location_maps(case: Case, writer: "_Writer", rows: list[dict], *,
+                         flavor: str, cap: int) -> tuple[dict[int, str], dict[str, int]]:
+    """A locator image per geolocated file, drawn from the imported offline basemap.
+
+    Returns ``(file id -> media id)`` and a tally of why the rest have none, which
+    the run log prints: a map that is absent for a stated reason is a result, and a
+    map that is silently absent is a gap the reader has to guess at.
+
+    Nothing is fetched. A point the basemap holds no tile for is skipped rather than
+    drawn, because it renders as the background colour with a pin on it, which reads
+    as a location with nothing around it.
+    """
+    tally = {"drawn": 0, "no basemap": 0, "outside the basemap": 0,
+             "over the cap": 0, "failed to draw": 0}
+    geo = [r for r in rows
+           if r.get("gps_lat") is not None and r.get("gps_lon") is not None]
+    if not geo:
+        return {}, tally
+    record, name, digest = _basemap_record()
+    if record is None:
+        tally["no basemap"] = len(geo)
+        return {}, tally
+    # this report was drawn on this basemap; the case records which, as the HTML
+    # report does, and Device Info prints the name and hash
+    with suppress(Exception):                       # provenance is never fatal
+        basemaps.record_use(case, name)
+    cache: dict = {}
+    drawn: dict[int, str] = {}
+    for index, row in enumerate(geo):
+        if index >= cap:
+            tally["over the cap"] = len(geo) - cap
+            break
+        lon, lat = row["gps_lon"], row["gps_lat"]
+        if not staticmap.covers(record, lon, lat):
+            tally["outside the basemap"] += 1
+            continue
+        try:
+            image = staticmap.render(record, [(lon, lat)], width=360, height=240,
+                                     flavor=flavor, cache=cache, fmt="jpeg")
+        except Exception:  # pylint: disable=broad-exception-caught
+            tally["failed to draw"] += 1
+            continue
+        media_id = f"map-{_media_id(row, thumbs=False)}"
+        # A map is drawn by this tool, not carried by the evidence, so it says where
+        # it came from rather than naming a path inside the evidence.
+        if writer.add_bytes(media_id, image, ".jpg",
+                            source_path=f"drawn by GLEAPP from the {name} basemap"):
+            drawn[row["id"]] = media_id
+            tally["drawn"] += 1
+    writer.basemap = (name, digest)
+    return drawn, tally
+
+
 # ---- the artifacts ---------------------------------------------------------
 
 def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, str],
@@ -497,16 +601,18 @@ def _artifact_categorized(writer: "_Writer", rows: list[dict],
 
 
 def _artifact_locations(writer: "_Writer", rows: list[dict],
-                        media: dict[int, str]) -> None:
+                        media: dict[int, str], maps: dict[int, str]) -> None:
     name = "Media Locations"
     geo = [r for r in rows if r.get("gps_lat") is not None
            and r.get("gps_lon") is not None]
-    headers = ["Capture Time", "File Name", ("Media", "media"),
+    headers = ["Capture Time", "File Name", ("Media", "media"), ("Map", "media"),
                "Latitude", "Longitude", "Camera", "Path", "Category",
                ("Modified Timestamp", "datetime"), "MD5"]
     data = [[
         row.get("created_dt") or "", row.get("disp_name") or "",
         writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
+        writer.reference(maps.get(row["id"]), name,
+                         f'{row.get("disp_name") or ""} location'),
         row.get("gps_lat"), row.get("gps_lon"), row.get("camera") or "",
         row.get("disp_path") or "", row.get("category_label") or "",
         _epoch(row.get("mtime")), row.get("md5") or "",
@@ -523,7 +629,7 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
             "the device was. A file with no GPS tag is absent from this artifact; that "
             "is an absent tag, not an absent location. Capture Time is the camera's "
             "own clock as recorded, with no timezone, so it is reported as text and "
-            "not as an instant."))
+            "not as an instant. " + _MAP_NOTE))
 
 
 def _artifact_duplicates(writer: "_Writer", rows: list[dict],
@@ -669,6 +775,19 @@ def _media_note(thumbs: bool) -> str:
                 "at most 320 pixels on its long side, not the file itself")
     return ("The Media column shows the file itself, copied into this report")
 
+
+_MAP_NOTE = (
+    "Map is a locator image this tool drew for the row, not something the evidence "
+    "carried: an offline basemap the examiner imported is read from disk, the "
+    "coordinates above are marked on it, and nothing is fetched. The Device Info "
+    "page names that basemap and gives its SHA-256, and the run log counts every "
+    "file that got no map and why. A map is drawn only where the basemap actually "
+    "holds tiles for the coordinates, because a point outside its coverage renders "
+    "as an empty background with a mark on it, which would read as a place with "
+    "nothing around it. So a row with coordinates and no map means the basemap does "
+    "not cover them, none was imported, or the per-report cap was reached, and never "
+    "that the location is unknown."
+)
 
 _MEDIA_NOTES = (
     "One row per file registered in the case. Where the case ingested an extraction "
@@ -821,7 +940,8 @@ def _write_device_info(case: Case, dest: Path, *, tz_name: str | None) -> None:
 
 def _write_screen_output(case: Case, dest: Path, *, writer: "_Writer",
                          rows: list[dict], unavailable: dict[int, str],
-                         thumbs: bool, tz_name: str | None) -> None:
+                         thumbs: bool, map_tally: dict[str, int],
+                         tz_name: str | None) -> None:
     """What this export did, so the run is readable after the fact.
 
     Every count here is the row count of an artifact this run wrote, read back
@@ -861,6 +981,15 @@ def _write_screen_output(case: Case, dest: Path, *, writer: "_Writer",
     if labels:
         body += ["<h2>By category</h2>",
                  _grid(["Category", "Files"], [[c, f"{n:,}"] for c, n in labels])]
+    if any(map_tally.values()):
+        body += ["<h2>Location maps</h2>",
+                 _grid(["Outcome", "Files"],
+                       [[k, f"{v:,}"] for k, v in map_tally.items() if v])]
+        map_name, digest = writer.basemap
+        if map_name:
+            body.append(f'<p class="muted">Drawn from the {html.escape(map_name)} '
+                        f'basemap (SHA-256 {html.escape(digest)}), read from disk. '
+                        f'Nothing was fetched.</p>')
     if unavailable:
         reasons: dict[str, int] = {}
         for reason in unavailable.values():
@@ -882,7 +1011,8 @@ def _write_screen_output(case: Case, dest: Path, *, writer: "_Writer",
 # ---- the export ------------------------------------------------------------
 
 def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
-                link: bool = False, tz_name: str | None = None,
+                link: bool = False, maps: bool = True, map_flavor: str = "light",
+                map_cap: int = 400, tz_name: str | None = None,
                 progress=None) -> Path:
     """Write the case as a LAVA project under ``dest`` and return the manifest path.
 
@@ -891,7 +1021,9 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
     file, which is what a report meant to travel wants: LAVA's tagged HTML digest
     embeds every media cell as base64 at full size. ``link`` hardlinks the media
     instead of copying it, which is only safe where the report will stay on the
-    volume it was built on.
+    volume it was built on. ``maps`` draws a locator image for each geolocated file
+    from the offline basemap the examiner imported, capped at ``map_cap`` files;
+    nothing is fetched, and a case with no basemap simply gets no maps.
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -900,9 +1032,15 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
     media, unavailable = _stage_media(case, writer, rows,
                                       thumbs=thumbs, progress=progress)
 
+    location_maps: dict[int, str] = {}
+    map_tally: dict[str, int] = {}
+    if maps:
+        location_maps, map_tally = _stage_location_maps(
+            case, writer, rows, flavor=map_flavor, cap=map_cap)
+
     _artifact_media_files(writer, rows, media, unavailable, thumbs=thumbs)
     _artifact_categorized(writer, rows, media)
-    _artifact_locations(writer, rows, media)
+    _artifact_locations(writer, rows, media, location_maps)
     _artifact_duplicates(writer, rows, media)
     _artifact_similar(writer, rows, media)
     _artifact_hashset_hits(writer, rows, media)
@@ -910,7 +1048,8 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
 
     _write_device_info(case, writer.logs_dir, tz_name=tz_name)
     _write_screen_output(case, writer.logs_dir, writer=writer, rows=rows,
-                         unavailable=unavailable, thumbs=thumbs, tz_name=tz_name)
+                         unavailable=unavailable, thumbs=thumbs,
+                         map_tally=map_tally, tz_name=tz_name)
 
     case_name = case.db.get_meta("case_name") or case.root.name
     manifest = {

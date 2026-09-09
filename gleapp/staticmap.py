@@ -91,6 +91,29 @@ def _tile(rec: dict, z: int, tx: int, ty: int, cache: dict):
     return val
 
 
+def covers(rec: dict, lon: float, lat: float, *, zoom: int | None = None) -> bool:
+    """Whether the basemap actually holds a tile at this coordinate.
+
+    A point outside a regional basemap still renders: the tiles come back empty and
+    the result is the background colour with a pin on it, which reads as a location
+    with nothing around it. Measured on the Orlando basemap, a Stockholm point drew
+    an image that was 98.3% one colour against 13.0% for a point inside it. So a
+    caller that wants a map only where there is one asks here first.
+
+    This reads the archive rather than the bounds it declares, because an MBTiles
+    with no bounds in its metadata is taken to cover the whole world.
+    """
+    zmin = int(rec.get("min_zoom", 0) or 0)
+    zmax = int(rec.get("max_zoom", 19) or 19)
+    # the zoom render() uses for a single point, so this probes the tile it will draw
+    z = max(zmin, min(zmax, 15 if zoom is None else zoom))
+    try:
+        x, y = _world_px(float(lon), float(lat), z)
+    except (TypeError, ValueError):
+        return False
+    return _tile(rec, z, int(x // TILE), int(y // TILE), {}) is not None
+
+
 def _paint_vector(draw, layers, ox, oy, pal):
     """Draw one decoded MVT tile; ``ox, oy`` is its top-left in canvas pixels."""
     for name, kind, color_key in _LAYER_STYLE:

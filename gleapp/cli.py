@@ -371,7 +371,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                 _p(f"  media {done}/{total}")
         made.append(lava.export_lava(case, out_dir / f"lava{tag}", where,
                                      thumbs=args.lava_thumbs, link=args.link,
-                                     progress=prog))
+                                     maps=not args.no_maps, progress=prog))
     for m in made:
         _p(f"  wrote {m}")
     case.close()
@@ -518,7 +518,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--thumbs-only", action="store_true",
                    help="HTML report: thumbnails only - no full-size images or videos")
     s.add_argument("--no-maps", action="store_true",
-                   help="HTML report: skip the location maps (drawn from the active basemap)")
+                   help="HTML and LAVA reports: skip the location maps (drawn from "
+                        "the active basemap)")
     s.add_argument("--lava-thumbs", action="store_true",
                    help="LAVA report: put GLEAPP's thumbnail in the Media column "
                         "rather than the file, for a report meant to travel")

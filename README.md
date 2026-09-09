@@ -248,6 +248,12 @@ every media file, the ones an examiner categorized, the ones carrying coordinate
 exact-duplicate stacks, visually similar groups, known-hash-set hits, and the case
 audit log. Pictures and video show inline in LAVA and play from the report.
 
+A geolocated file also carries a **locator map**, drawn from the offline basemap you
+imported and marked at the file's own coordinates. Nothing is fetched. A map is drawn
+only where the basemap actually holds tiles for those coordinates, because a point
+outside its coverage renders as an empty background with a mark on it, and the run log
+counts every file that got no map and why. `--no-maps` skips them.
+
 The case name, examiner, sources and counts go to LAVA's **Device Info** and
 **Screen Output** tabs. No path from the machine the case was made on is written
 anywhere in it, the same rule the other exports follow.
