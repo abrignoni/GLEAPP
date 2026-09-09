@@ -1,9 +1,15 @@
-"""Ingest a full-file-system extraction archive, zip or tar, as a source.
+"""Ingest an extraction archive or a disk acquisition as a source.
 
 Mobile extractions (Cellebrite, GrayKey, Magnet) arrive as one archive holding the
 device's filesystem, tens of gigabytes, with a large minority of members carrying no
 extension. This module enumerates the archive, decides what to keep, and registers each
 member with the device path the examiner sees kept apart from the path the code reads.
+
+A computer acquisition arrives instead as an EnCase/EWF set (``.E01`` and its numbered
+segments), which holds a disk rather than a list of members. There is nothing to
+enumerate, so its media is carved: the acquired disk is scanned for image and video
+signatures and each hit is registered by the offset it was found at. Everything after
+that is the same machinery, because an offset is what a tar member already registers.
 
 A zip is enumerated from its central directory in seconds. A tar has no directory, so
 enumerating it is one streaming read of the whole file (measured at about 13 minutes
@@ -19,14 +25,17 @@ Two modes, chosen per source at ingest:
     while the pipeline hashes and thumbnails a file, deleted afterwards, and into
     ``<case>/cache/`` for the viewer, kept up to ``CACHE_MAX_BYTES`` and evicted oldest
     first. A zip member is read through its directory entry; a plain tar member is read
-    by seeking to the data offset recorded at ingest. A compressed tar cannot be seeked,
-    so it is always staged, and the case records why. The case stays small and the
-    archive has to stay readable where the case recorded it. ``source_status`` says
-    whether it still is, and ``relink_source`` moves the record when the archive has
-    moved, accepting the new file only when every registered member is in it with the
-    same size and CRC (zip) or size and modification time (tar). Hashes, thumbnails,
-    stacks and categories are computed when the case is processed, so a case whose
-    archive has gone missing still opens and shows everything but full-size bytes.
+    by seeking to the data offset recorded at ingest; a carved item is read by seeking
+    to its offset in the reconstructed disk. A compressed tar cannot be seeked, so it is
+    always staged, and the case records why. The case stays small and the archive has
+    to stay readable where the case recorded it. ``source_status`` says whether it
+    still is, and ``relink_source`` moves the record when the archive has moved,
+    accepting the new file only when every registered member is in it with the same
+    size and CRC (zip) or size and modification time (tar), or, for an acquisition,
+    when it is the same acquisition and every recorded extent is inside it. Hashes,
+    thumbnails, stacks and categories are computed when the case is processed, so a
+    case whose archive has gone missing still opens and shows everything but
+    full-size bytes.
 
 ``staged``
     Every registered member is copied under ``<case>/staged/`` at ingest and the case
@@ -34,7 +43,8 @@ Two modes, chosen per source at ingest:
     ``unstage_source`` goes the other way while the archive is still readable.
 
 Either way, what is registered is what the case can produce: media members, plus
-everything else when ``include_other`` is set on the source. The source archive is
+everything else when ``include_other`` is set on the source. A carved source has only
+media to register, so that setting has nothing to decide there. The source archive is
 never written to, and deleting the case folder deletes every copy the case made.
 
 Staged and on-demand names are a hash of the member path with the extension kept, so
@@ -48,6 +58,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -60,6 +71,7 @@ from pathlib import Path, PurePosixPath
 
 from . import storage_views
 from .ingest import IMAGE_EXTS, VIDEO_EXTS, _kind_from_magic
+from .vendor import ewfprobe, mediacarve
 
 _SLUG = re.compile(r"[^A-Za-z0-9._-]+")
 _SHA256_LINE = re.compile(r"^\s*(?P<name>[^=]+?)\s*=\s*(?P<hex>[0-9A-Fa-f]{64})\s*$")
@@ -69,6 +81,7 @@ MODE_STAGED = "staged"
 FORMAT_ZIP = "zip"
 FORMAT_TAR = "tar"
 FORMAT_TAR_COMPRESSED = "tar-compressed"
+FORMAT_EWF = "ewf"            # an EnCase/EWF (.E01) disk image, carved for media
 CACHE_DIR = "cache"             # on-demand copies for the viewer; bounded, oldest evicted
 TMP_DIR = "tmp"                 # on-demand copies for processing; removed after use
 CACHE_MAX_BYTES = 2 * 1024 ** 3
@@ -97,19 +110,23 @@ def _is_tar(path: Path) -> bool:
 
 
 def archive_format(path: str | Path) -> str | None:
-    """``zip``, ``tar``, ``tar-compressed`` or None, decided by the file's own bytes.
+    """``zip``, ``tar``, ``tar-compressed``, ``ewf`` or None, decided by the file's
+    own bytes.
 
     A gzip, bzip2 or xz stream counts only if a tar is inside it; a gzipped single file
-    is not an archive source.
+    is not an archive source. An EWF acquisition is recognised by its own signature, so
+    the first segment of a set is enough and the extension is not consulted.
     """
     p = Path(path)
     if not p.is_file():
         return None
     try:
         with open(p, "rb") as fh:
-            head = fh.read(6)
+            head = fh.read(8)
     except OSError:
         return None
+    if head == ewfprobe.SIGNATURE:
+        return FORMAT_EWF
     if head[:4] == b"PK\x03\x04" or p.suffix.lower() == ".zip":
         return FORMAT_ZIP if zipfile.is_zipfile(p) else None
     if head[:2] == b"\x1f\x8b" or head[:3] == b"BZh" or head[:6] == b"\xfd7zXZ\x00":
@@ -282,6 +299,10 @@ def source_record(case, name: str) -> dict | None:
         "mode": case.db.get_meta(f"{key}:mode") or MODE_STAGED,
         "format": case.db.get_meta(f"{key}:format") or FORMAT_ZIP,
         "sha256": case.db.get_meta(f"{key}:sha256") or "",
+        # an image source verifies by what it holds, not by a member list
+        "media_size": num("media_size", int, 0),
+        "media_hash": case.db.get_meta(f"{key}:media_hash") or "",
+        "segments": num("segments", int, 0),
     }
 
 
@@ -305,6 +326,12 @@ def source_status(case) -> list[dict]:
             status = "missing"
         else:
             same = st.st_size == rec["size"] and abs(st.st_mtime - rec["mtime"]) < 2
+            # A segmented acquisition is several files and the record names one, so a
+            # later segment going missing leaves the first one untouched and the source
+            # reading fine until something asks for bytes that live in the missing part.
+            if same and rec["format"] == FORMAT_EWF and rec["segments"]:
+                with contextlib.suppress(ewfprobe.EwfError, OSError):
+                    same = len(ewfprobe.ewf_segments(rec["path"])) >= rec["segments"]
             status = "ok" if same else "changed"
         n = case.db.conn.execute("SELECT COUNT(*) n FROM files WHERE source=?",
                                  (name,)).fetchone()["n"]
@@ -320,6 +347,37 @@ def source_status(case) -> list[dict]:
 # hold nothing open between reads.
 _ZIPS: dict[str, zipfile.ZipFile] = {}
 _ZIP_LOCK = threading.Lock()
+# An EwfImage per image per process, with a lock each: a segmented set holds several
+# file handles and a chunk table, and reads have to be serialised across threads. The
+# ingest pass owns its image outright, so it uses _NO_LOCK rather than paying for one.
+_NO_LOCK = contextlib.nullcontext()
+_EWFS: dict[str, object] = {}
+_EWF_READ: dict[str, threading.Lock] = {}
+_EWF_LOCK = threading.Lock()
+
+
+def _open_ewf(path: str):
+    """The cached EwfImage for ``path`` and the lock that serialises reads of it."""
+    with _EWF_LOCK:
+        img = _EWFS.get(path)
+        if img is None:
+            try:
+                img = ewfprobe.open_ewf(path)
+            except (OSError, ewfprobe.EwfError) as exc:
+                raise ArchiveUnavailable(
+                    f"cannot open the source image ({exc}): {path}") from exc
+            _EWFS[path] = img
+            _EWF_READ[path] = threading.Lock()
+        return img, _EWF_READ[path]
+
+
+def _drop_ewf(path: str) -> None:
+    with _EWF_LOCK:
+        img = _EWFS.pop(path, None)
+        _EWF_READ.pop(path, None)
+    if img is not None:
+        with contextlib.suppress(Exception):
+            img.close()
 
 
 def _open_zip(path: str) -> zipfile.ZipFile:
@@ -351,6 +409,13 @@ def close_zips() -> None:
     for zf in handles:
         with contextlib.suppress(Exception):
             zf.close()
+    with _EWF_LOCK:
+        images = list(_EWFS.values())
+        _EWFS.clear()
+        _EWF_READ.clear()
+    for img in images:
+        with contextlib.suppress(Exception):
+            img.close()
 
 
 def _extract_member(zip_path: str, member: str, dest: Path) -> None:
@@ -406,9 +471,66 @@ def _extract_tar_member(rec: dict, row, dest: Path) -> None:
             f"could not read {member!r} from the source archive ({exc}): {tar_path}") from exc
 
 
+class _ImageRange(io.RawIOBase):
+    """A read-only view of one extent of an image, so a carved item is copied in
+    pieces rather than held in memory. A carved video can be gigabytes, and the
+    tar path already streams for the same reason."""
+
+    def __init__(self, img, lock, offset: int, size: int) -> None:
+        self._img, self._lock, self._at, self._left = img, lock, offset, size
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        if self._left <= 0:
+            return b""
+        want = self._left if size is None or size < 0 else min(size, self._left)
+        with self._lock:
+            self._img.seek(self._at)
+            data = self._img.read(want)
+        self._at += len(data)
+        self._left -= len(data)
+        return data
+
+    @property
+    def short_by(self) -> int:
+        return self._left
+
+
+def _extract_ewf_member(rec: dict, row, dest: Path) -> None:
+    """Write one carved item by seeking to its offset in the reconstructed image
+    and copying its length out. The offset is into the acquired disk, not into the
+    .E01 file, so the vendored reader decompresses the chunks it spans."""
+    path = rec["path"]
+    offset, size = row["member_offset"], int(row["size"])
+    if offset is None:
+        raise ArchiveUnavailable(f"the carved item at {path} has no recorded offset")
+    img, lock = _open_ewf(path)
+    view = _ImageRange(img, lock, int(offset), size)
+    try:
+        _write_stream(view, dest)
+    except (OSError, ewfprobe.EwfError) as exc:
+        if not Path(path).exists():
+            _drop_ewf(path)
+            raise ArchiveUnavailable(
+                f"the source image is no longer at its recorded location: {path}") from exc
+        raise ArchiveUnavailable(
+            f"could not read a carved item from the source image ({exc}): {path}") from exc
+    if view.short_by:
+        with contextlib.suppress(OSError):
+            dest.unlink()
+        raise ArchiveUnavailable(
+            f"a carved item is truncated in the source image (wanted {size} bytes, "
+            f"got {size - view.short_by}): {path}")
+
+
 def _materialize(rec: dict, row, dest: Path) -> None:
-    if rec.get("format", FORMAT_ZIP) == FORMAT_ZIP:
+    fmt = rec.get("format", FORMAT_ZIP)
+    if fmt == FORMAT_ZIP:
         _extract_member(rec["path"], row["orig_path"], dest)
+    elif fmt == FORMAT_EWF:
+        _extract_ewf_member(rec, row, dest)
     else:
         _extract_tar_member(rec, row, dest)
 
@@ -612,9 +734,11 @@ def ingest_archive(case, src, *, count: int = 0, progress=None) -> int:
     path = Path(src.path)
     fmt = archive_format(path)
     if fmt is None:
-        raise ValueError(f"{path.name} is not a zip or tar archive")
+        raise ValueError(f"{path.name} is not a zip, a tar or an E01 acquisition")
     if fmt == FORMAT_ZIP:
         return _ingest_zip(case, src, path, count=count, progress=progress)
+    if fmt == FORMAT_EWF:
+        return _ingest_ewf(case, src, path, count=count, progress=progress)
     return _ingest_tar(case, src, path, fmt, count=count, progress=progress)
 
 
@@ -678,6 +802,96 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
             tally=tally, timestamps=(
                 f"extended field on {tally.ts_extended} of {tally.registered} registered "
                 f"members; DOS date on {tally.ts_dos}"))
+    if progress:
+        progress(n)
+    return n
+
+
+def _carved_name(hit) -> str:
+    """The name a carved item is filed under.
+
+    A disk image has no member names, so the offset the item was found at is the
+    name: it is unique, it is stable across re-runs of the same image, and it
+    says where in the disk the bytes came from, which is the only provenance a
+    carved file has.
+    """
+    return f"carved/{hit.offset:016x}{hit.ext}"
+
+
+def _ingest_ewf(case, src, image_path: Path, *, count: int, progress) -> int:
+    """Register the media carved out of an EnCase/EWF acquisition.
+
+    An .E01 holds a disk, not a list of members, so there is nothing to
+    enumerate. The vendored reader presents the acquired disk as a seekable
+    stream and the vendored carver scans it for media, reporting each file as an
+    offset and a length. Those are registered the way a tar member's data offset
+    is, so reference mode reads a carved file back later by seeking to it.
+
+    What this finds is contiguous files. It reads no filesystem, so a carved row
+    has no name, path or timestamp of its own, and it cannot say whether the
+    bytes were a live file or a deleted one. The offset is the provenance, and
+    the date columns are left empty rather than filled with something else's date.
+    """
+    slug = _slug(image_path.stem)
+    staged_dir = case.staged_dir
+    stage = bool(getattr(src, "stage", False))
+    max_bytes = src.max_bytes
+    tally = _Tally()
+    state = {"n": count, "tick": 0.0}
+
+    def scan_progress(_pos, _total):
+        # A scan over a whole disk can run for minutes between hits, so the caller is
+        # told the count is still alive rather than left to wonder. What it wants is
+        # the file count, which the scan position cannot answer.
+        now = time.monotonic()
+        if progress and now - state["tick"] > 2:
+            state["tick"] = now
+            progress(state["n"])
+
+    img = ewfprobe.open_ewf(image_path)
+    try:
+        media_size = img.media_size
+        segments = len(img.paths)
+        stored = _stored_hash(img)
+        for hit in mediacarve.carve(img, progress=scan_progress):
+            if max_bytes and hit.length > max_bytes:
+                tally.skipped_size += 1
+                continue
+            # Every kind the carver reports is media, so include_other has
+            # nothing to decide here: there is no third kind to keep or drop.
+            kind = "image" if hit.kind in mediacarve.IMAGE_KINDS else "video"
+            name = _carved_name(hit)
+            dest = _staged_path(staged_dir, slug, name)
+            if stage:
+                _write_stream(_ImageRange(img, _NO_LOCK, hit.offset, hit.length), dest)
+            # No date is recorded rather than the image file's own, which is a
+            # property of the copy on this machine and would read as the carved
+            # file's date in every report column that shows it.
+            _register(case, src, dest, name, name, kind, hit.ext, hit.length,
+                      None, None, None, hit.offset)
+            tally.registered += 1
+            state["n"] += 1
+            if state["n"] % 200 == 0:
+                case.db.commit()
+                if progress:
+                    progress(state["n"])
+    finally:
+        img.close()
+    n = state["n"]
+
+    key = _meta_key(src.name)
+    case.db.set_meta(f"{key}:media_size", str(media_size))
+    case.db.set_meta(f"{key}:segments", str(segments))
+    # The acquisition's own recorded hash covers the whole disk, so an image
+    # whose hash matches holds the same bytes and every recorded offset is still
+    # valid. That is what relink and unstage check, instead of carving again.
+    case.db.set_meta(f"{key}:media_hash", stored)
+    _finish(case, src, image_path, fmt=FORMAT_EWF, root="", stage=stage,
+            reason=("carved from the acquired disk; a carved file has no name, path "
+                    "or timestamp of its own"),
+            tally=tally,
+            timestamps=(f"none: a carved file has no timestamp of its own, so the date "
+                        f"columns are empty on all {tally.registered} rows"))
     if progress:
         progress(n)
     return n
@@ -826,6 +1040,42 @@ def _verify_tar_members(case, name: str, index: dict, limit: int = 20) -> list[s
     return problems
 
 
+def _stored_hash(img) -> str:
+    """The acquisition's own recorded hash, as ``ALGO:hex``, or empty if it recorded
+    none. One value is enough to identify an acquisition and keeps the record short."""
+    return next((f"{a}:{h}" for a, h in sorted(dict(img.stored_hashes).items())), "")
+
+
+def _verify_ewf(case, name: str, rec: dict, img, limit: int = 20) -> list[str]:
+    """An image holds what the case registered when it is the same acquisition and
+    every recorded extent still lies inside it.
+
+    A carved row has no member to look up, so there is nothing to match by name.
+    What identifies the image is the acquisition itself: the media size and the
+    hash the acquiring tool wrote into the E01. Those are read out of the image's
+    own header, so this says the file is that acquisition. It does not re-hash the
+    disk, so it does not prove the bytes are intact; that is the same standard as
+    the zip check, which compares recorded CRCs rather than recomputing them.
+    """
+    problems: list[str] = []
+    if rec["media_size"] and img.media_size != rec["media_size"]:
+        problems.append(f"the image holds {img.media_size} bytes and the case "
+                        f"registered {rec['media_size']}")
+    stored = _stored_hash(img)
+    if rec["media_hash"] and stored != rec["media_hash"]:
+        problems.append(f"the acquisition hash is {stored or 'not recorded'} and the "
+                        f"case registered {rec['media_hash']}")
+    for r in case.db.iter_files("source = ?", (name,)):
+        off, size = r["member_offset"], r["size"]
+        if off is None:
+            problems.append(f"{r['orig_path']}: no recorded offset")
+        elif off + size > img.media_size:
+            problems.append(f"{r['orig_path']}: runs past the end of the image")
+        if len(problems) >= limit:
+            break
+    return problems
+
+
 def relink_source(case, name: str, new_path: str | Path) -> dict:
     """Point an archive source at an archive that has moved. The new file is accepted
     only when every registered member is in it with the same size and CRC (zip) or
@@ -837,12 +1087,21 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
     new = Path(new_path).resolve()
     fmt = archive_format(new)
     if fmt is None:
-        raise ValueError(f"cannot open {new}: not a zip or tar archive")
-    if (fmt == FORMAT_ZIP) != (rec["format"] == FORMAT_ZIP):
+        raise ValueError(f"cannot open {new}: not a zip, a tar or an E01 acquisition")
+    if (fmt == FORMAT_ZIP) != (rec["format"] == FORMAT_ZIP) or \
+            (fmt == FORMAT_EWF) != (rec["format"] == FORMAT_EWF):
         raise ValueError(f"{new.name} is a {fmt} and the case registered {name!r} "
                          f"from a {rec['format']}")
     index: dict = {}
-    if fmt == FORMAT_ZIP:
+    if fmt == FORMAT_EWF:
+        _drop_ewf(str(new))
+        try:
+            img = ewfprobe.open_ewf(new)
+        except (OSError, ewfprobe.EwfError) as exc:
+            raise ValueError(f"cannot open {new}: {exc}") from exc
+        with img:
+            problems = _verify_ewf(case, name, rec, img)
+    elif fmt == FORMAT_ZIP:
         try:
             zf = zipfile.ZipFile(new)
         except (OSError, zipfile.BadZipFile) as exc:
@@ -860,6 +1119,7 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
         raise ValueError(f"{new.name} does not hold what the case registered from "
                          f"{name!r}: {shown}")
     _drop_zip(rec["path"])
+    _drop_ewf(rec["path"])
     st = new.stat()
     key = _meta_key(name)
     if fmt == FORMAT_TAR:
@@ -878,26 +1138,12 @@ def stage_source(case, name: str, *, progress=None) -> int:
     """Copy every registered member of a reference-mode source under the case, making
     it self-contained. Returns the number of files written."""
     rec = _require(case, name)
-    zf = _open_zip(rec["path"]) if rec["format"] == FORMAT_ZIP else None
     rows = case.db.iter_files("source = ?", (name,))
     written = 0
     for i, r in enumerate(rows, 1):
         dest = Path(r["path"])
         if not dest.exists():
-            if zf is None:
-                _extract_tar_member(rec, r, dest)
-            else:
-                try:
-                    info = zf.getinfo(r["orig_path"])
-                except KeyError:
-                    raise ArchiveUnavailable(
-                        f"{r['orig_path']!r} is not in the source archive: {rec['path']}") from None
-                try:
-                    _write_member(zf, info, dest)
-                except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
-                    raise ArchiveUnavailable(
-                        f"could not read {r['orig_path']!r} from the source archive "
-                        f"({exc}): {rec['path']}") from exc
+            _materialize(rec, r, dest)
             if r["mtime"]:
                 with contextlib.suppress(OSError):
                     os.utime(dest, (r["mtime"], r["mtime"]))
@@ -920,7 +1166,10 @@ def unstage_source(case, name: str) -> int:
     if rec["format"] == FORMAT_TAR_COMPRESSED:
         raise ValueError(f"{Path(rec['path']).name} is a compressed tar and cannot be read "
                          "on demand; keeping the copies")
-    if rec["format"] == FORMAT_ZIP:
+    if rec["format"] == FORMAT_EWF:
+        img, _ = _open_ewf(rec["path"])
+        problems = _verify_ewf(case, name, rec, img)
+    elif rec["format"] == FORMAT_ZIP:
         zf = _open_zip(rec["path"])
         problems = _verify_members(case, name, zf)
     else:

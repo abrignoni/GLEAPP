@@ -129,6 +129,64 @@ written to. An extraction surfaces app streaming caches, ExoPlayer `.exo` fragme
 the like, which are not standalone videos; the pipeline reports them with its existing
 messages rather than silently dropping them.
 
+## An E01 acquisition is a fourth source, and its members are carved extents
+
+A computer acquisition arrives as an EnCase/EWF set: `image.E01` plus numbered segments
+beside it. It holds a disk, not a list of members, so there is nothing to enumerate.
+`archive_format` recognises it by the `EVF\x09\x0d\x0a\xff\x00` signature before the
+zip and tar checks, so the extension is never consulted and the first segment of a set is
+enough to open the whole thing.
+
+Two vendored single-file MIT tools do the work, copied verbatim into `gleapp/vendor/` with
+their provenance in `vendored.json` and their hashes asserted by the suite. `ewfprobe`
+presents the acquired disk as a seekable stream, reconstructing chunks across segments;
+`mediacarve` scans that stream for image and video signatures and reports each hit as an
+offset and a length. Both are standard library only, which is why they are vendored rather
+than required: GLEAPP ships as a frozen desktop app, and a dependency with a build step is
+a cost with nothing behind it. Fix them upstream (`abrignoni/ewfprobe`,
+`abrignoni/mediacarve`) and re-vendor with `tools/check_vendored.py --update`; an edit made
+in `gleapp/vendor/` fails the suite.
+
+Everything after the scan is the machinery a tar already uses, because a carved hit and a
+tar member are registered the same way: `member_offset` is a byte offset, and reference
+mode reads the bytes back by seeking to it. For a tar that is an offset into the file; for
+an acquisition it is an offset into the reconstructed disk, so the reader decompresses the
+chunks it spans. One `EwfImage` per image per process is cached, with its own lock, because
+a segmented set holds several file handles and a chunk table.
+
+Measured on a 232.9 GiB acquisition of a Windows drive, 15 segments, written by FTK
+Imager (ADI4.7.4.01 in its header): the scan registered 118,930 files (118,724 images,
+206 videos) in 23 minutes at 435 MB of memory, in reference mode with nothing copied out.
+A 28.6 GiB single-segment acquisition (TIE 4.4.3) gave 43 images in 136 seconds, and
+processing them for hashes, perceptual hashes and thumbnails reported zero errors on a
+case of 612 KB. Expect a computer drive to carve mostly application assets: browser and
+OS artwork outnumber anything a person made, and the carver has no filesystem to tell
+them apart.
+
+What a carved row cannot carry is worth stating plainly, because it is the difference
+between this source and every other one. Carving finds **contiguous** files, so a
+fragmented file recovers only as far as its first fragment. It reads no filesystem, so a
+row has no name, path or timestamp of its own: the name is the offset it was found at
+(`carved/<16 hex><ext>`), the date columns are left empty rather than filled with the
+image file's own date, which is a property of the copy on the examiner's machine, and
+nothing says whether the bytes were a live file or a deleted one. The case records that in
+`mode_reason` and `timestamps`, so the report says it rather than leaving the reader to
+assume. `include_other` has nothing to decide here either, since every kind the carver
+reports is already media.
+
+A segmented set is several files and the record names one, so `source_status` also counts
+the segments that are still on disk against the number the ingest saw; without that, a
+missing `.E05` leaves the first segment untouched and the source reads `ok` until something
+asks for bytes that live in the missing part.
+
+Relink and unstage cannot check a member list, so they check the acquisition instead: the
+media size and the hash the acquiring tool wrote into the E01, both read out of the image's
+own header, plus a requirement that every recorded extent still lies inside it. That says
+the file is that acquisition; it does not re-hash the disk, which is the same standard as
+the zip check comparing recorded CRCs rather than recomputing them. A read that comes back
+short is reported rather than written out, since an image swapped for a shorter one at the
+same path is never re-verified.
+
 ## Maps are drawn from a file the examiner imports, and the page requests nothing else
 
 The gallery's only map feature used to be a link to openstreetmap.org carrying the
