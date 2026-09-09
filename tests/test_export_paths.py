@@ -5,6 +5,10 @@ source, the case's staged folder for an archive row. A report or export is meant
 leave that machine, and ``rel_path`` and ``orig_path`` already say where the file was
 within the evidence, so no writer publishes ``files.path``. This runs the real
 pipeline on synthetic files and reads every writer's output back as text.
+
+The LAVA export is a folder rather than one file, and part of what it publishes is
+inside a SQLite database, so it is read back through its own tables as well as its
+manifest and pages.
 """
 
 import csv
@@ -15,7 +19,7 @@ import zipfile
 
 from PIL import Image
 
-from gleapp import report
+from gleapp import lava, report
 from gleapp.case import Source, open_case
 from gleapp.pipeline import ingest_sources, process
 
@@ -73,3 +77,44 @@ def test_exports_carry_no_local_path(tmp_path, monkeypatch):
     assert len(files) == 2 and all("path" not in f and f["rel_path"] for f in files), files
     assert re.search(r"DCIM[\\/]ok\.jpg", texts["html"]), "Path field lost the source path"
     assert [f for f in files if f["error"]][0]["error"].startswith("UnidentifiedImageError")
+
+
+def _lava_text(root) -> str:
+    """Every string the LAVA export publishes: the manifest, the two pages it writes
+    for LAVA's tabs, and every text value in every table of its database."""
+    import sqlite3
+    from pathlib import Path as _Path
+
+    root = _Path(root)
+    parts = [p.read_text(encoding="utf-8", errors="replace")
+             for p in sorted(root.rglob("*"))
+             if p.is_file() and p.suffix in (".lava", ".html", ".json")]
+    db = sqlite3.connect(root / "_lava_artifacts.db")
+    try:
+        names = [r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")]
+        for name in names:
+            for row in db.execute(f'SELECT * FROM "{name}"'):
+                parts += [v for v in row if isinstance(v, str)]
+    finally:
+        db.close()
+    return "\n".join(parts)
+
+
+def test_lava_export_carries_no_local_path(tmp_path, monkeypatch):
+    from gleapp import hashstore, stash
+    c = _case(tmp_path, monkeypatch)
+    out = tmp_path / "out"
+    out.mkdir()
+    try:
+        lava.export_lava(c, out / "lava")
+    finally:
+        c.close()
+        hashstore.close()
+        stash.close()
+    text = _lava_text(out / "lava")
+    assert str(tmp_path) not in text
+    assert tmp_path.name not in text
+    assert "evidence folder" not in text
+    # and the evidence-relative path is still there, which is what the report needs
+    assert re.search(r"DCIM[\\/]ok\.jpg", text), "the source path was lost entirely"

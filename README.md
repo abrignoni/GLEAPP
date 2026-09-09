@@ -38,7 +38,7 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | **Categories** | Locked **Project VIC 2.0 (US)** presets (codes 0–5) in every case; examiner adds their own (code 6+ — rename / delete / reorder, auto colors); shown as a color bar + name on every tile |
 | **Saving** | Every action commits to `case.gleapp` immediately (SQLite WAL); notes autosave; header shows save status; timestamped snapshots in `<case>/backups/` on a timer, on close, and on demand |
 | **Review workflow** | Filter to Uncategorized and work the backlog — categorizing *is* the review step, cursor auto-advances, ↻ Refresh clears done files; free-form tags, per-file notes, audit log of every action |
-| **Reporting** | HTML contact-sheet, CSV, JSON, **KMZ** of geolocated media (thumbnails embedded, for Google Earth), MD5 list, Project VIC round-trip |
+| **Reporting** | HTML contact-sheet, CSV, JSON, **KMZ** of geolocated media (thumbnails embedded, for Google Earth), MD5 list, Project VIC round-trip, and a **LAVA** project the LEAPP family's viewer opens |
 | **Web gallery** | Filter sidebar, multi-select, keyboard categorization, docked metadata pane (single-click), filmstrip + duplicate stack, one-click export, built-in manual |
 
 ---
@@ -239,6 +239,44 @@ Processing 30k+ files takes a while (thumbnails, perceptual hashes, optional
 face/skin screening) but is resumable — re-run `process` / reopen the case to
 continue. Turning off screening in the launcher roughly halves the time.
 
+## LAVA report
+
+`gleapp report --format lava` writes `reports/lava/`, a project the
+[LAVA](https://github.com/leapps-org/LAVA) viewer opens, so a case can be handed to
+an examiner who already reviews iLEAPP and ALEAPP output there. Eight artifacts:
+every media file, the ones an examiner categorized, the ones carrying coordinates,
+a location overview, exact-duplicate stacks, visually similar groups, known-hash-set
+hits, and the case audit log. Pictures and video show inline in LAVA and play from
+the report.
+
+A geolocated file also carries a **locator map**, drawn from the offline basemap you
+imported and marked at the file's own coordinates, with the street, water and place
+names the basemap carries. A **Location Overview** artifact puts every file it could
+map on one map. Nothing is fetched. A map is drawn only where the basemap actually
+holds tiles for those coordinates, because a point outside its coverage renders as an
+empty background with a mark on it, and the run log counts every file that got no map
+and why. `--no-maps` skips them.
+
+The case name, examiner, sources and counts go to LAVA's **Device Info** and
+**Screen Output** tabs. No path from the machine the case was made on is written
+anywhere in it, the same rule the other exports follow.
+
+Media is **copied** into the report by default, so the report is self-contained and
+nothing in it can write back to the evidence. `--link` hardlinks it instead, which
+is worth having only while the report stays on the volume it was built on: a
+hardlinked report shares an inode with the original file, and copying it elsewhere
+dereferences to roughly twice the size its own folder reported.
+
+`--lava-thumbs` puts GLEAPP's thumbnail in the Media column rather than the file.
+Use it for a report meant to travel: LAVA's tagged-rows HTML digest embeds every
+media cell as base64 at full size, so 100 tagged 3.5 MB photographs is about 467 MB
+in one file against 3.8 MB from thumbnails.
+
+An examiner can tag rows in LAVA and cut a subset project from the tags. That works
+on a GLEAPP report unchanged, and the subset records the source database's SHA-256,
+the tags, per-artifact counts, and whether the tagged rows still hash to what they
+did when they were tagged.
+
 ## Known-hash lists
 
 Import into **this case** (sidebar **Hash sets → Import hash set…**, or
@@ -336,8 +374,9 @@ gleapp          hashset   [FILE] --global  [--kind …] [--table T] [--algos a,b
                           [--list] [--rm ID]
 gleapp -c CASE  similar   FILE_ID  [--threshold N] [--limit N]
 gleapp -c CASE  stats
-gleapp -c CASE  report    [--format {csv,json,html,kml,md5,vic} ...]
+gleapp -c CASE  report    [--format {csv,json,html,kml,md5,vic,lava} ...]
                           [--scope {all,categorized,uncategorized}] [--where "SQL"]
+                          [--thumbs-only] [--no-maps] [--lava-thumbs] [--link]
 gleapp -c CASE  web       [--host H] [--port P] [--no-browser]
 gleapp -c CASE  desktop   # native window (offline)
 ```

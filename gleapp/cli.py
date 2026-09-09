@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, hashdb, report
+from . import __version__, hashdb, lava, report
 from .case import open_case, parse_source_spec
 from .pipeline import ingest_sources, process
 from .similar import find_similar
@@ -363,6 +363,15 @@ def cmd_report(args: argparse.Namespace) -> int:
         made.append(report.export_projectvic(
             case, out_dir / "projectvic_export.json",
             only_categorized=args.scope == "categorized"))
+    if "lava" in fmts:
+        # A folder rather than a file: LAVA opens a project, and the media it shows
+        # lives beside the manifest.
+        def prog(done: int, total: int) -> None:
+            if total and (done == total or done % 250 == 0):
+                _p(f"  media {done}/{total}")
+        made.append(lava.export_lava(case, out_dir / f"lava{tag}", where,
+                                     thumbs=args.lava_thumbs, link=args.link,
+                                     maps=not args.no_maps, progress=prog))
     for m in made:
         _p(f"  wrote {m}")
     case.close()
@@ -501,7 +510,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("report", help="export CSV/JSON/HTML/KML/MD5-list/VIC")
     s.add_argument("--format", nargs="+",
-                   choices=["csv", "json", "html", "kml", "md5", "vic"])
+                   choices=["csv", "json", "html", "kml", "md5", "vic", "lava"])
     s.add_argument("--scope", default="all",
                    choices=["all", "categorized", "uncategorized"],
                    help="which files to include (default: all)")
@@ -509,7 +518,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--thumbs-only", action="store_true",
                    help="HTML report: thumbnails only - no full-size images or videos")
     s.add_argument("--no-maps", action="store_true",
-                   help="HTML report: skip the location maps (drawn from the active basemap)")
+                   help="HTML and LAVA reports: skip the location maps (drawn from "
+                        "the active basemap)")
+    s.add_argument("--lava-thumbs", action="store_true",
+                   help="LAVA report: put GLEAPP's thumbnail in the Media column "
+                        "rather than the file, for a report meant to travel")
+    s.add_argument("--link", action="store_true",
+                   help="LAVA report: hardlink the media instead of copying it. Only "
+                        "for a report staying on the volume it was built on: the "
+                        "report then shares an inode with the evidence")
     s.set_defaults(func=cmd_report)
 
     s = sub.add_parser("web", help="launch the review gallery in a browser")

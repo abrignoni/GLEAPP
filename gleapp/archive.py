@@ -299,6 +299,10 @@ def source_record(case, name: str) -> dict | None:
         "mode": case.db.get_meta(f"{key}:mode") or MODE_STAGED,
         "format": case.db.get_meta(f"{key}:format") or FORMAT_ZIP,
         "sha256": case.db.get_meta(f"{key}:sha256") or "",
+        # what the ingest recorded about this source, in its own words, so a report
+        # can state it rather than generalise about how sources behave
+        "mode_reason": case.db.get_meta(f"{key}:mode_reason") or "",
+        "timestamps": case.db.get_meta(f"{key}:timestamps") or "",
         # an image source verifies by what it holds, not by a member list
         "media_size": num("media_size", int, 0),
         "media_hash": case.db.get_meta(f"{key}:media_hash") or "",

@@ -83,9 +83,47 @@ def _decode_geometry(cmds: bytes) -> list[list[tuple[int, int]]]:
     return paths
 
 
+def _parse_value(buf: bytes):
+    """One entry of a layer's value table: the first field that carries one wins.
+
+    A value is a message with exactly one field set, of whichever type it is. Only
+    the string case is needed for labels, but the numbers are cheap to keep and a
+    caller that reads a kind or a rank should not have to re-parse the tile.
+    """
+    p = 0
+    n = len(buf)
+    while p < n:
+        tag, p = _uvarint(buf, p)
+        field, wire = tag >> 3, tag & 0x7
+        if wire == 2:
+            ln, p = _uvarint(buf, p)
+            chunk = buf[p:p + ln]
+            p += ln
+            if field == 1:                          # string
+                return chunk.decode("utf-8", "replace")
+        elif wire == 0:
+            val, p = _uvarint(buf, p)
+            if field == 4:                          # int64
+                return val
+            if field == 5:                          # uint64
+                return val
+            if field == 6:                          # sint64
+                return _zigzag(val)
+            if field == 7:                          # bool
+                return bool(val)
+        elif wire == 5:
+            p += 4
+        elif wire == 1:
+            p += 8
+        else:
+            return None
+    return None
+
+
 def _parse_feature(buf: bytes) -> dict | None:
     gtype = 0
     geom = b""
+    tags: list[int] = []
     p = 0
     n = len(buf)
     while p < n:
@@ -101,6 +139,11 @@ def _parse_feature(buf: bytes) -> dict | None:
             p += ln
             if field == 4:
                 geom = chunk
+            elif field == 2:                        # packed key/value index pairs
+                q = 0
+                while q < len(chunk):
+                    idx, q = _uvarint(chunk, q)
+                    tags.append(idx)
         elif wire == 5:
             p += 4
         elif wire == 1:
@@ -109,13 +152,15 @@ def _parse_feature(buf: bytes) -> dict | None:
             return None
     if not gtype or not geom:
         return None
-    return {"type": gtype, "paths": _decode_geometry(geom)}
+    return {"type": gtype, "paths": _decode_geometry(geom), "tag_indices": tags}
 
 
 def _parse_layer(buf: bytes) -> dict:
     name = ""
     extent = 4096
     features: list[dict] = []
+    keys: list[str] = []
+    values: list = []
     p = 0
     n = len(buf)
     while p < n:
@@ -135,12 +180,27 @@ def _parse_layer(buf: bytes) -> dict:
                 feat = _parse_feature(chunk)
                 if feat:
                     features.append(feat)
+            elif field == 3:
+                keys.append(chunk.decode("utf-8", "replace"))
+            elif field == 4:
+                values.append(_parse_value(chunk))
         elif wire == 5:
             p += 4
         elif wire == 1:
             p += 8
         else:
             break
+    # A feature's tags are indices into the layer's key and value tables, and the
+    # tables can appear after the features that use them, so they are resolved once
+    # the whole layer is read rather than as each feature is parsed.
+    for feat in features:
+        indices = feat.pop("tag_indices", [])
+        attrs = {}
+        for i in range(0, len(indices) - 1, 2):
+            k, v = indices[i], indices[i + 1]
+            if k < len(keys) and v < len(values):
+                attrs[keys[k]] = values[v]
+        feat["tags"] = attrs
     return {"name": name, "extent": extent, "features": features}
 
 
