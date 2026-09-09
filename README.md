@@ -243,11 +243,12 @@ continue. Turning off screening in the launcher roughly halves the time.
 
 `gleapp report --format lava` writes `reports/lava/`, a project the
 [LAVA](https://github.com/leapps-org/LAVA) viewer opens, so a case can be handed to
-an examiner who already reviews iLEAPP and ALEAPP output there. Eleven artifacts:
+an examiner who already reviews iLEAPP and ALEAPP output there. Thirteen artifacts:
 every media file, the ones an examiner categorized, the ones carrying coordinates,
-a location overview, the frames extracted from each video, exact-duplicate stacks,
-visually similar groups, known-hash-set hits, the lists those hits were checked
-against, Project VIC records with the flags they carried, and the case audit log.
+a location overview, the frames extracted from each video, all three grouping tiers
+(exact-duplicate stacks, visually similar groups and the looser clusters),
+known-hash-set hits, the lists those hits were checked against, Project VIC records
+with the flags they carried, what the category names mean, and the case audit log.
 Pictures and video show inline in LAVA and play from the report.
 
 The video frames GLEAPP already extracts go in with their time offsets, so a clip can
