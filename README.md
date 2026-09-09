@@ -25,6 +25,7 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | Area | What GLEAPP does |
 |---|---|
 | **Ingestion** | Recursive scan of folders / mounted evidence, or a `ingest.json` job spec listing multiple named sources (size caps, symlink policy per source) |
+| **Extractions and acquisitions** | A full-file-system extraction (zip or tar) is read in place, its media registered by device path. An **EnCase/EWF acquisition** (`.E01` and its segments) holds a disk rather than a list of files, so its media is **carved** by signature and each hit is registered by the offset it was found at |
 | **Hashing** | MD5 / SHA-1 / SHA-256 in one pass, plus aHash / pHash / dHash perceptual hashes |
 | **Deduplication** | Three tiers: exact-file **stacking** (same hash), **visual stacking** ("same picture to the eye" — pHash *and* dHash agree; collapses like a stack, badged **≈ N**), and a looser browsable **similar-group** cluster. Featureless images (gradients, flat screenshots) are excluded from perceptual grouping |
 | **Project VIC** | Import a Project VIC 2.0 (US) case file directly — registers every `Media` entry, resolves the media folder, keeps MD5 / MediaID / original name & path / MIME / victim-offender flags; **export back** to VIC JSON with your categories filled in |
@@ -129,9 +130,12 @@ python -m gleapp --case mycase ingest  sample_evidence\ingest.json
 #    demand, so the case stays small and the archive has to stay where it is. Add
 #    --stage to copy the media into the case instead (self-contained, and as large as
 #    the media). A compressed tar (.tar.gz) is always copied out, since it cannot be
-#    read on demand. An Android image that carries one file under several storage
-#    views (data/data, data/user/0, data_mirror, storage/emulated) registers it once;
-#    the other paths show in the details pane as "Also under" and are searchable.
+#    read on demand. An E01 acquisition (.E01 with its numbered segments beside it) is
+#    a source too: it holds a disk rather than a list of files, so its media is carved
+#    and each hit is registered by the offset it was found at. An Android image that
+#    carries one file under several storage views (data/data, data/user/0, data_mirror,
+#    storage/emulated) registers it once; the other paths show in the details pane as
+#    "Also under" and are searchable.
 python gleapp.py -c mycase ingest /path/to/EXTRACTION_FFS.zip
 python gleapp.py -c mycase source list                  # is the zip still where the case expects it?
 python gleapp.py -c mycase source relink EXTRACTION_FFS.zip /new/place/EXTRACTION_FFS.zip
@@ -155,7 +159,8 @@ mycase/
   thumbs/           generated thumbnails + video key frames
   reports/          exported reports
   backups/          timestamped case snapshots (auto + manual)
-  staged/           media copied out of an extraction archive (--stage, or a compressed tar)
+  staged/           media copied out of an extraction archive or acquisition
+                    (--stage, or a compressed tar)
   cache/            full-size copies the viewer pulled from an archive on demand (bounded)
 ```
 
@@ -182,10 +187,11 @@ The most recent 20 are kept. To roll back, close GLEAPP and copy a snapshot over
 
 ## Ingest JSON spec
 
-A path in `sources` may also be a full-file-system extraction archive, a zip or a tar
-(plain or compressed); it is detected by its bytes and ingested as an archive source. Its
-media is read from the archive on demand unless the entry sets `"stage": true`, which
-copies it under the case; a compressed tar is always copied out.
+A path in `sources` may also be a full-file-system extraction archive (a zip or a tar,
+plain or compressed) or an EnCase/EWF acquisition (`.E01`); it is detected by its bytes and
+ingested as an archive source. Its media is read from the archive on demand unless the
+entry sets `"stage": true`, which copies it under the case; a compressed tar is always
+copied out.
 
 Pass a folder path **or** a `.json` file. Accepted shapes (keys case-insensitive):
 
@@ -318,8 +324,9 @@ gleapp -c CASE  ingest    SOURCE  [--no-process] [--stage] [--force] [--workers 
                                  [--keyframes N] [--no-screen] [--cluster-threshold N]
 gleapp -c CASE  process   [same processing flags]
 gleapp -c CASE  source    list | relink NAME PATH | stage NAME | unstage NAME
-                          # extraction archives: where they are, move the record when
-                          # one moved, copy one into the case, or drop the copies
+                          # extraction archives and acquisitions: where they are, move
+                          # the record when one moved, copy one into the case, or drop
+                          # the copies
 gleapp          maps      list | import FILE [--name N] | remove NAME | use NAME
                           | extract --bbox=W,S,E,N --out FILE [--maxzoom Z] [--build URL]
                           # offline basemaps for the gallery map (see Maps above)
@@ -398,6 +405,10 @@ gleapp/
   backup.py     case snapshots (auto + manual), pruning
   db.py         SQLite schema + helpers (one case = one file)
   case.py       case open/create + ingest-source spec parsing
+  archive.py    extraction zip/tar and E01 acquisition sources: enumerate or carve,
+                register, read back on demand
+  vendor/       ewfprobe (E01 reader) and mediacarve (signature carver), copied in
+                verbatim with their provenance in vendored.json
   appconfig.py  per-user config (recent cases) in %APPDATA%\GLEAPP
   cli.py        argparse CLI
   desktop.py    pywebview shell (the PyInstaller entry point)
@@ -455,7 +466,10 @@ python tools/make_test_media.py test_media
 
 GLEAPP is built on Pillow, OpenCV, NumPy, ImageHash, Flask, SQLite, the YuNet
 face detector (OpenCV Zoo), pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd,
-tzdata and more. GLEAPP is part of the **xLEAPP** family (ALEAPP / iLEAPP /
+tzdata and more. E01 acquisitions are read with
+[ewfprobe](https://github.com/abrignoni/ewfprobe) and carved with
+[mediacarve](https://github.com/abrignoni/mediacarve), both MIT and vendored under
+`gleapp/vendor/`. GLEAPP is part of the **xLEAPP** family (ALEAPP / iLEAPP /
 RLEAPP …), the project started by Alexis Brignoni & contributors. It reads the
 **Project VIC** data model and the **NSRL RDS** (NIST). Full attributions and
 licences: **section 19 of the manual** (`docs/MANUAL.md`, or **? Help** in the

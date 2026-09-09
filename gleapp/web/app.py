@@ -210,7 +210,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             elif kind == "archive":
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
-                    file_types=("Extraction archive (*.zip;*.tar;*.tgz;*.tar.gz)",
+                    file_types=("Extraction or acquisition "
+                                "(*.zip;*.tar;*.tgz;*.tar.gz;*.E01;*.e01)",
                                 "All files (*.*)"),
                 )
             elif kind == "hashdb":

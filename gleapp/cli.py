@@ -413,8 +413,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--cluster-threshold", type=int, default=8)
 
     s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction archive "
-                                      "(zip or tar), or a JSON spec, then process")
-    s.add_argument("source", help="folder path, extraction .zip/.tar/.tar.gz, OR .json spec file")
+                                      "(zip or tar), an E01 acquisition, or a JSON spec, "
+                                      "then process")
+    s.add_argument("source", help="folder path, extraction .zip/.tar/.tar.gz, .E01 "
+                                  "acquisition, OR .json spec file")
     s.add_argument("--no-process", action="store_true", help="register files only")
     s.add_argument("--stage", action="store_true",
                    help="copy the media out of an extraction archive into the case, so the "
