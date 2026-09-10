@@ -824,7 +824,8 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
               mtime: float, ctime: float | None, crc32: int | None,
               member_offset: int | None, alt_paths: list[str] | None = None,
               origin: str | None = None, member_node: int | None = None,
-              volume_base: int | None = None) -> None:
+              volume_base: int | None = None,
+              recorded_times: str | None = None) -> None:
     case.db.upsert_file(
         str(dest),
         rel_path=rel,
@@ -843,6 +844,7 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
         origin=origin,
         member_node=member_node,
         volume_base=volume_base,
+        recorded_times=recorded_times,
     )
 
 
@@ -1013,7 +1015,11 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
             vol = label or f"lba{base // qnxprobe.SECTOR}"
             try:
                 walker = qnxprobe.walker_for(fskind, img, base, size)
-                entries = qnxprobe.collect(walker, walker.root)
+                # FAT and exFAT keep a wall-clock reading and no zone, so their
+                # mtime comes back as zero and the readings arrive here instead,
+                # as text, keyed by the same path collect() reports.
+                readings: dict = {}
+                entries = qnxprobe.collect(walker, walker.root, times=readings)
             except Exception as exc:                 # pylint: disable=broad-except
                 refused.append(f"{vol} ({fskind}): {exc}")
                 continue
@@ -1056,8 +1062,10 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
                             os.utime(dest, (mtime, mtime))
                 # A walked row is read back through its volume's walker, so it
                 # records the node and the volume rather than a byte offset.
+                said = readings.get(path)
                 _register(case, src, dest, name, name, kind, ext, fsize,
                           mtime or None, None, None, None,
+                          recorded_times=json.dumps(said) if said else None,
                           origin="walk", member_node=json.dumps(node),
                           volume_base=int(base))
                 tally.registered += 1

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -79,7 +79,11 @@ CREATE TABLE IF NOT EXISTS files (
     volume_base   INTEGER,                -- byte offset of the volume that file was walked from
     crc32         INTEGER,                -- the CRC-32 the source archive records for the member (zip)
     member_offset INTEGER,                -- byte offset of the member's data in a plain tar source
-    alt_paths     TEXT                    -- JSON: the other storage views this file was also under
+    alt_paths     TEXT,                   -- JSON: the other storage views this file was also under
+    recorded_times TEXT                   -- JSON: readings the filesystem stores with no zone on
+                                          -- them, as stored. FAT and exFAT keep a wall clock and
+                                          -- no zone, so mtime above is null for them and this
+                                          -- carries the reading as text instead. Never an instant.
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_md5      ON files(md5);
@@ -230,7 +234,7 @@ class CaseDB:
             ("alt_paths", "TEXT"),
             ("vic_series", "TEXT"), ("vic_tags", "TEXT"),
             ("origin", "TEXT"), ("member_node", "TEXT"),
-            ("volume_base", "INTEGER"),
+            ("volume_base", "INTEGER"), ("recorded_times", "TEXT"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")

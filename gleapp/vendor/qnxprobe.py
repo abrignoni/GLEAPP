@@ -42,7 +42,7 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.21"
+QNXPROBE_VERSION = "1.22"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
@@ -979,7 +979,11 @@ class Fat32Walker:
         mode = 0o040000 if is_dir else 0o100000
         return (mode, size, 0)
 
-    def listdir(self, node):
+    def listdir_records(self, node):
+        """(name, node, recorded times as stored) for every entry.
+
+        FAT records a wall-clock reading and no zone, so the times are text.
+        """
         clus = node[0]
         raw = self._read_chain(clus)
         out, lfn = [], []
@@ -1005,12 +1009,88 @@ class Fat32Walker:
             is_sub = bool(attr & 0x10)
             if name in (".", ".."):
                 continue
-            out.append((name, (first or 2, sz, is_sub)))
+            node = (first or 2, sz, is_sub)
+            out.append((name, node, {
+                "modified": _dos_stamp(struct.unpack_from("<H", e, 24)[0],
+                                       struct.unpack_from("<H", e, 22)[0]),
+                "created": _dos_stamp(struct.unpack_from("<H", e, 16)[0],
+                                      struct.unpack_from("<H", e, 14)[0], e[13]),
+                "accessed date": _dos_date(struct.unpack_from("<H", e, 18)[0]),
+            }))
         return out
+
+    def listdir(self, node):
+        return [(name, child) for name, child, _times in self.listdir_records(node)]
 
     def read_file(self, node, size):
         clus, sz, _ = node
         yield self._read_chain(clus, sz)
+
+
+def _dos_stamp(date, time_, tenths=0):
+    """A FAT date and time pair as text, exactly as stored, or "" if unset.
+
+    FAT keeps a wall-clock reading and no zone at all, so this is a reading and
+    not an instant, and it is returned as text so that nothing downstream can
+    give it one. Seconds are stored in units of two, with an optional tenths
+    byte carrying the odd second and hundredths on creation times.
+    """
+    if not date:
+        return ""
+    year = 1980 + ((date >> 9) & 0x7F)
+    month = (date >> 5) & 0x0F
+    day = date & 0x1F
+    hour = (time_ >> 11) & 0x1F
+    minute = (time_ >> 5) & 0x3F
+    second = (time_ & 0x1F) * 2 + (tenths // 100)
+    if not (1 <= month <= 12 and 1 <= day <= 31) or hour > 23 or minute > 59 or second > 59:
+        return ""
+    out = f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
+    hundredths = tenths % 100
+    return f"{out}.{hundredths:02d}" if hundredths else out
+
+
+def _dos_date(date):
+    """A FAT date as text, with no time on it.
+
+    FAT records a last-access DATE and no time of day. Rendering it as midnight
+    would assert a reading the entry does not carry, so only the date is given.
+    """
+    if not date:
+        return ""
+    year = 1980 + ((date >> 9) & 0x7F)
+    month = (date >> 5) & 0x0F
+    day = date & 0x1F
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return ""
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _exfat_stamp(value, tenths=0):
+    """An exFAT timestamp as text, exactly as stored. Same packing as FAT."""
+    if not value:
+        return ""
+    return _dos_stamp(value >> 16, value & 0xFFFF, tenths)
+
+
+def _exfat_offset(byte):
+    """An exFAT UTC offset byte as text, exactly as stored, or "" if not set.
+
+    The low seven bits are a signed count of fifteen minute steps and the top
+    bit says whether the field was written at all. This is reported rather than
+    applied: on the one exFAT volume measured here the stored reading was not
+    the writing machine's local clock and this field was the negation of its
+    zone, so applying it would assert an instant the evidence does not support.
+    """
+    if not byte & 0x80:
+        return ""
+    quarters = byte & 0x7F
+    if quarters & 0x40:
+        quarters -= 0x80
+    minutes = quarters * 15
+    sign = "-" if minutes < 0 else "+"
+    minutes = abs(minutes)
+    return f"{sign}{minutes // 60:02d}:{minutes % 60:02d}"
 
 
 def _fat_short_name(e):
@@ -1090,7 +1170,12 @@ class ExfatWalker:
         _, size, is_dir, _ = node
         return (0o040000 if is_dir else 0o100000, size, 0)
 
-    def listdir(self, node):
+    def listdir_records(self, node):
+        """(name, node, recorded times as stored) for every entry.
+
+        exFAT carries a UTC offset beside each timestamp, unlike FAT. It is
+        reported as stored rather than applied, so no instant is asserted.
+        """
         clus, _, _, contig = node
         raw = self._read(clus, 0, contig)
         out = []
@@ -1117,11 +1202,22 @@ class ExfatWalker:
                     name += ent[2:32].decode("utf-16-le", "replace")
                 name = name[:name_len]
                 if name not in (".", ".."):
-                    out.append((name, (first, data_len, is_dir, contiguous)))
+                    cre, mod, acc = struct.unpack_from("<III", raw, i + 8)
+                    out.append((name, (first, data_len, is_dir, contiguous), {
+                        "modified": _exfat_stamp(mod, raw[i + 21]),
+                        "created": _exfat_stamp(cre, raw[i + 20]),
+                        "accessed": _exfat_stamp(acc),
+                        "modified utc offset": _exfat_offset(raw[i + 23]),
+                        "created utc offset": _exfat_offset(raw[i + 22]),
+                        "accessed utc offset": _exfat_offset(raw[i + 24]),
+                    }))
                 i += 32 * (secs + 1)
             else:
                 i += 32
         return out
+
+    def listdir(self, node):
+        return [(name, child) for name, child, _times in self.listdir_records(node)]
 
     def free_extents(self, min_bytes=0):
         """[(byte offset, length)] for the runs of space the volume says are free.
@@ -4216,21 +4312,36 @@ def _zip_time(v):
     return (d.year, d.month, d.day, d.hour, d.minute, d.second)
 
 
-def collect(w, num, prefix="", depth=0, seen=None, out=None):
-    """Every regular file under this inode, as (path, inode, size, mtime)."""
+def collect(w, num, prefix="", depth=0, seen=None, out=None, times=None):
+    """Every regular file under this inode, as (path, inode, size, mtime).
+
+    Pass a dict as ``times`` to also receive each path's recorded times, as the
+    filesystem stores them, from walkers that keep readings rather than instants.
+    FAT and exFAT are those: they hold a wall-clock reading and no zone, so
+    ``mtime`` above stays zero for them and the readings arrive here as text
+    instead, where nothing downstream can put a zone on them.
+    """
     if seen is None:
         seen, out = set(), []
     if depth > 64 or num in seen:
         return out
     seen.add(num)
-    for name, ino in w.listdir(num):
+    if times is not None and hasattr(w, "listdir_records"):
+        listing = w.listdir_records(num)
+    else:
+        listing = [(name, ino, None) for name, ino in w.listdir(num)]
+    for name, ino, recorded in listing:
         ent = w.entry(ino)
         if not ent:
             continue
         mode, size, mtime = ent
         path = f"{prefix}/{name}" if prefix else name
+        if times is not None and recorded:
+            kept = {k: v for k, v in recorded.items() if v}
+            if kept:
+                times[path] = kept
         if mode & S_IFDIR:
-            collect(w, ino, path, depth + 1, seen, out)
+            collect(w, ino, path, depth + 1, seen, out, times)
         elif (mode & 0o170000) == 0o100000:          # regular files only
             out.append((path, ino, size, mtime))
         else:
@@ -7004,6 +7115,31 @@ def self_test():
         struct.pack_into("<I", _fatbuf, _fat_at + 4, 0x0FFFFFFF)  # end of chain
         for _c in FAT_USED:
             struct.pack_into("<I", _fatbuf, _fat_at + _c * 4, 0x0FFFFFFF)
+        # one 8.3 entry in the root, so collect() has something to carry times
+        # for. The date and time words are written out here rather than built by
+        # the code under test, and the reading they encode is stated separately.
+        _de = _fat_at + FAT_NFATS * FAT_SPF * FAT_BPS      # cluster 2's data
+        _fatbuf[_de:_de + 11] = b"HELLO   TXT"
+        _fatbuf[_de + 11] = 0x20                           # an ordinary file
+        struct.pack_into("<H", _fatbuf, _de + 24, (2023 - 1980) << 9 | (6 << 5) | 1)
+        struct.pack_into("<H", _fatbuf, _de + 22, (12 << 11) | (30 << 5) | 15)
+        struct.pack_into("<H", _fatbuf, _de + 26, 11)      # first cluster, a used one
+        struct.pack_into("<I", _fatbuf, _de + 28, 512)     # size
+        FAT_ENTRY_WRITTEN = "2023-06-01 12:30:30"
+        # and a subdirectory holding one file, so the walk down carries the
+        # readings too rather than only reporting the root's
+        _fatbuf[_de + 32:_de + 43] = b"SUB        "
+        _fatbuf[_de + 43] = 0x10                           # a directory
+        struct.pack_into("<H", _fatbuf, _de + 32 + 26, 22) # first cluster, a used one
+        _sub = _de + (22 - 2) * FAT_BPS
+        _fatbuf[_sub:_sub + 11] = b"DEEP    TXT"
+        _fatbuf[_sub + 11] = 0x20
+        struct.pack_into("<H", _fatbuf, _sub + 24, (1999 - 1980) << 9 | (12 << 5) | 31)
+        struct.pack_into("<H", _fatbuf, _sub + 22, (23 << 11) | (59 << 5) | 29)
+        struct.pack_into("<H", _fatbuf, _sub + 26, 23)     # first cluster, a used one
+        struct.pack_into("<I", _fatbuf, _sub + 28, 64)
+        FAT_DEEP_WRITTEN = "1999-12-31 23:59:58"
+
         _fatw = Fat32Walker(io.BytesIO(bytes(_fatbuf)), 0)
         _fat_data = _fat_at + FAT_NFATS * FAT_SPF * FAT_BPS
         fat_free_ok = (_fatw.free_extents()
@@ -7081,6 +7217,20 @@ def self_test():
         # stops. Both FAT readers follow a chain by reading four bytes per
         # cluster, and past the end of the file that read comes back short, so
         # each must answer rather than raise.
+        # collect() carries the readings only when asked, and its own result is
+        # unchanged either way, because four other call sites read that tuple.
+        _times = {}
+        _with = collect(_fatw, _fatw.root, times=_times)
+        _without = collect(_fatw, _fatw.root)
+        # neither entry carries a creation time or an access date, and a reading
+        # the entry does not hold must be absent rather than present and empty
+        collect_times_ok = (_times.get("HELLO.TXT", {}).get("modified") == FAT_ENTRY_WRITTEN
+                            and _times.get("SUB/DEEP.TXT", {}).get("modified") == FAT_DEEP_WRITTEN
+                            and set(_times.get("HELLO.TXT", {})) == {"modified"}
+                            and _with == _without
+                            and all(len(e) == 4 for e in _with)
+                            and len(_with) == 2)
+
         # Cut each image so the read of the next FAT entry falls off the end.
         try:
             _cut_fat = Fat32Walker(io.BytesIO(bytes(_fatbuf)[:_fat_at + 8]), 0)
@@ -7090,6 +7240,30 @@ def self_test():
                                 and isinstance(_cut_fat.free_extents(), list))
         except Exception:                            # pylint: disable=broad-except
             fat_truncated_ok = False
+
+        # FAT keeps a wall-clock reading and no zone. The expected strings are
+        # written out here rather than built from the same packing the code
+        # uses, so the test cannot agree with the decoder by construction.
+        stamp_ok = (_dos_stamp((2023 - 1980) << 9 | (6 << 5) | 1, (12 << 11) | (30 << 5) | 15)
+                    == "2023-06-01 12:30:30"
+                    and _dos_stamp((1980 - 1980) << 9 | (1 << 5) | 1, 0) == "1980-01-01 00:00:00"
+                    and _dos_stamp(0, 0) == ""
+                    and _dos_stamp((2024 - 1980) << 9 | (2 << 5) | 29,
+                                   (23 << 11) | (59 << 5) | 29, 199)
+                    == "2024-02-29 23:59:59.99")
+        stamp_date_ok = (_dos_date((2021 - 1980) << 9 | (5 << 5) | 5) == "2021-05-05"
+                         and _dos_date(0) == "")
+        # month 0 and day 0 are what an unwritten or damaged entry holds
+        stamp_junk_ok = (_dos_stamp((2023 - 1980) << 9, 0) == ""
+                         and _dos_stamp((2023 - 1980) << 9 | (13 << 5) | 1, 0) == ""
+                         and _dos_date((2023 - 1980) << 9 | (1 << 5)) == "")
+        # 0x80 says the field was written, the low seven bits are signed steps
+        # of fifteen minutes: +4 is 16 steps, -5 is 108 as two's complement
+        offset_ok = (_exfat_offset(0x80 | 16) == "+04:00"
+                     and _exfat_offset(0x80 | 108) == "-05:00"
+                     and _exfat_offset(0x80) == "+00:00"
+                     and _exfat_offset(0x00) == ""
+                     and _exfat_offset(0x10) == "")
 
         for label, cond in (
                 ("an NTFS boot sector is identified by its own geometry",
@@ -7119,7 +7293,17 @@ def self_test():
                 ("an exFAT volume whose root names no bitmap reports nothing "
                  "rather than nothing free", exfat_no_bitmap_ok),
                 ("a FAT or exFAT volume cut short by a split acquisition answers "
-                 "rather than raising", fat_truncated_ok)):
+                 "rather than raising", fat_truncated_ok),
+                ("a FAT date and time decode to the reading they store, with no "
+                 "zone put on them", stamp_ok),
+                ("a FAT last-access date is given as a date, not as midnight",
+                 stamp_date_ok),
+                ("an impossible FAT date is reported as nothing rather than as "
+                 "a wrong reading", stamp_junk_ok),
+                ("an exFAT UTC offset decodes both ways from its stored steps, "
+                 "and an unset one says nothing", offset_ok),
+                ("collect carries the recorded readings when asked, and returns "
+                 "the same tuples either way", collect_times_ok)):
             if not cond:
                 ok = False
             print(f"  [{'PASS' if cond else 'FAIL'}] {label}")
