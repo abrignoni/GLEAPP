@@ -1580,13 +1580,17 @@ async function liveJob() {
     return;
   }
   if (!j.running || j.stage === "done") {
-    showProc("Processing complete", 100);
+    // an export writes files rather than changing the case, so it says so
+    const exported = j.stats && j.stats.report_dir;
+    showProc(exported ? "Export complete" : "Processing complete", 100);
     $("#procPct").textContent = "";
     await refreshContext().catch(() => {});
     await load({ keepScroll: true }).catch(() => {});
     setTimeout(() => { $("#procBar").style.display = "none"; }, 4000);
-    toast("Processing complete" + (j.stats && j.stats.processed
-      ? ` — ${j.stats.processed.toLocaleString()} files` : ""));
+    toast(exported
+      ? `Export complete → ${j.stats.report_dir}`
+      : "Processing complete" + (j.stats && j.stats.processed
+        ? ` — ${j.stats.processed.toLocaleString()} files` : ""));
     return;
   }
 
@@ -1768,6 +1772,13 @@ $("#reportGo").onclick = async () => {
     body: JSON.stringify(body)
   });
   if (r.error) return toast(r.message || "Export failed");
+  if (r.job) {
+    // a LAVA project stages the media and draws a map per geolocated file, so
+    // it runs as a job and the bottom bar follows it to the end
+    toast(`Building the report (${r.scope}) — the bar at the bottom follows it`);
+    liveTick = 0; liveJob();
+    return;
+  }
   toast(`Exported (${r.scope}) → ${r.dir}`);
 };
 
