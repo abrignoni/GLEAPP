@@ -6,7 +6,7 @@ Every header here is synthetic: a size word, the ``ftyp`` box type at bytes
 
 import pytest
 
-from gleapp.ingest import _kind_from_magic, sniff_kind
+from gleapp.ingest import _kind_from_magic, is_appledouble, sniff_kind
 
 
 def _isobmff_header(brand: bytes) -> bytes:
@@ -56,3 +56,49 @@ def test_sniff_kind_reads_the_major_brand_from_disk(tmp_path):
     video.write_bytes(_isobmff_header(b"mp42") + b"\x00" * 64)
     assert sniff_kind(audio) == "other"
     assert sniff_kind(video) == "video"
+
+
+# ---- macOS AppleDouble sidecars -----------------------------------------
+# The first 32 bytes of a sidecar macOS wrote onto a FAT32 volume on
+# 2026-09-10, beside a JPEG called photo.jpg. Written out as literals so the
+# test does not read the constant the code matches on: magic 0x00051607, then
+# version 0x00020000, then the 16-byte "Mac OS X" filler, then the entry count.
+# magic 0x00051607, version 2, the 16-byte "Mac OS X" filler, then the entry
+# count and the first entry (Finder info).
+_AD_HEX = ("00051607" + "00020000" + "4d6163204f5320582020202020202020"
+           + "0002" + "0000000900000032")
+APPLEDOUBLE_HEAD = bytes.fromhex(_AD_HEX)
+JPEG_HEAD = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01"
+
+
+def test_a_sidecar_is_recognised_by_its_name_and_its_magic_together():
+    assert is_appledouble("._photo.jpg", APPLEDOUBLE_HEAD)
+    assert is_appledouble("DCIM/100TRIP/._photo.jpg", APPLEDOUBLE_HEAD)
+    assert is_appledouble(r"DCIM\100TRIP\._photo.jpg", APPLEDOUBLE_HEAD)
+
+
+def test_a_real_image_named_like_a_sidecar_is_left_alone():
+    """The name alone must not reclassify a file: somebody can name one this."""
+    assert not is_appledouble("._photo.jpg", JPEG_HEAD)
+
+
+def test_appledouble_bytes_under_an_ordinary_name_are_left_alone():
+    """And the magic alone must not either; four bytes are not a filename."""
+    assert not is_appledouble("photo.jpg", APPLEDOUBLE_HEAD)
+
+
+def test_a_sidecar_on_disk_is_not_classified_as_an_image(tmp_path):
+    """The whole point: an extension the file does not live up to."""
+    from gleapp.ingest import scan                     # pylint: disable=import-outside-toplevel
+    (tmp_path / "photo.jpg").write_bytes(JPEG_HEAD + b"\x00" * 64)
+    (tmp_path / "._photo.jpg").write_bytes(APPLEDOUBLE_HEAD + b"\x00" * 4064)
+    found = {d.rel_path: d.kind for d in scan(tmp_path)}
+    assert found == {"photo.jpg": "image"}
+
+
+def test_a_sidecar_is_kept_as_other_when_other_files_are_asked_for(tmp_path):
+    """Asked for everything, it is still recorded: it is a file that was there."""
+    from gleapp.ingest import scan                     # pylint: disable=import-outside-toplevel
+    (tmp_path / "._photo.jpg").write_bytes(APPLEDOUBLE_HEAD + b"\x00" * 4064)
+    found = {d.rel_path: d.kind for d in scan(tmp_path, include_other=True)}
+    assert found == {"._photo.jpg": "other"}

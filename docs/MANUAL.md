@@ -553,6 +553,16 @@ Beyond ordinary JPEG/PNG/GIF/WebP/BMP/TIFF and video, GLEAPP decodes:
 - **Snapchat `LZC` bundles** — Zstandard containers; the embedded image or video
   is extracted to `extracted/` and shown.
 
+macOS sidecars are recognised and left out. Copying a file onto a FAT or exFAT
+card, or onto most network shares, makes macOS write a second file named
+`._<name>` beside it holding the resource fork and Finder info. It takes the
+whole name of the file it belongs to, so `._holiday.jpg` ends in an image
+extension and holds no image. GLEAPP checks the bytes of any `._` file before
+believing its extension, and files one as **other** rather than as an image that
+then fails to decode. A card that has been in a Mac carries one per file, so
+without that check the error count reads as damaged evidence. Ask for all files
+(**include other**) and they are still recorded, as other.
+
 Native decoders that can crash on malformed data (video via OpenCV, GPU textures
 via the Rust decoder) run in isolated child processes, so one bad file can't take
 down the whole run — it's flagged with an error instead.
