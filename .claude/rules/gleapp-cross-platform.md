@@ -159,17 +159,24 @@ So a walk is the primary read and a carve reaches the deleted material a walk ca
 **A carve can be asked for later, and can be scoped.** `gleapp source carve <name>` carves
 a source already ingested, so the choice is not stuck at ingest time; the pipeline runs over
 just the new rows because `process()` takes a where clause. `--unallocated-only` reads only
-the space a volume reports free, which on the same acquisition is 149.0 GiB instead of
-238.5, 8.3 minutes instead of about 40, and 7,233 hits instead of 384,386.
+the space a volume reports free, which is where the 2.1% of hits in the table above live.
 
 **A volume that cannot report its free space drops the scope for the WHOLE image.** Reading
 part of a disk while reporting the carve finished is worse than reading all of it, so
 `_unclaimed_space()` returns None the moment any volume cannot answer, and None means scan
-everything. Only NTFS answers so far, through `$Bitmap`, and the copy vendored here does
-not have that yet, so today the fallback is what always happens and a Mac image still gets
-a whole-disk carve. When the
-scope is used the case meta records the runs and bytes scanned, so a report can say what was
-covered rather than implying the whole disk was.
+everything. NTFS answers through `$Bitmap`, FAT32 through its allocation table, and exFAT
+through its allocation bitmap.
+
+**One quiet volume is enough, and it is usually the small one.** Every Windows disk carries a
+0.2 GiB FAT32 EFI system partition beside its NTFS volumes, so until FAT could answer, 0.09%
+of the disk decided the behaviour of the other 99.91% and both Windows acquisitions fell back
+to a whole-image carve. Measured now, through `_unclaimed_space()` itself rather than through
+one volume's half of it: 177.1 GiB of 238.5 in 3,500 runs, and 176.3 GiB of 232.9 in 1,372
+runs, both in about half a second. A Mac image is still scanned whole, because APFS reports no
+free space yet and neither does HFS+.
+
+When the scope is used the case meta records the runs and bytes scanned, so a report can say
+what was covered rather than implying the whole disk was.
 
 Testing that fallback needs **two** volumes, one that answers and one that does not. With a
 single volume, "skip the quiet one" and "drop the scope" both produce the same empty answer,
