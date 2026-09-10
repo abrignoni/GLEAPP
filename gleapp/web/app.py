@@ -1344,6 +1344,15 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def stats():
         return jsonify(C().db.stats())
 
+    @app.get("/api/audit")
+    def audit_list():
+        """The case processing history / audit log, newest first."""
+        try:
+            limit = min(int(request.args.get("limit", 500)), 5000)
+        except (TypeError, ValueError):
+            limit = 500
+        return jsonify(C().db.iter_audit(limit=limit))
+
     @app.post("/api/settings")
     def settings_update():
         """Currently just the display timezone (applied to shown epoch times,

@@ -571,6 +571,16 @@ class CaseDB:
             )
             self.conn.commit()
 
+    def iter_audit(self, limit: int | None = None) -> list[dict[str, Any]]:
+        """The examiner-action log, newest first. Each row is
+        ``{ts, actor, action, detail}``; ``detail`` is free text, and for a
+        ``process`` run it is the ``RunStats`` dict repr."""
+        sql = "SELECT ts, actor, action, detail FROM audit ORDER BY ts DESC, id DESC"
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        with self.lock:
+            return [dict(r) for r in self.conn.execute(sql)]
+
     def commit(self) -> None:
         with self.lock:
             self.conn.commit()
