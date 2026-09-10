@@ -145,6 +145,9 @@ class _Writer:
         self._refs: set[str] = set()
         self.artifacts: "OrderedDict[str, list[dict]]" = OrderedDict()
         self.meta_artifacts: list[dict] = []
+        # every artifact this run considered, written or not, so the run log can
+        # account for one that was skipped for being empty
+        self.considered: list[tuple[str, str, int, bool]] = []
         self.media_written = 0
         self.media_bytes = 0
         # (name, sha256) of the basemap any location maps were drawn on, and the
@@ -307,13 +310,26 @@ class _Writer:
     # -- artifacts ---------------------------------------------------------
     def add_artifact(self, category: str, name: str, headers: list, rows: list, *,
                      description: str, notes: str, icon: str | None = None,
-                     source_path: str = "") -> str:
+                     source_path: str = "", keep_when_empty: bool = False) -> str | None:
         """Create one artifact table, insert its rows, and record it in the manifest.
 
         ``headers`` items are either a plain column name or ``(name, type)`` where
         the type is one LAVA renders.
+
+        An artifact with no rows is not written at all, so a report opened beside
+        an iLEAPP or ALEAPP one does not carry a sidebar of empty tables. That is
+        what those cores do: `artifact_processor` writes the HTML, TSV, timeline,
+        LAVA and KML outputs under ``if len(data_list):`` and its else branch only
+        logs "No data found" (iLEAPP scripts/ilapfuncs.py:549 and :596 at
+        982c4e1ffc793f395f7337cd205b0deaa0ef09a3). ``keep_when_empty`` overrides
+        that where the emptiness is itself the finding. Either way the run log
+        lists every artifact considered with its count, so nothing is silently
+        dropped, which is the same thing that else branch's log line does.
         """
         table = _sanitize(name)
+        self.considered.append((category, name, len(rows), bool(rows) or keep_when_empty))
+        if not rows and not keep_when_empty:
+            return None
         columns, column_map, object_columns = [], {}, {}
         for header in headers:
             if isinstance(header, tuple):
@@ -721,10 +737,10 @@ def _artifact_keyframes(writer: "_Writer", rows: list[dict],
             "Hash is that frame's own hash, which is what lets a still found "
             "elsewhere be matched against the video it came from; it is an assessment "
             "by this tool and not byte equality. A video with no rows here had no "
-            "frames extracted, could not be decoded, or is in a report written with "
-            "them turned off; where the case recorded a failure the Media Files "
-            "artifact carries it, and where the report was written without frames no "
-            "video has rows at all."))
+            "frames extracted or could not be decoded, and where the case recorded "
+            "the failure the Media Files artifact carries it. A report written with "
+            "key frames turned off has no Video Key Frames artifact at all, since an "
+            "artifact with no rows is left out of this report."))
 
 
 def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) -> None:
@@ -777,10 +793,13 @@ def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) ->
             "the entry in, and VIC Tags are the labels that record carried; both are "
             "the importing organisation's, and are kept apart from the Tags column "
             "elsewhere in this report, which is the examiner's own. A case built from "
-            "folders or an extraction rather than a VIC file has no rows here."))
+            "folders or an extraction rather than a VIC file has no Project VIC "
+            "Records artifact at all, since an artifact with no rows is left out of "
+            "this report; the run log lists every artifact considered and its "
+            "count."))
 
 
-def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> None:
+def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> int:
     name = "Known Hash Sets"
     headers = ["Hash Set", "Kind", "Source", "Scope", ("Entries", "integer"),
                ("Files Matched", "integer"), ("Imported", "datetime")]
@@ -844,8 +863,8 @@ def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> None
             "rather than at the time of the check. A row reading 'no longer listed' "
             "is a name files still carry from a list that has since been removed, "
             "which records that the check happened and that the list is no longer "
-            "there to re-run it. No rows at all means none of the three sources held "
-            "anything, not that no check was made."))
+            "there to re-run it."))
+    return len(data)
 
 
 def _source_name(source) -> str:
@@ -1070,7 +1089,7 @@ def _artifact_clusters(writer: "_Writer", rows: list[dict],
 
 
 def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
-                           media: dict[int, str]) -> None:
+                           media: dict[int, str], *, sources: int = 0) -> None:
     name = "Known Hash Set Hits"
     hits = [r for r in rows if r.get("hashset_hit")]
     headers = ["Hash Set", "Set Kind", ("Asserted Category", "integer"), "File Name",
@@ -1086,6 +1105,10 @@ def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
     writer.add_artifact(
         "GLEAPP Hash Sets", name, headers, data, icon="check-square",
         source_path="case.gleapp",
+        # Empty here beside a populated Known Hash Sets is the finding "checked
+        # against these sources, nothing matched". Dropping the table would make
+        # that indistinguishable from never having checked.
+        keep_when_empty=sources > 0,
         description="Files that matched a known-hash source, by hash or by "
                     "perceptual similarity.",
         notes=(
@@ -1102,7 +1125,11 @@ def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
             "which of those found it, so this artifact cannot say whether a row "
             "matched byte-for-byte or only looked alike. A file with no hit is absent "
             "from this artifact, which records only that none of the sources checked "
-            "held a matching entry."))
+            "held a matching entry. An artifact with no rows is normally left out of "
+            "this report, and this one is the exception: where the Known Hash Sets "
+            "artifact lists sources, an empty table here is kept, because 'checked "
+            "against these and nothing matched' is a result and its absence would read "
+            "as no check having been made."))
 
 
 def _artifact_categories(writer: "_Writer", case: Case, rows: list[dict]) -> None:
@@ -1375,13 +1402,19 @@ def _write_screen_output(case: Case, dest: Path, *, writer: "_Writer",
     ]
     body = ["<h2>This export</h2>", _table(summary)]
 
-    written = []
-    for category, entries in sorted(writer.artifacts.items()):
-        for artifact in sorted(entries, key=lambda a: a["name"]):
-            written.append([category, artifact["name"],
-                            f'{artifact["record_count"]:,}'])
-    body += ["<h2>Artifacts written</h2>",
-             _grid(["Category", "Artifact", "Rows"], written)]
+    written = [[category, name, f"{count:,}", "yes" if kept else "no"]
+               for category, name, count, kept in sorted(writer.considered)]
+    body += ["<h2>Artifacts considered</h2>",
+             _grid(["Category", "Artifact", "Rows", "In the report"], written)]
+    if any(not kept for _, _, _, kept in writer.considered):
+        note = ('An artifact with no rows is left out of the report rather than '
+                'written as an empty table beside the ones that have data. It is '
+                'listed here so that its absence reads as nothing found rather '
+                'than as nothing looked at.')
+        if any(kept and not count for _, _, count, kept in writer.considered):
+            note += (' An artifact still in the report with a count of zero is the '
+                     'exception, where the empty table is itself the finding.')
+        body.append(f'<p class="muted">{note}</p>')
 
     by_kind = stats.get("by_kind") or {}
     if by_kind:
@@ -1465,11 +1498,11 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
     _artifact_keyframes(writer, rows, video_frames)
     _artifact_vic(writer, rows, media)
     _artifact_clusters(writer, rows, media)
-    _artifact_hash_sets(writer, case, rows)
+    sources = _artifact_hash_sets(writer, case, rows)
     _artifact_categories(writer, case, rows)
     _artifact_duplicates(writer, rows, media)
     _artifact_similar(writer, rows, media)
-    _artifact_hashset_hits(writer, rows, media)
+    _artifact_hashset_hits(writer, rows, media, sources=sources)
     _artifact_audit(writer, case)
 
     _write_device_info(case, writer.logs_dir, tz_name=tz_name)

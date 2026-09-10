@@ -243,20 +243,29 @@ continue. Turning off screening in the launcher roughly halves the time.
 
 `gleapp report --format lava` writes `reports/lava/`, a project the
 [LAVA](https://github.com/leapps-org/LAVA) viewer opens, so a case can be handed to
-an examiner who already reviews iLEAPP and ALEAPP output there. Thirteen artifacts:
-every media file, the ones an examiner categorized, the ones carrying coordinates,
-a location overview, the frames extracted from each video, all three grouping tiers
-(exact-duplicate stacks, visually similar groups and the looser clusters),
-known-hash-set hits, the lists those hits were checked against, Project VIC records
-with the flags, series and tags they carried, what the category names mean, and the
-case audit log.
+an examiner who already reviews iLEAPP and ALEAPP output there. Thirteen artifacts
+are considered: every media file, the ones an examiner categorized, the ones
+carrying coordinates, a location overview, the frames extracted from each video, all
+three grouping tiers (exact-duplicate stacks, visually similar groups and the looser
+clusters), known-hash-set hits, the lists those hits were checked against, Project
+VIC records with the flags, series and tags they carried, what the category names
+mean, and the case audit log.
 Pictures and video show inline in LAVA and play from the report.
+
+An artifact with no rows is **left out** rather than written empty, because an empty
+table reads as an answer to a question the case never asked. The run log lists all
+thirteen with their counts and says which of them reached the report, so nothing is
+dropped silently.
 
 The video frames GLEAPP already extracts go in with their time offsets, so a clip can
 be read without playing it, and they survive the evidence moving because they are
-thumbnails the case holds. `--no-keyframes` skips them. The hash-set listing is what
-makes an empty hits table readable: it says which lists were checked, so no hits and
-no lists are different findings.
+thumbnails the case holds. `--no-keyframes` skips them.
+
+The hash-set hits artifact is the one exception to leaving an empty artifact out.
+Where the hash-set listing names lists that were checked, an empty hits table is
+kept, because "checked against these and nothing matched" is a result and its
+absence would read as no check having been made. With no lists anywhere, both are
+left out.
 
 A geolocated file also carries a **locator map**, drawn from the offline basemap you
 imported and marked at the file's own coordinates, with the street, water and place

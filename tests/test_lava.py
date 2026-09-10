@@ -73,6 +73,38 @@ def case(tmp_path, evidence):
     c.close()
 
 
+@pytest.fixture()
+def rich_case(tmp_path, evidence):
+    """A case built so that every artifact but two carries rows.
+
+    An artifact with no rows is left out of the report, so a fixture that exercises
+    only part of the case cannot see what the rest of them say. This one ingests the
+    whole evidence set, which carries exact duplicates, near duplicates and a
+    cluster, and imports a hash list before processing so the hits are recorded.
+    Project VIC Records and Location Overview are the two it cannot reach; they have
+    their own cases below.
+    """
+    import hashlib
+
+    from gleapp import hashdb
+
+    c = open_case(tmp_path / "richcase", create=True, examiner="tester")
+    ingest_sources(c, [Source(name="all", path=str(evidence))])
+    listed = tmp_path / "case list.csv"
+    listed.write_text("md5\n" + "\n".join(sorted(
+        {hashlib.md5(f.read_bytes()).hexdigest()
+         for f in sorted(evidence.rglob("*")) if f.is_file()})[:3]) + "\n")
+    hashdb.import_hashset(c.db, listed, name="Case list", kind="known")
+    process(c, workers=1, keyframes=2, screen=False)
+    first = c.db.iter_files()[0]
+    c.db.update_file(first["id"], category=1, reviewed=1, reviewed_at=1_700_000_000.0,
+                     reviewed_by="tester", notes="marked in triage")
+    c.db.add_tag(first["id"], "exhibit")
+    c.db.commit()
+    yield c
+    c.close()
+
+
 def _manifest(out: Path) -> dict:
     return json.loads((out / "_lava_data.lava").read_text(encoding="utf-8"))
 
@@ -82,19 +114,17 @@ def _artifacts(manifest: dict):
         yield from entries
 
 
-def test_manifest_and_database_agree(case, tmp_path):
+def test_manifest_and_database_agree(rich_case, tmp_path):
     """Every artifact the manifest advertises is really in the database, with the
     columns and the row count it claims."""
     out = tmp_path / "lava"
-    lava.export_lava(case, out)
+    lava.export_lava(rich_case, out)
     manifest = _manifest(out)
     db = sqlite3.connect(out / manifest["lava_db_name"])
     try:
         tables = {r[0] for r in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        seen = 0
         for artifact in _artifacts(manifest):
-            seen += 1
             assert artifact["tablename"] in tables, artifact["name"]
             columns = {r[1] for r in db.execute(
                 f'PRAGMA table_info("{artifact["tablename"]}")')}
@@ -102,7 +132,14 @@ def test_manifest_and_database_agree(case, tmp_path):
             count = db.execute(
                 f'SELECT COUNT(*) FROM "{artifact["tablename"]}"').fetchone()[0]
             assert count == artifact["record_count"], artifact["name"]
-        assert seen == 13, "the artifact set changed; update this test deliberately"
+        # named rather than counted, so a change to the set has to be made
+        # deliberately and says which artifact moved
+        assert {a["name"] for a in _artifacts(manifest)} == {
+            "Media Files", "Categorized Media", "Media Locations",
+            "Video Key Frames", "Exact Duplicate Stacks", "Visually Similar Groups",
+            "Similar Clusters", "Known Hash Set Hits", "Known Hash Sets",
+            "Category Definitions", "Examiner Actions",
+        }, "the artifact set changed; update this test deliberately"
     finally:
         db.close()
 
@@ -121,7 +158,8 @@ def test_only_column_types_lava_renders(case, tmp_path):
             assert column["type"] in LAVA_TYPES, (artifact["name"], column)
 
 
-def test_numbers_are_stored_as_numbers_and_stay_out_of_the_manifest(case, tmp_path):
+def test_numbers_are_stored_as_numbers_and_stay_out_of_the_manifest(rich_case,
+                                                                    tmp_path):
     """A count in a TEXT column sorts 10 before 2, because LAVA orders in SQL.
 
     So numeric columns are declared, which shapes the database. The declaration must
@@ -130,7 +168,7 @@ def test_numbers_are_stored_as_numbers_and_stay_out_of_the_manifest(case, tmp_pa
     that is ignored today and live the day it grows a renderer for it.
     """
     out = tmp_path / "lava"
-    lava.export_lava(case, out)
+    lava.export_lava(rich_case, out)
     manifest = _manifest(out)
     db = sqlite3.connect(out / manifest["lava_db_name"])
     try:
@@ -144,10 +182,18 @@ def test_numbers_are_stored_as_numbers_and_stay_out_of_the_manifest(case, tmp_pa
             "WHERE size IS NOT NULL LIMIT 1").fetchone()
         assert size_type == "integer", size_type
         assert faces_type == "integer", faces_type
-        stack_copies = db.execute(
-            "SELECT typeof(copies) FROM exact_duplicate_stacks LIMIT 1").fetchone()
-        if stack_copies:
-            assert stack_copies[0] == "integer", stack_copies
+        assert db.execute(
+            "SELECT typeof(copies) FROM exact_duplicate_stacks LIMIT 1"
+        ).fetchone()[0] == "integer"
+        # and no column declared a number anywhere holds one as text
+        for artifact in _artifacts(manifest):
+            table = artifact["tablename"]
+            numeric = [r[1] for r in db.execute(f'PRAGMA table_info("{table}")')
+                       if r[2] in ("INTEGER", "REAL")]
+            for column in numeric:
+                kinds = {r[0] for r in db.execute(
+                    f'SELECT DISTINCT typeof("{column}") FROM "{table}"')}
+                assert kinds <= {"integer", "real", "null"}, (table, column, kinds)
         # and they order as numbers rather than as text
         sizes = [r[0] for r in db.execute(
             "SELECT size FROM media_files WHERE size IS NOT NULL ORDER BY size")]
@@ -262,6 +308,18 @@ def test_device_info_and_run_log_are_written(case, tmp_path):
     assert "<script" not in device and "<script" not in screen
 
 
+def _run_log_grid(out: Path) -> dict:
+    """The run log's artifact grid, as ``name -> (row count, is in the report)``."""
+    screen = (out / "_HTML" / "_Script_Logs" / "Screen_Output.html").read_text(
+        encoding="utf-8")
+    rows = re.findall(
+        r"<tr><td>[^<]+</td><td>([^<]+)</td><td>([\d,]+)</td><td>(yes|no)</td></tr>",
+        screen)
+    assert rows, "the run log has no artifact grid"
+    return {name: (int(count.replace(",", "")), flag == "yes")
+            for name, count, flag in rows}
+
+
 def test_the_run_log_agrees_with_the_artifacts_it_describes(case, tmp_path):
     """Every count in Screen Output is an artifact's own row count.
 
@@ -272,17 +330,84 @@ def test_the_run_log_agrees_with_the_artifacts_it_describes(case, tmp_path):
     """
     out = tmp_path / "lava"
     lava.export_lava(case, out)
-    screen = (out / "_HTML" / "_Script_Logs" / "Screen_Output.html").read_text(
-        encoding="utf-8")
-    counted = 0
-    for artifact in _artifacts(_manifest(out)):
-        row = re.search(
-            rf"<td>{re.escape(artifact['name'])}</td><td>([\d,]+)</td>", screen)
-        assert row, f"{artifact['name']} is not in the run log"
-        assert int(row.group(1).replace(",", "")) == artifact["record_count"], \
-            artifact["name"]
-        counted += 1
-    assert counted == 13
+    grid = _run_log_grid(out)
+    manifest = _manifest(out)
+    for artifact in _artifacts(manifest):
+        assert artifact["name"] in grid, f"{artifact['name']} is not in the run log"
+        count, in_report = grid[artifact["name"]]
+        assert count == artifact["record_count"], artifact["name"]
+        assert in_report, artifact["name"]
+    # the log describes what was considered, so it is longer than the report
+    assert len(grid) == 13, sorted(grid)
+    written = {a["name"] for a in _artifacts(manifest)}
+    assert {n for n, (_, yes) in grid.items() if yes} == written
+
+
+def test_an_artifact_with_no_rows_is_left_out_of_the_report(case, tmp_path):
+    """A zero-row artifact is absent, not empty, and the run log says it was tried.
+
+    An empty table in a report reads as an answer, and on this fixture seven of
+    them would be answering questions the case never asked. Leaving them out is
+    only honest if the run log still records that they were considered, so both
+    halves are pinned here.
+    """
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    manifest = _manifest(out)
+    grid = _run_log_grid(out)
+    skipped = {name for name, (count, yes) in grid.items() if not yes}
+    assert skipped == {"Project VIC Records", "Exact Duplicate Stacks",
+                       "Similar Clusters", "Visually Similar Groups",
+                       "Known Hash Set Hits", "Known Hash Sets",
+                       "Location Overview"}, sorted(skipped)
+    assert all(grid[name][0] == 0 for name in skipped), grid
+    # absent from the manifest, and no empty table left behind in the database
+    assert not skipped & {a["name"] for a in _artifacts(manifest)}
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        tables = {r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        db.close()
+    assert not tables & {"project_vic_records", "exact_duplicate_stacks",
+                         "similar_clusters", "visually_similar_groups",
+                         "known_hash_set_hits", "known_hash_sets",
+                         "location_overview"}, sorted(tables)
+
+
+def test_a_checked_hash_list_keeps_its_empty_hits_artifact(case, tmp_path):
+    """'Checked against these and nothing matched' is a result, so it is reported.
+
+    This is the one artifact kept at zero rows. Where Known Hash Sets names the
+    lists that were in play, an absent hits artifact would read as no check having
+    been made, which is a different and wrong statement.
+    """
+    from gleapp import hashstore
+
+    unrelated = tmp_path / "reference.csv"
+    unrelated.write_text("md5\n" + "\n".join(f"{i:032x}" for i in range(4)) + "\n")
+    hashstore.import_path(unrelated, name="Reference set", kind="known-good")
+
+    out = tmp_path / "lava"
+    lava.export_lava(case, out)
+    manifest = _manifest(out)
+    by_name = {a["name"]: a for a in _artifacts(manifest)}
+    assert by_name["Known Hash Sets"]["record_count"] == 1
+    assert by_name["Known Hash Set Hits"]["record_count"] == 0
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        assert db.execute(
+            "SELECT COUNT(*) FROM known_hash_set_hits").fetchone()[0] == 0
+    finally:
+        db.close()
+    # and the notes say why an empty table is there at all
+    notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
+                 if a["tablename"] == "known_hash_set_hits")["notes"]
+    assert "normally left out of this report" in notes
+    assert "would read as no check having been made" in notes
+    # and the run log agrees: considered, no rows, still in the report. With no
+    # list anywhere it is left out instead, which the test above pins.
+    assert _run_log_grid(out)["Known Hash Set Hits"] == (0, True)
 
 
 def test_a_row_survives_its_bytes_being_unavailable(case, tmp_path, monkeypatch):
@@ -592,9 +717,8 @@ def test_the_overview_is_empty_rather_than_wrong_when_nothing_can_be_mapped(
         lava.export_lava(c, out)
     finally:
         c.close()
-    overview = next(a for a in _artifacts(_manifest(out))
-                    if a["tablename"] == "location_overview")
-    assert overview["record_count"] == 0
+    assert "Location Overview" not in {a["name"] for a in _artifacts(_manifest(out))}
+    assert _run_log_grid(out)["Location Overview"] == (0, False)
 
 
 def test_coverage_is_read_from_the_archive_not_its_declared_bounds(basemap, monkeypatch):
@@ -690,9 +814,13 @@ def test_video_key_frames_are_in_the_report(case, tmp_path):
 def test_key_frames_can_be_turned_off(case, tmp_path):
     out = tmp_path / "lava"
     lava.export_lava(case, out, keyframes=False)
-    db = sqlite3.connect(out / _manifest(out)["lava_db_name"])
+    manifest = _manifest(out)
+    assert "Video Key Frames" not in {a["name"] for a in _artifacts(manifest)}
+    assert _run_log_grid(out)["Video Key Frames"] == (0, False)
+    db = sqlite3.connect(out / manifest["lava_db_name"])
     try:
-        assert db.execute("SELECT COUNT(*) FROM video_key_frames").fetchone()[0] == 0
+        assert not [r for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'video_key_frames'")]
         assert db.execute(
             "SELECT COUNT(*) FROM _lava_media_items WHERE id LIKE 'frame-%'"
         ).fetchone()[0] == 0
@@ -876,6 +1004,10 @@ def test_a_filtered_export_does_not_report_a_group_of_one(tmp_path, evidence):
         assert len(siblings) > 1, "the fixture cluster has only one member"
         out = tmp_path / "lava"
         lava.export_lava(c, out, where=f"id = {lone['id']}")
+        # the same case unfiltered, where the grouping artifacts do have rows and
+        # so carry the notes a reader of a filtered report needs to have read
+        whole = tmp_path / "lava-whole"
+        lava.export_lava(c, whole)
     finally:
         c.close()
 
@@ -883,16 +1015,19 @@ def test_a_filtered_export_does_not_report_a_group_of_one(tmp_path, evidence):
     db = sqlite3.connect(out / manifest["lava_db_name"])
     try:
         assert db.execute("SELECT COUNT(*) FROM media_files").fetchone()[0] == 1
-        for table, column in (("exact_duplicate_stacks", "copies"),
-                              ("visually_similar_groups", "members"),
-                              ("similar_clusters", "members")):
-            counts = [r[0] for r in db.execute(f"SELECT {column} FROM {table}")]
-            assert counts == [], f"{table} reported a group of one: {counts}"
+        tables = {r[0] for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
     finally:
         db.close()
-    for table in ("exact_duplicate_stacks", "visually_similar_groups",
-                  "similar_clusters"):
-        notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
+    grouping = ("exact_duplicate_stacks", "visually_similar_groups",
+                "similar_clusters")
+    # nothing survived the filter, so nothing is reported at all rather than a
+    # group of one being invented from the survivor
+    assert not tables & set(grouping), sorted(tables & set(grouping))
+    assert not {"Exact Duplicate Stacks", "Visually Similar Groups",
+                "Similar Clusters"} & {a["name"] for a in _artifacts(manifest)}
+    for table in grouping:
+        notes = next(a for a in _manifest(whole)["meta"]["modules"][0]["artifacts"]
                      if a["tablename"] == table)["notes"]
         assert "not a count of the case" in notes, table
 
@@ -931,13 +1066,16 @@ def test_a_source_that_matched_nothing_is_still_listed(case, tmp_path):
         db.close()
     notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
                  if a["tablename"] == "known_hash_sets")["notes"]
-    assert "No rows at all means none of the three sources held anything" in notes
+    assert "a list that matched nothing is still listed" in notes
     # the claim this replaced was false: a case is always checked against the
     # shared store and the stash whether or not either holds anything
     assert "was checked against nothing" not in notes
+    # and a claim about no rows at all would be unreachable, since an artifact
+    # with none is left out of the report entirely
+    assert "No rows at all" not in notes
 
 
-def test_the_hits_notes_do_not_promise_an_equal_hash(case, tmp_path):
+def test_the_hits_notes_do_not_promise_an_equal_hash(rich_case, tmp_path):
     """A hit can come from the perceptual pass, and the case does not record which.
 
     ``match_file`` falls through to comparing perceptual hashes within a distance,
@@ -945,7 +1083,7 @@ def test_the_hits_notes_do_not_promise_an_equal_hash(case, tmp_path):
     file when it may only look like one.
     """
     out = tmp_path / "lava"
-    lava.export_lava(case, out)
+    lava.export_lava(rich_case, out)
     manifest = _manifest(out)
     artifact = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
                     if a["tablename"] == "known_hash_set_hits")
@@ -957,30 +1095,35 @@ def test_the_hits_notes_do_not_promise_an_equal_hash(case, tmp_path):
     assert "no imported list held its hash" not in artifact["notes"]
 
 
-def test_no_description_claims_more_than_its_own_notes_concede(case, tmp_path):
+def test_no_description_claims_more_than_its_own_notes_concede(rich_case, tmp_path):
     """A description is read alone, so it must not out-claim the notes beside it.
 
     Categorized Media said an examiner assigned the category while its own notes
     conceded that a hash match assigns it with nobody looking.
+
+    Only an artifact with rows reaches the manifest, so this runs on the case that
+    fills eleven of the thirteen. The two it cannot fill are audited on their own
+    cases: Project VIC Records below, Location Overview with the map tests.
     """
     out = tmp_path / "lava"
-    lava.export_lava(case, out)
-    for artifact in _manifest(out)["meta"]["modules"][0]["artifacts"]:
+    lava.export_lava(rich_case, out)
+    audited = _manifest(out)["meta"]["modules"][0]["artifacts"]
+    assert len(audited) == 11, [a["name"] for a in audited]
+    for artifact in audited:
         description, notes = artifact["description"], artifact["notes"]
         assert description.count(".") <= 2, description
         if "without an examiner" in notes or "whoever set it" in description:
             assert "an examiner assigned" not in description, artifact["name"]
-    categorized = next(a for a in _manifest(out)["meta"]["modules"][0]["artifacts"]
-                       if a["tablename"] == "categorized_media")
+    categorized = next(a for a in audited if a["tablename"] == "categorized_media")
     assert categorized["description"] == (
         "Files carrying a category in this case, whoever set it.")
 
 
-def test_the_similarity_notes_match_what_the_comparison_does(case, tmp_path):
+def test_the_similarity_notes_match_what_the_comparison_does(rich_case, tmp_path):
     """dHash is optional and its distance is wider, so 'both within a set distance'
     described a rule the code does not apply."""
     out = tmp_path / "lava"
-    lava.export_lava(case, out)
+    lava.export_lava(rich_case, out)
     notes = next(a for a in _manifest(out)["meta"]["modules"][0]["artifacts"]
                  if a["tablename"] == "visually_similar_groups")["notes"]
     assert "where both files have a dHash" in notes
@@ -1002,3 +1145,55 @@ def test_identifiers_match_lavas_own_rule():
     # punctuation goes, whitespace collapses, a leading digit gets a prefix
     assert _sanitize("Skin  Ratio (%)") == "skin_ratio"
     assert _sanitize("3D model") == "_3d_model"
+
+
+def test_the_run_log_note_matches_which_artifacts_were_kept(case, tmp_path):
+    """The paragraph under the grid must not contradict the grid above it.
+
+    'An artifact with no rows is left out' is true of every row until a kept row
+    reads zero, and a reader comparing the two would be right to distrust both.
+    """
+    from gleapp import hashstore
+
+    plain = tmp_path / "plain"
+    lava.export_lava(case, plain)
+    screen = (plain / "_HTML" / "_Script_Logs" / "Screen_Output.html").read_text(
+        encoding="utf-8")
+    assert "left out of the report" in screen
+    assert "exception" not in screen, "nothing was kept empty here"
+
+    listed = tmp_path / "reference.csv"
+    listed.write_text("md5\n" + "\n".join(f"{i:032x}" for i in range(4)) + "\n")
+    hashstore.import_path(listed, name="Reference set", kind="known-good")
+    kept = tmp_path / "kept"
+    lava.export_lava(case, kept)
+    screen = (kept / "_HTML" / "_Script_Logs" / "Screen_Output.html").read_text(
+        encoding="utf-8")
+    assert _run_log_grid(kept)["Known Hash Set Hits"] == (0, True)
+    assert "the empty table is itself the finding" in screen
+
+
+def test_a_category_whose_artifacts_are_all_empty_is_not_in_the_manifest(tmp_path,
+                                                                        monkeypatch):
+    """Leaving out an empty artifact must not leave its category behind.
+
+    LAVA groups the sidebar by category, so an entry with no artifacts under it is
+    the empty heading the skip exists to avoid. A single picture reaches none of
+    the three duplicate tiers and no hash list, so both of those categories have to
+    be absent rather than present and empty.
+    """
+    monkeypatch.setenv("GLEAPP_CONFIG_DIR", str(tmp_path / "cfg"))
+    ev = tmp_path / "ev"
+    ev.mkdir()
+    Image.new("RGB", (64, 48), (10, 20, 30)).save(ev / "a.jpg", "JPEG")
+    c = open_case(tmp_path / "case", create=True, examiner="tester")
+    ingest_sources(c, [Source(name="ev", path=str(ev))])
+    process(c, workers=1, keyframes=1, screen=False)
+    out = tmp_path / "lava"
+    try:
+        lava.export_lava(c, out)
+    finally:
+        c.close()
+    groups = _manifest(out)["artifacts"]
+    assert not [name for name, entries in groups.items() if not entries], groups
+    assert "GLEAPP Duplicates" not in groups and "GLEAPP Hash Sets" not in groups
