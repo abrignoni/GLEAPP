@@ -409,6 +409,47 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         threading.Thread(target=_job, daemon=True).start()
         return jsonify({"ok": True, "count": n})
 
+    @app.post("/api/expand-archives")
+    def expand_archives():
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        case = state["case"]
+        force = bool((request.get_json(silent=True) or {}).get("force"))
+        n = case.db.conn.execute(
+            "SELECT COUNT(*) n FROM files WHERE kind = 'archive' OR "
+            "(kind = 'other' AND lower(ext) IN "
+            "('.zip','.tar','.gz','.tgz','.bz2','.tbz2','.xz','.txz','.7z','.rar'))"
+        ).fetchone()["n"]
+        state["job"] = {"running": True, "stage": "process", "done": 0, "total": 0,
+                        "message": f"Opening {n} archive(s)…", "stats": None,
+                        "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                from .. import nested
+                added = nested.expand_containers(
+                    case, force=force,
+                    progress=lambda k: j.update(done=k, message=f"{k:,} files found"))
+                if added:
+                    j.update(stage="process", done=0, total=added,
+                             message=f"Processing {added:,} extracted file(s)…")
+                    process(case, where="md5 IS NULL",
+                            progress=lambda d, t: j.update(done=d, total=t),
+                            stage_cb=lambda m: j.update(message=m))
+                j.update(running=False, stage="done",
+                         message=(f"{added:,} file(s) recovered from archives"
+                                  if added else "No new files in the archives"),
+                         stats={"expanded": added})
+            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True, "count": n})
+
     @app.post("/api/rehash")
     def rehash():
         if state["case"] is None:
@@ -804,6 +845,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         else:
             if q.get("kind"):
                 eq("kind", q["kind"])
+            else:
+                # An archive container (a .zip / .tar found in a source) is kept
+                # in the case for its hashes and to link its members, but it is
+                # not media - it stays out of the gallery unless asked for by name
+                # (Type = "archive (container)").
+                where.append("kind != 'archive'")
             if q.get("source"):
                 eq("source", q["source"])
             if q.get("origin") in ("walk", "carve"):
@@ -1130,6 +1177,13 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         ).fetchone()
         n_err = case.db.conn.execute(
             "SELECT COUNT(*) n FROM files WHERE error IS NOT NULL").fetchone()["n"]
+        arch = case.db.conn.execute(
+            "SELECT COUNT(*) total, "
+            "SUM(CASE WHEN id IN (SELECT container_id FROM files "
+            "WHERE container_id IS NOT NULL) THEN 1 ELSE 0 END) expanded "
+            "FROM files WHERE kind = 'archive' OR (kind = 'other' AND lower(ext) IN "
+            "('.zip','.tar','.gz','.tgz','.bz2','.tbz2','.xz','.txz','.7z','.rar'))"
+        ).fetchone()
         from .. import hashstore, stash
         cst = case.db.stats()
         try:
@@ -1161,6 +1215,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "stats": cst,
             "vic": vic,
             "errors": n_err,
+            "archives": {"total": arch["total"] or 0,
+                         "expanded": arch["expanded"] or 0},
             "known_hash": {
                 "hits": cst.get("hashset_hits", 0),
                 "known_good": cst.get("known_good", 0),

@@ -35,6 +35,11 @@ def export_projectvic(case: Case, dest: str | Path, *,
 
 
 def _rows(case: Case, where: str = "") -> list[dict]:
+    # An archive container (.zip / .tar found in a source) is not media - its
+    # members are their own rows. Keep it out of every report unless the scope
+    # asked for it by name.
+    if "kind" not in where:
+        where = _and(where, "kind != 'archive'")
     out = []
     for r in case.db.iter_files(where):
         d = dict(r)
@@ -54,6 +59,8 @@ def export_md5(case: Case, dest: str | Path, where: str = "") -> Path:
     """CSV of the distinct MD5 values in scope: header ``md5``, one per line."""
     dest = Path(dest)
     sql = "SELECT DISTINCT md5 FROM files WHERE md5 IS NOT NULL AND md5 != ''"
+    if "kind" not in where:
+        sql += " AND kind != 'archive'"
     if where:
         sql += f" AND ({where})"
     sql += " ORDER BY md5"

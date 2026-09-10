@@ -30,8 +30,8 @@ binaries = []
 hiddenimports = ["gleapp.desktop", "gleapp.web.app", "gleapp.projectvic",
                  "gleapp._vidworker", "gleapp._texworker", "gleapp.imaging",
                  "texture2ddecoder", "liblzfse", "zstandard", "gleapp.lzc",
-                 "gleapp.hashstore", "gleapp.hashdb", "gleapp.stash",
-                 "gleapp.timeutil", "tzdata"]
+                 "gleapp.nested", "gleapp.hashstore", "gleapp.hashdb", "gleapp.stash",
+                 "gleapp.timeutil", "tzdata", "py7zr"]
 if sys.platform == "win32":
     # pythonnet, for WebView2. Absent elsewhere, and PyInstaller logs a missing hidden
     # import as an ERROR even though the build succeeds.
@@ -39,7 +39,10 @@ if sys.platform == "win32":
 
 # Bundle libraries that ship data / native bits PyInstaller can't infer.
 for mod in ("webview", "cv2", "imagehash", "PIL", "pillow_heif",
-            "texture2ddecoder", "liblzfse", "zstandard", "clr_loader", "pythonnet"):
+            "texture2ddecoder", "liblzfse", "zstandard", "clr_loader", "pythonnet",
+            # 7-Zip reading: py7zr plus its native codec extensions
+            "py7zr", "pyppmd", "pybcj", "inflate64", "brotli", "Cryptodome",
+            "multivolumefile"):
     try:
         d, b, h = collect_all(mod)
         datas += d

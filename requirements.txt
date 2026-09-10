@@ -18,6 +18,11 @@ whl_files/pyliblzfse-0.4.1-cp313-cp313-win_amd64.whl; python_version == "3.13" a
 whl_files/pyliblzfse-0.4.1-cp314-cp314-win_amd64.whl; python_version == "3.14" and platform_system == "Windows" and platform_machine == "AMD64"
 pyliblzfse>=0.4.1
 zstandard>=0.22
+# 7-Zip archive reading (a .7z found inside a source is expanded like a .zip).
+# Pure-Python itself; its codec extensions (pyppmd, pybcj, inflate64, brotli,
+# pycryptodomex) publish wheels for CPython 3.10-3.13 on Windows/macOS/Linux and
+# build from the sdist otherwise, the same position as pyliblzfse.
+py7zr>=0.21
 imagehash>=4.3
 numpy>=1.24
 opencv-python-headless>=4.8
