@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS files (
     crc32         INTEGER,                -- the CRC-32 the source archive records for the member (zip)
     member_offset INTEGER,                -- byte offset of the member's data in a plain tar source
     alt_paths     TEXT,                   -- JSON: the other storage views this file was also under
+    container_id  INTEGER,                -- files.id of the archive this file was extracted from
+                                          -- (a .zip/.tar/.gz found inside a source); NULL otherwise
     recorded_times TEXT                   -- JSON: readings the filesystem stores with no zone on
                                           -- them, as stored. FAT and exFAT keep a wall clock and
                                           -- no zone, so mtime above is null for them and this
@@ -235,6 +237,7 @@ class CaseDB:
             ("vic_series", "TEXT"), ("vic_tags", "TEXT"),
             ("origin", "TEXT"), ("member_node", "TEXT"),
             ("volume_base", "INTEGER"), ("recorded_times", "TEXT"),
+            ("container_id", "INTEGER"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
@@ -588,10 +591,16 @@ class CaseDB:
     # -- stats ------------------------------------------------------
     def stats(self) -> dict[str, Any]:
         c = self.conn
-        total = c.execute("SELECT COUNT(*) n FROM files").fetchone()["n"]
+        # an archive container (.zip / .tar found in a source) is not media - its
+        # members are their own rows, and it is left out of the counts the UI and
+        # reports show
+        total = c.execute(
+            "SELECT COUNT(*) n FROM files WHERE kind != 'archive'").fetchone()["n"]
         by_kind = {
             r["kind"]: r["n"]
-            for r in c.execute("SELECT kind, COUNT(*) n FROM files GROUP BY kind")
+            for r in c.execute(
+                "SELECT kind, COUNT(*) n FROM files WHERE kind != 'archive' "
+                "GROUP BY kind")
         }
         by_cat = {
             r["category"]: r["n"]

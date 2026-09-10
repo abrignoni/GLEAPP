@@ -68,7 +68,7 @@ One case is one folder. Inside it:
 | `case.gleapp` | the SQLite database — everything GLEAPP learns lives here, so runs are resumable |
 | `thumbs/` | grid thumbnails and video key frames |
 | `views/` | full-size JPEGs transcoded from formats the browser can't show (HEIC, TIFF, KTX…) |
-| `extracted/` | media unpacked from container files (Snapchat `LZC` bundles) |
+| `extracted/` | media unpacked from container files — archives (`.zip` / `.tar` / `.gz`) found in a source, and Snapchat `LZC` bundles |
 | `reports/` | exported reports, CSV/JSON, MD5 lists, KMZ, Project VIC exports |
 | `backups/` | timestamped snapshot copies of `case.gleapp` |
 
@@ -290,8 +290,11 @@ text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
 ### Category / Type / Source / How recovered
 - **Category** — **Any**, a specific category, or **Uncategorized**. Uncategorized
   enables the auto-advance review flow.
-- **Type** — **image**, **video**, or **other** (non-decodable — archives,
-  documents, unknown formats).
+- **Type** — **image**, **video**, or **other** (non-decodable — documents,
+  unknown formats). A fourth value, **archive (container)**, is the only way to
+  see the `.zip` / `.tar` / `.gz` files themselves: they are **hidden from the
+  gallery and reports by default** — only the image and video members found
+  inside them are shown.
 - **Source** — restrict to one ingest source.
 - **How recovered** — *All*, *Walked* (files read out of a filesystem, with names
   and dates) or *Carved* (recovered by signature from unallocated space, no name
@@ -565,6 +568,21 @@ Beyond ordinary JPEG/PNG/GIF/WebP/BMP/TIFF and video, GLEAPP decodes:
   Snapchat's `SCContent` cache names files by hash with no suffix).
 - **Snapchat `LZC` bundles** — Zstandard containers; the embedded image or video
   is extracted to `extracted/` and shown.
+- **Archives found inside a source** — a `.zip`, `.tar`, `.tar.gz` (or a bare
+  `.gz` / `.bz2` / `.xz`, or a `.tgz` / `.tbz2` / `.txz`) sitting in a folder or
+  on a walked E01 filesystem is opened automatically at ingest. Its image and
+  video members are written to `extracted/<id>/` and registered as ordinary rows,
+  named `<archive>/<member>`, linked back to the container. Archives nested
+  inside archives are followed. **The container file itself does not show in the
+  gallery or in reports** — set the Type filter to *archive (container)* to see
+  the list of them. It is still in the case (its own name, path, dates and
+  hashes) so a report of that scope can account for every archive in evidence.
+  **`.7z`** is opened too. **RAR** is recognised but not opened — GLEAPP has no
+  RAR reader (they need an external `unrar` binary a self-contained build can't
+  carry); the container row is flagged so you know to extract it separately.
+  Encrypted members (and password-protected `.7z`) are skipped and counted. To
+  run this on a case that was ingested earlier, use **Expand archives** in the
+  sidebar (§16).
 
 macOS sidecars are recognised and left out. Copying a file onto a FAT or exFAT
 card, or onto most network shares, makes macOS write a second file named
@@ -683,6 +701,11 @@ date, label (`auto`, `manual`, or your text) and size:
 - **Re-scan for duplicates** — rebuild groupings only.
 - **Re-check known hashes** — rebuild hash-set matches only.
 - **Run screening** — face/skin pass only.
+- **Expand archives** — appears below the Source list when the case holds any
+  `.zip` / `.tar` / `.gz` etc. Opens each one that has not been expanded yet and
+  processes what comes out; **Re-check archives** re-opens them all (use after
+  fixing a source that was unavailable). Archives are expanded automatically at
+  ingest — this is for a case ingested before that, or a partial run.
 
 Each reports progress next to its own button. A full reprocess is available from
 the command line: `gleapp process --force`.
@@ -763,6 +786,7 @@ support, star and cite the projects below.
 | **texture2ddecoder** | GPU-texture decode (ASTC / PVRTC / ETC / BCn, KTX) | Rudolf Kolbe (K0lb3) | MIT |
 | **pyliblzfse** + **LZFSE** | decoding Apple LZFSE-compressed assets | Ivan Kozík (bindings); LZFSE by Apple Inc. | BSD-3 |
 | **python-zstandard** + **Zstandard** | decoding Zstd-compressed assets | Gregory Szorc (bindings); Zstd by Meta / Yann Collet | BSD-3 |
+| **py7zr** (+ pyppmd, pybcj, inflate64, brotli, pycryptodomex) | reading `.7z` archives found inside a source | Hiroshi Miura & contributors | LGPL-2.1 (py7zr) / MIT / BSD |
 | **Flask** and the **Pallets** stack (Werkzeug, Jinja, Click, MarkupSafe, ItsDangerous, Blinker) | the local review-gallery server | Pallets — Armin Ronacher & contributors | BSD-3 |
 | **tzdata** / **IANA Time Zone Database** | timezone conversion and DST for the display-timezone setting | IANA (data, public domain); PyPI packaging by the CPython team | Public domain / Apache-2.0 |
 | **SQLite** | the case database, via Python's `sqlite3` | D. Richard Hipp & the SQLite team | Public domain |

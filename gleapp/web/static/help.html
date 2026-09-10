@@ -86,7 +86,7 @@ finishes; closing the case is blocked until then.</p>
   <tr><td><code>case.gleapp</code></td><td>the SQLite database — everything GLEAPP learns about a file lives here, so runs are resumable</td></tr>
   <tr><td><code>thumbs/</code></td><td>generated grid thumbnails and video key frames</td></tr>
   <tr><td><code>views/</code></td><td>full-size JPEGs transcoded from formats the browser can't show (HEIC, TIFF, KTX…)</td></tr>
-  <tr><td><code>extracted/</code></td><td>media unpacked from container files (Snapchat <code>LZC</code> bundles)</td></tr>
+  <tr><td><code>extracted/</code></td><td>media unpacked from container files — archives (<code>.zip</code> / <code>.tar</code> / <code>.gz</code>) found in a source, and Snapchat <code>LZC</code> bundles</td></tr>
   <tr><td><code>reports/</code></td><td>exported reports, CSV/JSON, MD5 lists, KMZ, Project VIC exports, LAVA projects</td></tr>
   <tr><td><code>backups/</code></td><td>timestamped snapshot copies of <code>case.gleapp</code></td></tr>
 </table>
@@ -348,7 +348,11 @@ whose date is in July 2024.</p>
   (presets and your own, hidden ones marked), or <strong>Uncategorized</strong>,
   which enables the auto-advance review flow.</li>
   <li><strong>Type</strong> — <strong>image</strong>, <strong>video</strong>, or
-  <strong>other</strong> (not decodable media — archives, documents, unknown formats).</li>
+  <strong>other</strong> (not decodable media — documents, unknown formats). A
+  fourth value, <strong>archive (container)</strong>, is the only way to see the
+  <code>.zip</code> / <code>.tar</code> / <code>.gz</code> files themselves: they
+  are <strong>hidden from the gallery and reports by default</strong> — only the
+  image and video members found inside them are shown.</li>
   <li><strong>Source</strong> — restrict to one ingest source (folder name, or the
   Project VIC source).</li>
   <li><strong>How recovered</strong> — <em>All</em>, <em>Walked</em> (files read
@@ -618,6 +622,18 @@ gleapp stash --clear</code></pre>
   suffix).</li>
   <li><strong>Snapchat <code>LZC</code> bundles</strong> — Zstandard containers;
   the embedded image or video is extracted to <code>extracted/</code> and shown.</li>
+  <li><strong>Archives found inside a source</strong> — a <code>.zip</code>,
+  <code>.tar</code>, <code>.tar.gz</code> (or a bare <code>.gz</code> /
+  <code>.bz2</code> / <code>.xz</code>) sitting in a folder or on a walked E01 is
+  opened at ingest. Its image and video members are written to
+  <code>extracted/&lt;id&gt;/</code> and registered as ordinary rows named
+  <code>&lt;archive&gt;/&lt;member&gt;</code>, linked to the container; archives
+  inside archives are followed. <strong>The container file itself does not show
+  in the gallery or in reports</strong> — set the Type filter to
+  <em>archive (container)</em> to list them. <code>.7z</code> is opened too;
+  <strong>RAR</strong> is recognised but not opened (no bundled RAR reader) and is
+  flagged so you can extract it separately. Run it on an already-ingested case
+  with <strong>Expand archives</strong> in the sidebar (&sect;16).</li>
 </ul>
 <p>Native decoders that can crash on malformed data (video via OpenCV, GPU textures
 via the Rust decoder) run in isolated child processes, so one bad file can't take
@@ -729,6 +745,11 @@ text) and size:</p>
   <li><strong>Re-scan for duplicates</strong> — rebuild groupings only.</li>
   <li><strong>Re-check known hashes</strong> — rebuild hash-set matches only.</li>
   <li><strong>Run screening</strong> — face/skin pass only.</li>
+  <li><strong>Expand archives</strong> — shown below the Source list when the case
+  holds any <code>.zip</code> / <code>.tar</code> / <code>.gz</code>. Opens each
+  one not expanded yet and processes what comes out; <strong>Re-check
+  archives</strong> re-opens them all. Archives expand automatically at ingest —
+  this is for a case ingested before that.</li>
 </ul>
 <p>Each reports progress next to its own button. A full reprocess is available from
 the command line (<code>gleapp process --force</code>).</p>
@@ -835,6 +856,7 @@ please support, star and cite the projects below.</p>
   <tr><td><strong>texture2ddecoder</strong></td><td>GPU-texture decode (ASTC / PVRTC / ETC / BCn, KTX) — Rudolf&nbsp;Kolbe (K0lb3) (MIT)</td></tr>
   <tr><td><strong>pyliblzfse</strong> + <strong>LZFSE</strong></td><td>Apple LZFSE-compressed assets — Ivan&nbsp;Kozík (bindings); LZFSE by Apple&nbsp;Inc. (BSD-3)</td></tr>
   <tr><td><strong>python-zstandard</strong> + <strong>Zstandard</strong></td><td>Zstd-compressed assets — Gregory&nbsp;Szorc (bindings); Zstd by Meta / Yann&nbsp;Collet (BSD-3)</td></tr>
+  <tr><td><strong>py7zr</strong> (+ pyppmd, pybcj, inflate64, brotli, pycryptodomex)</td><td>reading <code>.7z</code> archives found inside a source — Hiroshi&nbsp;Miura &amp; contributors (LGPL-2.1 / MIT / BSD)</td></tr>
   <tr><td><strong>Flask</strong> &amp; the <strong>Pallets</strong> stack</td><td>the local review-gallery server — Werkzeug, Jinja, Click, MarkupSafe, ItsDangerous, Blinker — Armin&nbsp;Ronacher &amp; contributors (BSD-3)</td></tr>
   <tr><td><strong>tzdata</strong> / <strong>IANA Time Zone Database</strong></td><td>timezone conversion &amp; DST for the display-timezone setting — IANA (public domain); PyPI packaging by the CPython team</td></tr>
   <tr><td><strong>SQLite</strong></td><td>the case database, via Python's <code>sqlite3</code> — D.&nbsp;Richard&nbsp;Hipp &amp; the SQLite team (public domain)</td></tr>

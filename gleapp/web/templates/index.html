@@ -357,7 +357,7 @@
       <label class="flabel">Category
         <select id="fcat"><option value="any">Any</option></select></label>
       <label class="flabel">Type
-        <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option></select></label>
+        <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option><option value="archive">archive (container)</option></select></label>
       <label class="flabel">Source
         <select id="fsrc"><option value="">All</option></select></label>
       <label class="flabel" id="foriginWrap" hidden title="An E01 acquisition holds both: files walked out of its filesystems (with names and dates) and files carved by signature from the space no volume claims (no name, path or date).">How recovered
@@ -367,6 +367,7 @@
           <option value="carve">Carved — deleted / unallocated</option>
         </select></label>
       <div id="srcInfo" class="fnote"></div>
+      <div id="archInfo" class="fnote" hidden></div>
     </div>
 
     <details class="fsec" data-sec="hash">

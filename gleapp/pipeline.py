@@ -93,7 +93,14 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
     case.db.commit()
     case.db.audit_log(case.examiner, "ingest",
                       f"{n} files from {len(sources)} source(s)")
-    return n
+
+    # A .zip / .tar / .gz sitting inside a source is registered as a container;
+    # open it now so its media is processed in the same pass.
+    from . import nested
+    added = nested.expand_containers(
+        case, progress=(lambda k: progress(n + k)) if progress else None,
+        include_other=any(getattr(s, "include_other", False) for s in sources))
+    return n + added
 
 
 def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, screen: bool,
@@ -106,7 +113,7 @@ def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, scre
     pulled out for the duration of the work and dropped again.
     """
     fid = row["id"]
-    if row["md5"] and row["thumb"] and not force:
+    if row["md5"] and not force and (row["thumb"] or row["kind"] == "archive"):
         return {"id": fid, "status": "skip", "fields": {}, "keyframes": []}
     if row["error"] == "file not found on disk" and not Path(row["path"]).exists():
         return {"id": fid, "status": "skip", "fields": {}, "keyframes": []}
@@ -143,7 +150,7 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
         # A Snapchat "LZC" bundle isn't itself an image/video - pull the best
         # embedded media out to a sidecar file and process that instead.
         kind, decode_path = row["kind"], local
-        if kind == "archive" or lzc.is_lzc(local):
+        if lzc.is_lzc(local):
             got = lzc.extract_best(local)
             if got is None:
                 return {"id": fid, "status": "error", "keyframes": [], "fields": {
@@ -156,6 +163,12 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
             Path(decode_path).write_bytes(edata)
             kind = ekind
             upd["kind"] = ekind
+        elif kind == "archive":
+            # A real .zip / .tar / .gz container: its media members were pulled
+            # out and registered separately (gleapp/nested.py). Nothing here to
+            # decode - keep the hashes computed above and leave it as a container.
+            upd["error"] = None
+            return {"id": fid, "status": "ok", "fields": upd, "keyframes": []}
 
         # A Project VIC import (or an app image cache) can hand us an
         # extension-less file with a vague MIME (image/unknown) as kind=other.

@@ -1619,6 +1619,7 @@ async function refreshContext() {
   state.cats = c.categories || [];
   try { await refreshCats(); } catch (e) {}
   updateScreenInfo(c.screening);
+  updateArchInfo(c.archives);
   updateKnownHash(c.known_hash);
   const src = $("#fsrc"), have = new Set([...src.options].map(o => o.value));
   (c.sources || []).forEach(s => {
@@ -1853,6 +1854,38 @@ function updateKnownHash(kh) {
   $("#stashInfo").textContent = st && st.total
     ? `🔒 Hash stash: ${st.total.toLocaleString()} MD5(s) — click to manage`
     : "🔒 Hash stash: empty — click to add your category 1–3 hashes";
+}
+
+/* ---------- nested archives (.zip / .tar / .gz inside a source) ---------- */
+function updateArchInfo(a) {
+  const el = $("#archInfo");
+  if (!el) return;
+  if (!a || !a.total) { el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false;
+  const pending = a.total - a.expanded;
+  const label = pending > 0 ? "Expand archives" : "Re-check archives";
+  el.innerHTML = `${a.total.toLocaleString()} archive${a.total === 1 ? "" : "s"}`
+    + (a.expanded ? ` · ${a.expanded.toLocaleString()} expanded` : "")
+    + ` <button class="btn sm" id="btnExpand">${label}</button>`
+    + `<div id="expandInfo" class="fnote"></div>`;
+  $("#btnExpand").onclick = async () => {
+    const r = await api("/api/expand-archives", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: pending === 0 }),
+    });
+    if (r.error) return toast(r.message || "Could not start");
+    $("#btnExpand").disabled = true;
+    toast(`Opening ${r.count} archive(s)…`);
+    trackJob("#expandInfo", "#taskProg", "Opening archives", (ok, j) => {
+      if (ok) {
+        const added = j.stats?.expanded ?? 0;
+        $("#expandInfo").textContent = added
+          ? `${added} file(s) recovered — reloading…` : "Nothing new";
+        if (added) setTimeout(() => location.reload(), 900);
+        else $("#btnExpand").disabled = false;
+      } else $("#btnExpand").disabled = false;
+    });
+  };
 }
 
 /* ---------- face / skin screening ---------- */
@@ -2878,6 +2911,7 @@ $("#mapViewClose").onclick = closeMapView;
   document.title = "GLEAPP — " + (c.case || "");
   if (c.vic) $("#btnVic").style.display = "";
   updateScreenInfo(c.screening);
+  updateArchInfo(c.archives);
   updateKnownHash(c.known_hash);
   if (c.errors > 0) {
     $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
