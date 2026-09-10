@@ -535,8 +535,10 @@
     <div class="muted" style="font-size:11px;margin-top:2px">
       An extraction archive (<code>.zip</code> / <code>.tar</code> / <code>.tar.gz</code>)
       is read in place unless you tick the box below. An E01 acquisition
-      (<code>.E01</code>, with its numbered segments beside it) is carved for images and
-      video, since it holds a disk rather than a list of files. A Project VIC
+      (<code>.E01</code>, with its numbered segments beside it) has its filesystems
+      walked, so each file keeps its name, path and recorded dates; carving the
+      free space for deleted media is a separate step you ask for afterwards.
+      A Project VIC
       <code>.json</code> is detected automatically — its media folder is resolved next to the file.
     </div>
     <label style="margin-top:10px"><input type="checkbox" id="optScreen" checked> Face / skin screening</label>

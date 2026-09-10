@@ -2569,11 +2569,20 @@ function renderSourcePanel(list) {
     const ewf = s.format === "ewf";
     const mode = s.mode === "staged" ? "copied into the case"
       : (ewf ? "read from the acquisition" : "read from the archive");
-    // an acquisition holds a disk, so its rows were carved and carry no name or date
-    const carved = ewf ? ` <span class="muted" title="An acquisition holds a disk rather`
-      + ` than a list of files, so its media was recovered by signature. A carved file`
-      + ` has no name, path or timestamp of its own; the name is the offset it was found`
-      + ` at, and the date columns are empty.">· carved</span>` : "";
+    // How the rows were recovered, counted from what the ingest recorded rather
+    // than guessed from the format: an acquisition whose filesystems can be read
+    // is walked, and carving one is a separate thing to ask for, so a source can
+    // hold both kinds of row. Only an acquisition can hold either.
+    const walked = s.walked || 0, cut = s.carved || 0;
+    const how = [];
+    if (walked) how.push(`<span class="muted" title="Read out of a filesystem in`
+      + ` the acquisition, so each file keeps the name, path and any timestamps the`
+      + ` filesystem recorded.">· ${walked.toLocaleString()} walked</span>`);
+    if (cut) how.push(`<span class="muted" title="Recovered by signature from bytes`
+      + ` no file claims. A carved file has no name, path or timestamp of its own;`
+      + ` the name is the offset it was found at, and the date columns are empty.">`
+      + `· ${cut.toLocaleString()} carved</span>`);
+    const origin = how.length ? " " + how.join(" ") : "";
     // a compressed tar cannot be read on demand, so its copies cannot be dropped
     const fixed = s.format === "tar-compressed";
     const btn = s.mode === "staged"
@@ -2583,7 +2592,7 @@ function renderSourcePanel(list) {
       : `<button class="btn sm" data-stage="${esc(s.name)}"${ok ? "" : " disabled"}
            title="Copy every registered file out of the archive into the case, so the case no longer needs it.">Copy into case</button>`;
     return `<div style="margin:3px 0"><b title="${esc(s.path)}">${esc(s.name)}</b>
-      <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${carved}${state}
+      <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${origin}${state}
       <div style="margin-top:2px">${btn}</div></div>`;
   }).join("");
   const post = (url, body) => api(url, {

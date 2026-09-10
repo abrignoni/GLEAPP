@@ -181,6 +181,41 @@ def test_a_walked_source_can_be_carved_afterwards(tmp_path):
     case.close()
 
 
+def test_the_source_panel_counts_how_the_rows_were_actually_recovered(tmp_path):
+    """The gallery says how a source's rows came out, so the number has to be
+    read from the rows and not from the format.
+
+    An acquisition is walked when its filesystems can be read, and carving one
+    is asked for separately, so telling an examiner an acquisition was carved
+    is a claim about provenance that the rows contradict: a walked file has a
+    name, a path and the dates the filesystem recorded, and a carved one has an
+    offset.
+    """
+    image = _image(tmp_path)
+    case, _ = _ingest(tmp_path, image, name="counts")
+    after_walk = {s["name"]: s for s in archive.source_status(case)}["acq.E01"]
+    assert after_walk["walked"] == after_walk["files"] and after_walk["carved"] == 0
+
+    added = archive.carve_source(case, "acq.E01")
+    assert added > 0
+    both = {s["name"]: s for s in archive.source_status(case)}["acq.E01"]
+    assert both["walked"] == after_walk["walked"] and both["carved"] == added
+    assert both["files"] == both["walked"] + both["carved"]
+    case.close()
+
+
+def test_an_archive_source_claims_neither_walked_nor_carved(tmp_path):
+    """A zip has members rather than a disk, so neither word applies to it."""
+    import zipfile                                    # pylint: disable=import-outside-toplevel
+    zpath = tmp_path / "ext.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("dcim/a.jpg", JPG)
+    case, _ = _ingest(tmp_path, zpath, name="zipcounts")
+    row = {s["name"]: s for s in archive.source_status(case)}["ext.zip"]
+    assert row["files"] == 1 and row["walked"] == 0 and row["carved"] == 0
+    case.close()
+
+
 def test_carving_twice_does_not_register_the_same_extent_again(tmp_path):
     case, _ = _ingest(tmp_path, _image(tmp_path), name="twice")
     first = archive.carve_source(case, "acq.E01")
