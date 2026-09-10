@@ -211,6 +211,33 @@ def _disp_path(d: dict) -> str:
     return d.get("rel_path") or Path(d.get("path") or "").name
 
 
+def _recorded(d) -> str:
+    """The times the filesystem stored for a file, exactly as stored.
+
+    FAT and exFAT keep a wall-clock reading and no zone at all, so these are
+    readings and not instants, and the FS written / created / accessed columns
+    beside them are empty for such a volume. They are rendered as plain text
+    deliberately: a datetime column would be given a zone by whatever displays
+    it, and that zone would be invented.
+
+    exFAT also stores a UTC offset per timestamp. It is shown as stored rather
+    than applied, because on the one exFAT volume measured the stored reading
+    was not the writing machine's local clock and the offset was the negation of
+    its zone, so resolving the pair would assert an instant on evidence that
+    cannot support it.
+    """
+    raw = d.get("recorded_times")
+    if not raw:
+        return ""
+    try:
+        got = json.loads(raw)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(got, dict):
+        return ""
+    return "; ".join(f"{k} {v}" for k, v in got.items() if v)
+
+
 # key -> (label, value fn, is_monospace).  The report dialog offers exactly
 # these; the examiner picks which appear under each image.
 _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
@@ -223,6 +250,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "ctime":      ("FS created",    lambda d: _fmt_ts(d.get("ctime")), False),
     "mtime":      ("FS written",    lambda d: _fmt_ts(d.get("mtime")), False),
     "atime":      ("FS accessed",   lambda d: _fmt_ts(d.get("atime")), False),
+    "recorded_times": ("Recorded (as stored, no zone)", _recorded, False),
     "ingested_at": ("Ingested",     lambda d: _fmt_ts(d.get("ingested_at")), False),
     "md5":        ("MD5",           lambda d: d.get("md5") or "", True),
     "sha1":       ("SHA-1",         lambda d: d.get("sha1") or "", True),

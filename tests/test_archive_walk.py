@@ -15,6 +15,8 @@ that does it.
 from __future__ import annotations
 
 import io
+import json
+import sqlite3
 import sys
 
 import pytest
@@ -24,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from ewfwriter import write_ewf                        # pylint: disable=import-error
 from fatwriter import build_fat32                      # pylint: disable=import-error
-from gleapp import archive
+from gleapp import archive, report
 from gleapp.case import open_case, parse_source_spec
 from gleapp.pipeline import ingest_sources
 
@@ -338,3 +340,63 @@ def test_a_volume_that_raises_does_not_silently_narrow_the_scan(monkeypatch, tmp
     assert archive._unclaimed_space(img, vols) is None   # pylint: disable=protected-access
     img.close()
     case.close()
+
+# ---- the readings a FAT volume stores ---------------------------------------
+
+def test_a_walked_fat_file_carries_the_reading_the_volume_stored(tmp_path):
+    """FAT keeps a wall clock and no zone, so the reading is text, not a time.
+
+    The fixture declares each file's time, so the expected value here does not
+    come from the decoder under test. mtime must stay empty: filling it would
+    hand a naive datetime to a consumer that will coerce it to UTC, which is a
+    zone the volume never recorded.
+    """
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="fattimes")
+    got = {r["orig_path"]: dict(r) for r in case.db.iter_files("")}
+    case.close()
+    assert len(got) == 2, sorted(got)
+    holiday = got["lba0/HOLIDAY.JPG"]
+    screen = got["lba0/SCREEN.PNG"]
+    assert holiday["mtime"] is None, "a zoneless reading must not reach an epoch column"
+    assert screen["mtime"] is None
+    assert json.loads(holiday["recorded_times"]) == {"modified": "2023-06-01 12:30:00"}
+    assert json.loads(screen["recorded_times"]) == {"modified": "2022-01-02 03:04:06"}
+
+
+def test_a_reading_the_entry_does_not_hold_is_absent_rather_than_empty(tmp_path):
+    """The fixture writes only a modified time, so nothing else may appear."""
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="fatsparse")
+    row = next(iter(case.db.iter_files("")))
+    case.close()
+    assert set(json.loads(row["recorded_times"])) == {"modified"}
+
+
+def test_the_report_renders_the_reading_as_plain_text(tmp_path):
+    """It reaches the examiner as text, with no zone put on it."""
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="fatreport")
+    rows = {r["orig_path"]: dict(r) for r in case.db.iter_files("")}
+    case.close()
+    field = report._FIELD_DEFS["recorded_times"]     # pylint: disable=protected-access
+    rendered = field[1](rows["lba0/HOLIDAY.JPG"])
+    assert rendered == "modified 2023-06-01 12:30:00", rendered
+    assert field[0] == "Recorded (as stored, no zone)"
+    # a row with no readings renders as nothing, not as the word None
+    assert field[1]({}) == ""
+
+
+def test_a_case_written_before_the_column_existed_still_opens(tmp_path):
+    """The column is added by migration, and the rows already there survive."""
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="mig")
+    db_path = case.db.path
+    before = [dict(r) for r in case.db.iter_files("")]
+    case.close()
+    con = sqlite3.connect(db_path)
+    con.execute("ALTER TABLE files DROP COLUMN recorded_times")
+    con.execute("UPDATE meta SET value = '12' WHERE key = 'schema_version'")
+    con.commit(); con.close()
+    reopened = open_case(tmp_path / "mig")
+    after = [dict(r) for r in reopened.db.iter_files("")]
+    assert len(after) == len(before) == 2
+    assert all("recorded_times" in r for r in after)
+    assert {r["orig_path"] for r in after} == {r["orig_path"] for r in before}
+    reopened.close()
