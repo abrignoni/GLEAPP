@@ -46,11 +46,16 @@ case's header) opens this manual.</p>
   buttons under <em>Evidence to ingest</em> (or paste a path and click <strong>Add</strong>):
     <ul>
       <li><strong>Browse for folder</strong> — scanned recursively for media;</li>
-      <li><strong>Browse for extraction (zip / tar)</strong> — a full file-system
-      extraction archive (<code>.zip</code>, <code>.tar</code>, <code>.tar.gz</code>);
-      its media is read straight from the archive unless you tick <em>Copy media out
-      of extraction archives</em>, and a compressed <code>.tar.gz</code> is always
-      copied out;</li>
+      <li><strong>Browse for extraction or acquisition</strong> — a full file-system
+      extraction archive (<code>.zip</code>, or a <code>.tar</code> plain or compressed:
+      <code>.gz</code>, <code>.bz2</code>, <code>.xz</code>); its media is read straight
+      from the archive unless you tick <em>Copy media out of extraction archives</em>,
+      and a compressed tar is always copied out. Or an <strong>E01 acquisition</strong>
+      (<code>.E01</code> with its numbered segments beside it), whose filesystems are
+      walked file by file so each file keeps the name, path and dates the filesystem
+      recorded: ext2, ext3, ext4, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume that cannot be read is named in the Source panel
+      afterwards. Carving the free space for deleted media is a separate step, asked
+      for after ingest;</li>
       <li><strong>Browse for JSON</strong> — a GLEAPP job spec (named sources) <strong>or</strong>
       a <strong>Project VIC 2.0 (US) JSON</strong>, detected automatically; the VIC
       media folder is resolved next to the file, and existing MediaID / category /

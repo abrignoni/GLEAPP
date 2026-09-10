@@ -437,7 +437,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction archive "
                                       "(zip or tar), an E01 acquisition, or a JSON spec, "
                                       "then process")
-    s.add_argument("source", help="folder path, extraction .zip/.tar/.tar.gz, .E01 "
+    s.add_argument("source", help="folder path, extraction .zip or .tar "
+                                 "(plain, .gz, .bz2 or .xz), .E01 "
                                   "acquisition, OR .json spec file")
     s.add_argument("--no-process", action="store_true", help="register files only")
     s.add_argument("--stage", action="store_true",

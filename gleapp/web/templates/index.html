@@ -533,13 +533,19 @@
       <button class="btn" id="addSpec">+ Browse for JSON (job or Project VIC)</button>
     </div>
     <div class="muted" style="font-size:11px;margin-top:2px">
-      An extraction archive (<code>.zip</code> / <code>.tar</code> / <code>.tar.gz</code>)
-      is read in place unless you tick the box below. An E01 acquisition
-      (<code>.E01</code>, with its numbered segments beside it) has its filesystems
-      walked, so each file keeps its name, path and recorded dates; carving the
-      free space for deleted media is a separate step you ask for afterwards.
-      A Project VIC
-      <code>.json</code> is detected automatically — its media folder is resolved next to the file.
+      <b>What can be ingested.</b> A folder of media. An extraction archive:
+      <code>.zip</code>, or a <code>.tar</code> plain or compressed
+      (<code>.gz</code>, <code>.bz2</code>, <code>.xz</code>), read in place unless
+      you tick the box below. An <b>E01 acquisition</b> (<code>.E01</code>, with its
+      numbered segments beside it). A Project VIC <code>.json</code>, or a GLEAPP
+      job <code>.json</code> listing several sources. Each is recognised by its own
+      bytes, so a file with the wrong extension, or none, still works.
+      <br>
+      <b>Inside an acquisition</b> these filesystems are walked file by file, so
+      every file keeps the name, path and dates the filesystem recorded:
+      <span id="fsList"></span>. A volume that cannot be read is named in the
+      Source panel afterwards rather than passed over quietly. Carving the free
+      space for deleted media is a separate step you ask for after ingest.
     </div>
     <label style="margin-top:10px"><input type="checkbox" id="optScreen" checked> Face / skin screening</label>
     <label title="Off, an extraction archive or acquisition is read in place and the case stays small; the file must stay where it is. On, the media is copied out so the case stands alone. A compressed tar is always copied out."><input type="checkbox" id="optStage"> Copy media out of extraction archives into the case</label>
