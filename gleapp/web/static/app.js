@@ -781,12 +781,11 @@ function toggleColMenu() {
 // like Camera or MD5 shows as a transient "— column —" entry).
 const GRID_SORT_TO_LIST = {
   path: ["name", "asc"], date: ["created_dt", "asc"], size: ["size", "asc"],
-  skin: ["skin_ratio", "desc"], faces: ["faces", "desc"], cluster: ["cluster_id", "asc"],
+  skin: ["skin_ratio", "desc"], faces: ["faces", "desc"],
 };
 const LIST_SORT_TO_GRID = {
   name: "path", file_path: "path", rel_path: "path", orig_name: "path", path: "path",
   created_dt: "date", size: "size", skin_ratio: "skin", faces: "faces",
-  cluster_id: "cluster",
 };
 
 // Show state.sortCol/Dir on the grid's Sort dropdown.
