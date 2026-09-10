@@ -16,6 +16,11 @@ VIDEO_EXTS = {
     ".mp4", ".m4v", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm",
     ".mpg", ".mpeg", ".3gp", ".ts", ".m2ts", ".mts",
 }
+# Compressed / archive containers GLEAPP opens and expands (see gleapp/nested.py).
+# A .tar carries no leading magic, so it is recognised by extension only.
+ARCHIVE_EXTS = {
+    ".zip", ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".7z", ".rar",
+}
 # Major brands the MP4 Registration Authority (mp4ra.org, data/brands.csv, read
 # 2026-09-03) registers for audio: the iTunes audio family and the CMAF, OMAF,
 # IFE and IAMF audio media profiles. GLEAPP has no audio kind, so a file whose
@@ -73,12 +78,21 @@ def classify(ext: str) -> str:
         return "image"
     if ext in VIDEO_EXTS:
         return "video"
+    if ext in ARCHIVE_EXTS:
+        return "archive"
     return "other"
 
 
 def _kind_from_magic(h: bytes) -> str:
     """image / video / archive / other from a file's leading bytes."""
     if h[:4] == b"LZC\x00":                                  # Snapchat bundle
+        return "archive"
+    if (h[:4] == b"PK\x03\x04" or h[:4] == b"PK\x05\x06"     # zip (incl. empty)
+            or h[:2] == b"\x1f\x8b"                          # gzip
+            or h[:3] == b"BZh"                               # bzip2
+            or h[:6] == b"\xfd7zXZ\x00"                      # xz
+            or h[:6] == b"7z\xbc\xaf\x27\x1c"                # 7-Zip
+            or h[:4] == b"Rar!"):                            # RAR
         return "archive"
     if h[:3] == b"\xff\xd8\xff":
         return "image"

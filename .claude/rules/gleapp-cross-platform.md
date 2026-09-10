@@ -43,6 +43,17 @@ Linux, Windows on ARM and Python 3.14 on macOS build it from source. It decodes 
 LZFSE-compressed GPU textures and is reached only for that format. It is a hard
 requirement on purpose: iLEAPP handles the same textures the same way.
 
+`py7zr` reads a `.7z` found inside a source (`gleapp/nested.py`). It is pure Python but
+pulls native codec extensions — `pyppmd`, `pybcj`, `inflate64`, `brotli`,
+`pycryptodomex`, `backports.zstd` — which publish wheels for CPython 3.10 to 3.13 on
+Windows x64, macOS and Linux and build from the sdist elsewhere (3.14, Windows on ARM).
+Not vendored: unlike pyliblzfse these have Linux wheels, and CI's own runners carry a
+compiler for the gaps. `py7zr==1.x` dropped the in-memory `read()`, so `_sevenzip_members`
+extracts to a `TemporaryDirectory` and reads back from disk. 7-Zip is standard in
+evidence; RAR is not handled (its readers need an external `unrar`/`bsdtar` binary, which
+a self-contained build cannot carry) and is recorded on the container row with that
+explanation. The PyInstaller spec `collect_all`s py7zr and each native dep.
+
 ## macOS specifics
 
 PyInstaller strips signatures while it builds, its own log says so, so `codesign` runs
