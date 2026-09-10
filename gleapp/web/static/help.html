@@ -107,7 +107,11 @@ pane and pagination all work the same in either view.</p>
 
 <h3>Details list view</h3>
 <p><strong>☰&nbsp;List</strong> shows one row per file with a column for every
-stored detail — built for triage by metadata rather than by eye.</p>
+stored detail — built for triage by metadata rather than by eye. Unlike the
+grid, the list <strong>always shows every row</strong> — exact and visual
+duplicates are never collapsed, so a photo that is both a loose file and a member
+of a nested archive appears as both rows. The <em>Collapse duplicates</em>
+checkbox is disabled while the list is open.</p>
 <ul>
   <li><strong>Sort</strong> — click a column header; click again to reverse
     (an arrow marks the active column).</li>
@@ -396,10 +400,11 @@ whose date is in July 2024.</p>
     </table>
   </li>
   <li><strong>Collapse duplicates &amp; visual matches</strong> (on by default) —
-  one tile per visual group. The representative is chosen from files that
-  <em>match your other filters</em>, so a group still appears when only a non-head
-  member carries the attribute you filtered on. Counts reflect groups, not
-  individual files.</li>
+  one tile per visual group <strong>in the grid</strong>. The representative is
+  chosen from files that <em>match your other filters</em>, so a group still
+  appears when only a non-head member carries the attribute you filtered on.
+  Counts reflect groups, not individual files. The <strong>☰&nbsp;List</strong>
+  view always shows every row.</li>
   <li><strong>Re-scan for duplicates</strong> — rebuild the exact / visual /
   near-dup groupings without a full reprocess (use after importing, or on an older
   case).</li>

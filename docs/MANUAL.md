@@ -91,7 +91,11 @@ details pane and pagination all work the same in either view.
 ### Details list view
 
 **☰ List** shows one row per file with a column for every stored detail. It is
-built for triage by metadata rather than by eye.
+built for triage by metadata rather than by eye. Unlike the grid, the list
+**always shows every row** — exact and visual duplicates are never collapsed, so
+a photo that is both a loose file and a member of a nested archive appears as
+both rows. The **Collapse duplicates** checkbox is disabled while the list is
+open.
 
 - **Sort** — click any column header; click again to reverse. An arrow shows the
   active column and direction.
@@ -327,9 +331,10 @@ text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
   | In a near-dup cluster | burst shots, crops, filtered/annotated versions, video frame grabs |
 
 - **Collapse duplicates & visual matches** (on by default) — one tile per visual
-  group. The representative is chosen from files that *match your other filters*,
-  so a group still appears when only a non-head member carries the attribute you
-  filtered on. Counts reflect groups, not individual files.
+  group in the **grid**. The representative is chosen from files that *match your
+  other filters*, so a group still appears when only a non-head member carries
+  the attribute you filtered on. Counts reflect groups, not individual files.
+  This applies to the grid only — the **☰ List** view always shows every row.
 - **Re-scan for duplicates** — rebuild the exact / visual / near-dup groupings
   without a full reprocess.
 

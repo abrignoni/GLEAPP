@@ -82,7 +82,9 @@ function filterParams() {
   if (state.vstack) p.set("vstack", state.vstack);
   if (state.stack) p.set("stack", state.stack);
   if (+$("#fskin").value > 0) p.set("min_skin", $("#fskin").value);
-  if ($("#fcollapse").checked) p.set("dupes", "collapse");
+  // the list view always shows every row, duplicates included - collapsing is a
+  // grid-only convenience
+  if ($("#fcollapse").checked && state.view !== "list") p.set("dupes", "collapse");
   if (state.view === "list") {
     p.set("sort", state.sortCol || "name");
     p.set("dir", state.sortDir || "asc");
@@ -417,12 +419,24 @@ function restoreListPrefs() {
     if (s.colFilters && (s.v || 0) >= 5) state.colFilters = s.colFilters;
     if (s.colWidths) state.colWidths = s.colWidths;
   } catch (e) { state.listCols = new Set(DEFAULT_LIST_COLS); }
-  $("#vGrid").classList.toggle("on", state.view !== "list");
-  $("#vList").classList.toggle("on", state.view === "list");
-  $("#btnCols").style.display = state.view === "list" ? "" : "none";
-  $("#btnClearColFilters").style.display = state.view === "list" ? "" : "none";
-  $("#sortWrap").style.display = state.view === "list" ? "none" : "";
+  syncViewControls(state.view);
   updateClearFiltersBtn();
+}
+
+/* Controls whose relevance depends on grid vs. list. */
+function syncViewControls(v) {
+  const list = v === "list";
+  $("#vGrid").classList.toggle("on", !list);
+  $("#vList").classList.toggle("on", list);
+  $("#btnCols").style.display = list ? "" : "none";
+  $("#btnClearColFilters").style.display = list ? "" : "none";
+  $("#sortWrap").style.display = list ? "none" : "";
+  // the list view never collapses duplicates
+  const fc = $("#fcollapse");
+  fc.disabled = list;
+  fc.closest("label").title = list
+    ? "The list view always shows every row, duplicates included."
+    : "one row per distinct image: exact copies + visual matches";
 }
 
 /* string -> number for a numeric column's filter box. Size understands
@@ -762,11 +776,7 @@ function toggleColMenu() {
 function setView(v) {
   if (state.view === v) return;
   state.view = v;
-  $("#vGrid").classList.toggle("on", v === "grid");
-  $("#vList").classList.toggle("on", v === "list");
-  $("#btnCols").style.display = v === "list" ? "" : "none";
-  $("#btnClearColFilters").style.display = v === "list" ? "" : "none";
-  $("#sortWrap").style.display = v === "list" ? "none" : "";
+  syncViewControls(v);
   $("#colMenu").style.display = "none";
   updateClearFiltersBtn();
   persistListPrefs();
