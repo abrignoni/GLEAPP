@@ -5,7 +5,6 @@ list sorts by clicking column headers. They drive the same server query, so
 switching view should not silently re-sort the results.
 """
 
-import io
 import re
 import sys
 from pathlib import Path
