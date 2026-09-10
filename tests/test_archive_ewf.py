@@ -90,10 +90,17 @@ def _acquire(folder, tmp_path, *, stem="acq", jpg_seed=1, **kw):
     return Path(paths[0]), data, laid
 
 
-def _ingest(tmp_path, image, case_name, *, stage=False, do_process=True):
+def _ingest(tmp_path, image, case_name, *, stage=False, do_process=True, carve=True):
+    """Ingest the fixture acquisition.
+
+    These fixtures are media laid out on a disk with no filesystem over it, so
+    they exercise the carver and ask for it. An acquisition of a real computer
+    is walked instead, which is the default; see test_walk.py.
+    """
     c = open_case(tmp_path / case_name, create=True, examiner="t")
     sources, _ = parse_source_spec(image)
     sources[0].stage = stage
+    sources[0].carve = carve
     n = ingest_sources(c, sources)
     if do_process:
         process(c, workers=2, keyframes=3, screen=False)
