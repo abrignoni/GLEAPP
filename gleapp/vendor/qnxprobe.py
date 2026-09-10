@@ -42,7 +42,7 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.20"
+QNXPROBE_VERSION = "1.21"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
@@ -1928,6 +1928,12 @@ APFS_BTREE_INFO = 40            # a root node carries btree_info_t at its end
 
 APFS_OBJ_TYPE_MASK = 0x0000FFFF
 APFS_OBJECT_TYPE_NX_SUPERBLOCK = 0x0001
+APFS_OBJECT_TYPE_SPACEMAN      = 0x0005
+APFS_OBJECT_TYPE_CHECKPOINT_MAP = 0x000C
+APFS_NX_SPACEMAN_OID_OFF = 152   # nx_spaceman_oid in the container superblock
+APFS_SM_DEV_MAIN_OFF     = 48    # sm_dev[SD_MAIN] in spaceman_phys_t
+APFS_CI_SIZE             = 32    # sizeof(chunk_info_t)
+APFS_CPM_SIZE            = 40    # sizeof(checkpoint_mapping_t)
 APFS_OBJECT_TYPE_BTREE_NODE    = 0x0003
 APFS_OBJECT_TYPE_OMAP          = 0x000B
 APFS_OBJECT_TYPE_FS            = 0x000D
@@ -2143,6 +2149,7 @@ class ApfsWalker:
         if not self.block_size or self.block_size & (self.block_size - 1):
             raise ValueError("the container superblock gives an impossible block size")
         nx = self._newest_checkpoint(head)
+        self._nx = nx
         self.block_count = struct.unpack_from("<Q", nx, 40)[0]
         self.container_size = self.block_count * self.block_size
         self.uuid = uuid.UUID(bytes=nx[72:88])
@@ -2274,6 +2281,136 @@ class ApfsWalker:
                 best, best_xid = raw, xid
         self.xid = best_xid
         return best
+
+    def _ephemeral(self, oid):
+        """The block an ephemeral object sits in, or None.
+
+        An ephemeral object is not in the object map. It is written into the
+        checkpoint data area and located through the checkpoint map blocks that
+        share its checkpoint, so the descriptor area is scanned for maps carrying
+        this walker's transaction id and their entries are read.
+        """
+        desc_base = struct.unpack_from("<Q", self._nx, 112)[0]
+        desc_blocks = struct.unpack_from("<I", self._nx, 104)[0]
+        for i in range(min(desc_blocks, 4096)):
+            raw = self.block(desc_base + i)
+            if len(raw) < 40:
+                continue
+            if (struct.unpack_from("<I", raw, 24)[0] & APFS_OBJ_TYPE_MASK
+                    != APFS_OBJECT_TYPE_CHECKPOINT_MAP):
+                continue
+            if struct.unpack_from("<Q", raw, 16)[0] != self.xid:
+                continue
+            count = struct.unpack_from("<I", raw, 36)[0]
+            for k in range(min(count, (len(raw) - 40) // APFS_CPM_SIZE)):
+                at = 40 + k * APFS_CPM_SIZE
+                cpm_oid, cpm_paddr = struct.unpack_from("<QQ", raw, at + 24)
+                if cpm_oid == oid:
+                    return cpm_paddr
+        return None
+
+    def free_extents(self, min_bytes=0):
+        """[(byte offset, length)] for the runs of space the container says are free.
+
+        APFS tracks free space per container rather than per volume, in the space
+        manager. The space manager is an ephemeral object, so it is found through
+        the checkpoint map rather than the object map, and it points at chunk-info
+        blocks. Each chunk covers a fixed run of blocks and carries a bitmap
+        address; a chunk with no bitmap is entirely free.
+
+        **The bits run least significant first**, the same way round as NTFS and
+        the opposite of HFS+. A count of free blocks cannot tell the two orders
+        apart, because a byte holds the same number of zero bits either way. What
+        tells them apart is position: read the other way round, this container
+        reports its own superblock at block zero as free.
+
+        Offsets are into the image rather than the container, so a caller reading
+        the whole disk can use them directly. ``min_bytes`` drops runs too short
+        to hold anything worth recovering. An empty list means the space manager
+        could not be read, which a caller must not read as "nothing is free".
+        """
+        block = self.block_size
+        oid = struct.unpack_from("<Q", self._nx, APFS_NX_SPACEMAN_OID_OFF)[0]
+        at = self._ephemeral(oid) if oid else None
+        if not at:
+            return []
+        sm = self.block(at)
+        if len(sm) < 96 or (struct.unpack_from("<I", sm, 24)[0] & APFS_OBJ_TYPE_MASK
+                            != APFS_OBJECT_TYPE_SPACEMAN):
+            return []
+        dev = APFS_SM_DEV_MAIN_OFF
+        cib_count, cab_count = struct.unpack_from("<II", sm, dev + 16)
+        addr_off = struct.unpack_from("<I", sm, dev + 32)[0]
+        count = cab_count or cib_count
+        if not count or addr_off + count * 8 > len(sm):
+            return []
+        addrs = list(struct.unpack_from(f"<{count}Q", sm, addr_off))
+        if cab_count:                                # one more level of indirection
+            cibs = []
+            for a in addrs:
+                cab = self.block(a)
+                if len(cab) < 40:
+                    continue
+                n = struct.unpack_from("<I", cab, 36)[0]
+                n = min(n, (len(cab) - 40) // 8)
+                cibs += list(struct.unpack_from(f"<{n}Q", cab, 40))
+            addrs = cibs
+
+        runs = []
+        for a in addrs:
+            cib = self.block(a)
+            if len(cib) < 40:
+                continue
+            n = struct.unpack_from("<I", cib, 36)[0]
+            for k in range(min(n, (len(cib) - 40) // APFS_CI_SIZE)):
+                o = 40 + k * APFS_CI_SIZE
+                ci_addr = struct.unpack_from("<Q", cib, o + 8)[0]
+                ci_blocks, ci_free = struct.unpack_from("<II", cib, o + 16)
+                ci_bitmap = struct.unpack_from("<Q", cib, o + 24)[0]
+                if ci_addr >= self.block_count or not ci_blocks:
+                    continue
+                ci_blocks = min(ci_blocks, self.block_count - ci_addr)
+                if not ci_bitmap:                    # no bitmap means wholly free
+                    if ci_free:
+                        runs.append((ci_addr, ci_blocks))
+                    continue
+                bits = self.block(ci_bitmap)
+                total = min(len(bits) * 8, ci_blocks)
+                start, pos = None, 0
+                while pos < total:
+                    byte = bits[pos >> 3]
+                    if not (pos & 7) and pos + 8 <= total and byte in (0x00, 0xFF):
+                        if byte == 0x00:
+                            if start is None:
+                                start = pos
+                        elif start is not None:
+                            runs.append((ci_addr + start, pos - start))
+                            start = None
+                        pos += 8
+                        continue
+                    if byte & (1 << (pos & 7)):
+                        if start is not None:
+                            runs.append((ci_addr + start, pos - start))
+                            start = None
+                    elif start is None:
+                        start = pos
+                    pos += 1
+                if start is not None:
+                    runs.append((ci_addr + start, total - start))
+
+        runs.sort()
+        merged = []
+        for first, n in runs:                        # chunks abut, so their runs do
+            if merged and merged[-1][0] + merged[-1][1] == first:
+                merged[-1] = (merged[-1][0], merged[-1][1] + n)
+            else:
+                merged.append((first, n))
+        out = []
+        for first, n in merged:
+            length = n * block
+            if length >= min_bytes:
+                out.append((self.base + first * block, length))
+        return out
 
     def _read_omap(self, oid):
         """An object map as a plain dict: every virtual id it holds, to a block.
@@ -2654,6 +2791,8 @@ HFSP_SIG    = 0x482B          # 'H+', HFS Plus
 HFSX_SIG    = 0x4858          # 'HX', HFSX, which differs only in case handling
 HFSP_VH_OFF = 1024            # the volume header sits 1024 bytes into the volume
 HFSP_ROOT   = 2               # kHFSRootFolderID
+HFSP_ALLOC  = 6               # kHFSAllocationFileID
+HFSP_ALLOC_FORK = 112         # the allocation file's fork record in the volume header
 
 # B-tree node kinds, TN1150 "B-Trees"
 HFSP_LEAF, HFSP_INDEX, HFSP_HEADER, HFSP_MAP = -1, 0, 1, 2
@@ -3045,6 +3184,72 @@ class HfsPlusWalker:
         return None
 
     # -- the walker surface ------------------------------------------------
+    def free_extents(self, min_bytes=0):
+        """[(byte offset, length)] for the runs of space the volume says are free.
+
+        HFS+ keeps an allocation file, one bit per allocation block, set when the
+        block is in use. Its fork record sits in the volume header, so it is read
+        the same way any other fork is, and it continues into the extents
+        overflow tree if it outgrew its eight descriptors.
+
+        **The bits run most significant first**, which is the opposite of NTFS
+        and exFAT: the first bit of the bitmap is the top bit of the first byte
+        (Apple TN1150). A count of free blocks cannot tell the two orders apart,
+        because a byte holds the same number of zero bits either way. What tells
+        them apart is position, and reading this volume the wrong way round
+        reports blocks that live files occupy as free.
+
+        Offsets are into the image rather than the volume, so a caller reading
+        the whole disk can use them directly. ``min_bytes`` drops runs too short
+        to hold anything worth recovering.
+        """
+        block = self.block_size
+        if not block or not self.total_blocks:
+            return []
+        vh = read_at(self.fh, self.base + HFSP_VH_OFF, 512)
+        if len(vh) < 512:
+            return []
+        size, extents = _hfs_fork(vh, HFSP_ALLOC_FORK)
+        need = (self.total_blocks + 7) // 8
+        if sum(c for _s, c in extents) * block < min(size or need, need):
+            try:
+                extents = extents + self._overflow(HFSP_ALLOC)
+            except (ValueError, struct.error):
+                pass                             # what the header holds is all there is
+        bits = self._read_extents(extents, need, 0)
+        if not bits:
+            return []
+        total = min(len(bits) * 8, self.total_blocks)
+
+        runs, run_start, pos = [], None, 0
+        while pos < total:
+            byte = bits[pos >> 3]
+            if not (pos & 7) and pos + 8 <= total and byte in (0x00, 0xFF):
+                if byte == 0x00:                 # eight free blocks
+                    if run_start is None:
+                        run_start = pos
+                elif run_start is not None:      # eight used ones
+                    runs.append((run_start, pos - run_start))
+                    run_start = None
+                pos += 8
+                continue
+            if byte & (0x80 >> (pos & 7)):
+                if run_start is not None:
+                    runs.append((run_start, pos - run_start))
+                    run_start = None
+            elif run_start is None:
+                run_start = pos
+            pos += 1
+        if run_start is not None:
+            runs.append((run_start, total - run_start))
+
+        out = []
+        for first, n in runs:
+            length = n * block
+            if length >= min_bytes:
+                out.append((self.base + first * block, length))
+        return out
+
     def inode(self, cnid):
         return cnid
 
@@ -6298,6 +6503,115 @@ def self_test():
                        and _big & APFS_OID_MASK == 0x0FFFFFFF00001234
                        and _big != APFS_CONTAINER)
 
+        # The space manager, built by hand. It is an ephemeral object, so it is
+        # reached through a checkpoint map rather than the object map. The
+        # descriptor area carries a superblock copy first and a STALE map second,
+        # so both the type check and the transaction check have something to
+        # reject, and the first chunk does not start at block zero, so a run's
+        # base has to come from its chunk. The used blocks are one statement and
+        # the runs they leave are another, and the check is on run positions,
+        # because a free-block count cannot tell one bit order from the other.
+        SM_BLOCK, SM_XID, SM_OID = 4096, 9, 1024
+        SM_TOTAL = 48
+        SM_USED = {0, 1, 2, 3, 4, 5, 6, 7, 9, 20, 21, 22, 23}
+        # by hand: chunk one covers blocks 0..23 with a bitmap, chunk two 24..45
+        # with a bitmap and nothing used, chunk three has no bitmap and so is
+        # wholly free. Chunk three claims eight blocks from 46 where the
+        # container has only two left, which is what a corrupt or truncated
+        # container looks like, and the answer must stop at the container's own
+        # block count rather than running past the end of the image. Free runs
+        # are 8, 10..19, and 24..47 once the last two chunks' runs are joined.
+        SM_WANT = [(8, 1), (10, 10), (24, 24)]
+        _sb = bytearray(64 * SM_BLOCK)
+
+        def _obj(at, xid, otype):
+            struct.pack_into("<Q", _sb, at + 16, xid)
+            struct.pack_into("<I", _sb, at + 24, otype)
+
+        _obj(0, SM_XID, APFS_OBJECT_TYPE_NX_SUPERBLOCK)
+        _sb[32:36] = APFS_NX_MAGIC
+        struct.pack_into("<I", _sb, 36, SM_BLOCK)
+        struct.pack_into("<Q", _sb, 40, SM_TOTAL)
+        struct.pack_into("<I", _sb, 104, 3)          # nx_xp_desc_blocks
+        struct.pack_into("<Q", _sb, 112, 1)          # nx_xp_desc_base, block 1
+        struct.pack_into("<Q", _sb, APFS_NX_SPACEMAN_OID_OFF, SM_OID)
+
+        # block 1: a superblock copy carrying this transaction id, with bytes
+        # that would read as a mapping to a decoy if its type went unchecked
+        _obj(1 * SM_BLOCK, SM_XID, APFS_OBJECT_TYPE_NX_SUPERBLOCK)
+        struct.pack_into("<I", _sb, 1 * SM_BLOCK + 36, SM_BLOCK)   # its block size
+        struct.pack_into("<QQ", _sb, 1 * SM_BLOCK + 40 + 24, SM_OID, 50)
+
+        def _cpmap(block_no, xid, oid, paddr):
+            at = block_no * SM_BLOCK
+            _obj(at, xid, APFS_OBJECT_TYPE_CHECKPOINT_MAP)
+            struct.pack_into("<I", _sb, at + 36, 1)  # one mapping
+            struct.pack_into("<QQ", _sb, at + 40 + 24, oid, paddr)
+
+        _cpmap(2, SM_XID - 1, SM_OID, 50)            # stale, names a decoy
+        _cpmap(3, SM_XID, SM_OID, 4)                 # current
+
+        def _spaceman(block_no, cib_block):
+            at = block_no * SM_BLOCK
+            _obj(at, SM_XID, APFS_OBJECT_TYPE_SPACEMAN)
+            dev = at + APFS_SM_DEV_MAIN_OFF
+            struct.pack_into("<II", _sb, dev + 16, 1, 0)   # one cib, no cab
+            struct.pack_into("<I", _sb, dev + 32, 200)     # sm_addr_offset
+            struct.pack_into("<Q", _sb, at + 200, cib_block)
+
+        _spaceman(4, 7)                              # the real one, cib at block 7
+        _spaceman(50, 51)                            # the decoy, outside the container
+
+        def _cib(block_no, chunks):
+            at = block_no * SM_BLOCK
+            struct.pack_into("<I", _sb, at + 36, len(chunks))
+            for i, (addr, count, free, bm) in enumerate(chunks):
+                o = at + 40 + i * APFS_CI_SIZE
+                struct.pack_into("<Q", _sb, o + 8, addr)
+                struct.pack_into("<II", _sb, o + 16, count, free)
+                struct.pack_into("<Q", _sb, o + 24, bm)
+
+        _cib(7, [(0, 24, 11, 5), (24, 22, 22, 6), (46, 8, 8, 0)])
+        _cib(51, [(0, 48, 48, 0)])                   # the decoy says everything is free
+        for _b in SM_USED:                           # least significant bit first
+            if _b < 24:
+                _sb[5 * SM_BLOCK + (_b >> 3)] |= 1 << (_b & 7)
+            elif _b < 46:
+                _i = _b - 24
+                _sb[6 * SM_BLOCK + (_i >> 3)] |= 1 << (_i & 7)
+
+        class _SpacemanOnly:
+            """Only what free_extents asks of an APFS walker."""
+            free_extents = ApfsWalker.free_extents   # pylint: disable=protected-access
+            _ephemeral = ApfsWalker._ephemeral       # pylint: disable=protected-access
+            base = 0
+            block_size = SM_BLOCK
+            block_count = SM_TOTAL
+            xid = SM_XID
+
+            def __init__(self, buf):
+                self._buf = bytes(buf)
+                self._nx = self._buf[0:SM_BLOCK]
+
+            def block(self, n):
+                return self._buf[n * SM_BLOCK:(n + 1) * SM_BLOCK]
+
+        _smgot = _SpacemanOnly(_sb).free_extents()
+        apfs_free_ok = _smgot == [(c * SM_BLOCK, n * SM_BLOCK) for c, n in SM_WANT]
+        apfs_free_floor_ok = (_SpacemanOnly(_sb).free_extents(min_bytes=11 * SM_BLOCK)
+                              == [(24 * SM_BLOCK, 24 * SM_BLOCK)])
+        # a container whose space manager cannot be found says nothing rather
+        # than saying nothing is free
+        _nosm = bytearray(_sb)
+        struct.pack_into("<Q", _nosm, APFS_NX_SPACEMAN_OID_OFF, 0)
+        apfs_no_spaceman_ok = _SpacemanOnly(_nosm).free_extents() == []
+        # nor may it read whatever the checkpoint map happens to point at: a
+        # mapping that names a block which is not a space manager is refused
+        _wrongobj = bytearray(_sb)
+        struct.pack_into("<I", _wrongobj, 4 * SM_BLOCK + 24,
+                         APFS_OBJECT_TYPE_CHECKPOINT_MAP)
+        apfs_wrong_object_ok = _SpacemanOnly(_wrongobj).free_extents() == []
+
         for label, cond in (
                 ("an APFS container superblock is identified by its own geometry",
                  bool(apfs_named) and apfs_named[0] == "apfs"),
@@ -6312,7 +6626,16 @@ def self_test():
                 ("a sealed volume's child pointer is followed relative to the "
                  "tree's root id", sealed_ok),
                 ("a walker node carries a whole sixty-bit object id beside its "
-                 "volume index", wide_oid_ok)):
+                 "volume index", wide_oid_ok),
+                ("the space manager is found through the current checkpoint map "
+                 "and reads back as the runs of free space it describes",
+                 apfs_free_ok),
+                ("an APFS free-space floor drops the short runs",
+                 apfs_free_floor_ok),
+                ("a container whose space manager cannot be found reports "
+                 "nothing rather than nothing free", apfs_no_spaceman_ok),
+                ("a checkpoint mapping naming something that is not a space "
+                 "manager is refused rather than read", apfs_wrong_object_ok)):
             if not cond:
                 ok = False
             print(f"  [{'PASS' if cond else 'FAIL'}] {label}")
@@ -6398,6 +6721,56 @@ def self_test():
                    and recs[0] == (b"KEY1", b"DATA-ONE")
                    and recs[1] == (b"KEY2", b"DATA-TWO"))
 
+        # HFS+ keeps an allocation file, one bit per block, and the bits run
+        # MOST significant first, the opposite way round from NTFS and exFAT.
+        # A count of free blocks cannot tell the two orders apart, because a
+        # byte holds the same number of zero bits either way, so the fixture is
+        # built with the used blocks in one statement and the runs they leave in
+        # another, and the check is on the run POSITIONS.
+        HFS_BLOCK = 4096
+        HFS_TOTAL = 38                              # not a multiple of eight
+        HFS_USED = {0, 1, 2, 9, 20, 21, 22, 23}
+        # by hand from that set, over blocks 0 to 37: free runs are 3..8,
+        # 10..19, 24..37
+        HFS_WANT = [(3, 6), (10, 10), (24, 14)]
+        _hbits = bytearray((HFS_TOTAL + 7) // 8)
+        for _b in HFS_USED:
+            _hbits[_b >> 3] |= 0x80 >> (_b & 7)     # most significant bit first
+        _hbuf = bytearray(4 * HFS_BLOCK)
+        _hvh = bytearray(512)
+        struct.pack_into(">HH", _hvh, 0, HFSP_SIG, 4)
+        struct.pack_into(">III", _hvh, 40, HFS_BLOCK, HFS_TOTAL, len(HFS_USED))
+        struct.pack_into(">QII", _hvh, HFSP_ALLOC_FORK, len(_hbits), 0, 1)
+        struct.pack_into(">II", _hvh, HFSP_ALLOC_FORK + 16, 1, 1)   # one extent, block 1
+        _hbuf[HFSP_VH_OFF:HFSP_VH_OFF + 512] = _hvh
+        _hbuf[HFS_BLOCK:HFS_BLOCK + len(_hbits)] = _hbits
+
+        class _AllocOnly:
+            """Only what free_extents asks of an HFS+ walker."""
+            free_extents = HfsPlusWalker.free_extents    # pylint: disable=protected-access
+            _read_extents = HfsPlusWalker._read_extents  # pylint: disable=protected-access
+            base = 0
+            block_size = HFS_BLOCK
+            total_blocks = HFS_TOTAL
+
+            def __init__(self):
+                self.fh = io.BytesIO(bytes(_hbuf))
+
+            def _overflow(self, _cnid, _resource=False):
+                return []                            # the header holds the whole fork
+
+        _hgot = _AllocOnly().free_extents()
+        hfs_free_ok = _hgot == [(c * HFS_BLOCK, n * HFS_BLOCK) for c, n in HFS_WANT]
+        # the same bitmap read the other way round must NOT give this answer,
+        # which is what a free-block count alone can never establish
+        _lsb = bytearray((HFS_TOTAL + 7) // 8)
+        for _b in HFS_USED:
+            _lsb[_b >> 3] |= 1 << (_b & 7)
+        hfs_bit_order_ok = bytes(_lsb) != bytes(_hbits) and sum(
+            bin(x).count("1") for x in _lsb) == sum(bin(x).count("1") for x in _hbits)
+        hfs_free_floor_ok = (_AllocOnly().free_extents(min_bytes=11 * HFS_BLOCK)
+                             == [(24 * HFS_BLOCK, 14 * HFS_BLOCK)])
+
         for label, cond in (
                 ("an HFS+ volume header is identified by its own geometry",
                  bool(hfs_named) and hfs_named[0] == "hfs+"),
@@ -6408,7 +6781,13 @@ def self_test():
                 ("a fork record yields its size and only its used extents", fork_ok),
                 ("a catalog name decodes from UTF-16 big endian", name_ok),
                 ("a B-tree node's records are found through its offset array",
-                 node_ok)):
+                 node_ok),
+                ("the allocation file reads back as the runs of free space it "
+                 "describes, most significant bit first", hfs_free_ok),
+                ("the two bit orders hold the same number of free blocks, so a "
+                 "count cannot tell them apart", hfs_bit_order_ok),
+                ("an HFS+ free-space floor drops the short runs",
+                 hfs_free_floor_ok)):
             if not cond:
                 ok = False
             print(f"  [{'PASS' if cond else 'FAIL'}] {label}")
