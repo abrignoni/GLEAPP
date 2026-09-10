@@ -2444,7 +2444,7 @@ async function pick(kind, label) {
     }
   }
   return prompt(label || ({ folder: "Folder path:",
-    archive: "Path to the extraction archive (zip / tar):",
+    archive: "Path to the extraction archive or acquisition (zip, tar, tar.gz/bz2/xz, E01):",
     basemap: "Path to a basemap file (.pmtiles or .mbtiles):" }[kind]
     || "Path to .json job file:")) || null;
 }
@@ -2460,6 +2460,11 @@ function showLauncher(ctx) {
   Lr.native = !!ctx.native;
   $("#launcher").style.display = "block";
   $("#main").style.display = "none";
+  // named from the server's own list, so the screen cannot drift from the walk
+  const fs = ctx.walked_filesystems || [];
+  $("#fsList").innerHTML = fs.length
+    ? fs.map(f => `<code>${esc(f)}</code>`).join(", ")
+    : "the filesystems the reader supports";
   const rc = ctx.recent || [];
   if (rc.length) {
     $("#recentCard").style.display = "block";
@@ -2594,6 +2599,25 @@ function renderSourcePanel(list) {
       + ` the name is the offset it was found at, and the date columns are empty.">`
       + `· ${cut.toLocaleString()} carved</span>`);
     const origin = how.length ? " " + how.join(" ") : "";
+    // Which volumes the acquisition held and what each was read as, and above
+    // all the ones that could not be read: an examiner has to be able to see
+    // that part of the disk was not examined, rather than infer it from a count.
+    let vols = "";
+    try {
+      const list = s.volumes ? JSON.parse(s.volumes) : [];
+      if (list.length) {
+        vols = `<div class="muted" style="font-size:11px;margin-top:2px">read as `
+          + list.map(v => `<b>${esc(v.kind)}</b>${v.label ? " " + esc(v.label) : ""}`
+                          + ` (${_snapBytes(v.size || 0)})`).join(", ") + `</div>`;
+      }
+      const bad = s.volumes_not_read ? JSON.parse(s.volumes_not_read) : [];
+      if (bad.length) {
+        vols += `<div style="font-size:11px;margin-top:2px;color:var(--danger)"`
+          + ` title="These volumes were found in the acquisition and could not be`
+          + ` opened, so nothing in them was registered.">not read: `
+          + bad.map(esc).join("; ") + `</div>`;
+      }
+    } catch (e) { vols = ""; }
     // a compressed tar cannot be read on demand, so its copies cannot be dropped
     const fixed = s.format === "tar-compressed";
     const btn = s.mode === "staged"
@@ -2604,7 +2628,7 @@ function renderSourcePanel(list) {
            title="Copy every registered file out of the archive into the case, so the case no longer needs it.">Copy into case</button>`;
     return `<div style="margin:3px 0"><b title="${esc(s.path)}">${esc(s.name)}</b>
       <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${origin}${state}
-      <div style="margin-top:2px">${btn}</div></div>`;
+      ${vols}<div style="margin-top:2px">${btn}</div></div>`;
   }).join("");
   const post = (url, body) => api(url, {
     method: "POST", headers: { "Content-Type": "application/json" },

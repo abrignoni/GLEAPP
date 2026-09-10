@@ -211,7 +211,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
                     file_types=("Extraction or acquisition "
-                                "(*.zip;*.tar;*.tgz;*.tar.gz;*.E01;*.e01)",
+                                "(*.zip;*.tar;*.tgz;*.tar.gz;*.tbz2;*.tar.bz2;"
+                                "*.txz;*.tar.xz;*.E01;*.e01)",
                                 "All files (*.*)"),
                 )
             elif kind == "hashdb":
@@ -1085,6 +1086,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         if case is None:
             return jsonify({"needs_case": True,
                             "recent": appconfig.recent_cases(limit=3),
+                            # the launcher says what an acquisition can be read
+                            # as, from the list the walk itself is built on
+                            "walked_filesystems": list(archive.WALKED_FILESYSTEMS),
                             "native": state["native"]})
         try:
             return jsonify(_context_payload(case))

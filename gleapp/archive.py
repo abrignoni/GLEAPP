@@ -80,6 +80,17 @@ _SHA256_LINE = re.compile(r"^\s*(?P<name>[^=]+?)\s*=\s*(?P<hex>[0-9A-Fa-f]{64})\
 
 MODE_REFERENCE = "reference"
 MODE_STAGED = "staged"
+# What an acquisition's volumes can be read as. Every name here is one
+# qnxprobe.walker_for returns a walker for, and one identify_fs can name, so a
+# volume of this kind is walked file by file rather than left to the carver.
+# Checked against the vendored reader by tests/test_supported_inputs.py.
+# Not on this list, and worth knowing: QNX6. The vendored reader has a Qnx6Walker
+# and its own CLI uses it, but walker_for does not hand one out and identify_fs
+# does not name the format, so a QNX6 volume is not seen as a volume here at all.
+WALKED_FILESYSTEMS = ("ext2", "ext3", "ext4", "FAT32", "exFAT", "NTFS",
+                      "HFS+", "HFSX", "APFS", "QNX4", "QNX EFS", "QNX ETFS",
+                      "QNX IFS")
+
 FORMAT_ZIP = "zip"
 FORMAT_TAR = "tar"
 FORMAT_TAR_COMPRESSED = "tar-compressed"
@@ -312,6 +323,10 @@ def source_record(case, name: str) -> dict | None:
         # the volumes a walked image was read from, so a later read can rebuild
         # the walker for the one a given row came out of
         "volumes": case.db.get_meta(f"{key}:volumes") or "",
+        # and the ones the walk could not open. An examiner has to be told that
+        # part of the disk was not read: the ingest has recorded this since the
+        # walk was written and nothing has ever handed it back.
+        "volumes_not_read": case.db.get_meta(f"{key}:volumes_not_read") or "",
     }
 
 

@@ -27,10 +27,15 @@ button (top-right of the launcher, and in every case's header) opens this manual
   name, then add one or more **evidence sources** with the buttons under
   *Evidence to ingest* (or paste a path and click **Add**):
   - **Browse for folder** — scanned recursively for media;
-  - **Browse for extraction (zip / tar)** — a full file-system extraction
-    archive (`.zip`, `.tar`, `.tar.gz`); its media is read straight from the
-    archive unless you tick *Copy media out of extraction archives*, and a
-    compressed `.tar.gz` is always copied out;
+  - **Browse for extraction or acquisition** — a full file-system extraction
+    archive (`.zip`, or a `.tar` plain or compressed: `.gz`, `.bz2`, `.xz`); its
+    media is read straight from the archive unless you tick *Copy media out of
+    extraction archives*, and a compressed tar is always copied out. Or an
+    **E01 acquisition** (`.E01` with its numbered segments beside it), whose
+    filesystems are walked file by file so each file keeps the name, path and
+    dates the filesystem recorded: ext2, ext3, ext4, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume that cannot be read is named
+    in the Source panel afterwards. Carving the free space for deleted media is
+    a separate step, asked for after ingest;
   - **Browse for JSON** — a GLEAPP job spec (a list of named sources) **or** a
     **Project VIC 2.0 (US) JSON**, detected automatically; the VIC media folder
     is resolved next to the file, and existing MediaID / category / original
