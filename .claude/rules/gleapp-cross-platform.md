@@ -164,16 +164,34 @@ the space a volume reports free, which is where the 2.1% of hits in the table ab
 **A volume that cannot report its free space drops the scope for the WHOLE image.** Reading
 part of a disk while reporting the carve finished is worse than reading all of it, so
 `_unclaimed_space()` returns None the moment any volume cannot answer, and None means scan
-everything. NTFS answers through `$Bitmap`, FAT32 through its allocation table, and exFAT
-through its allocation bitmap.
+everything. NTFS answers through `$Bitmap`, FAT32 through its allocation table, exFAT through
+its allocation bitmap, HFS+ through its allocation file and APFS through the container's
+space manager.
 
 **One quiet volume is enough, and it is usually the small one.** Every Windows disk carries a
-0.2 GiB FAT32 EFI system partition beside its NTFS volumes, so until FAT could answer, 0.09%
-of the disk decided the behaviour of the other 99.91% and both Windows acquisitions fell back
-to a whole-image carve. Measured now, through `_unclaimed_space()` itself rather than through
-one volume's half of it: 177.1 GiB of 238.5 in 3,500 runs, and 176.3 GiB of 232.9 in 1,372
-runs, both in about half a second. A Mac image is still scanned whole, because APFS reports no
-free space yet and neither does HFS+.
+FAT32 EFI system partition of a fifth of a gigabyte beside its NTFS volumes, so until FAT
+could answer, a tenth of one percent of the disk decided the behaviour of the rest and every
+Windows image fell back to a whole-image carve. A Mac image did the same until APFS could
+answer.
+
+Measured through `_unclaimed_space()` itself rather than through one volume's half of it,
+naming each image rather than its size, because two of these are the same size to the byte:
+
+| image | volumes | image size | scoped to | runs |
+| --- | --- | ---: | ---: | ---: |
+| jfalkenunencrypted | fat32, ntfs, ntfs | 238.5 GiB | 177.1 GiB (74%) | 3,500 |
+| sadamsdrive00 | fat32, ntfs, ntfs | 232.9 GiB | 176.3 GiB (76%) | 1,372 |
+| PC-MUS-001 | fat32, ntfs, ntfs | 238.5 GiB | 149.1 GiB (63%) | 3,025 |
+| macOS-BigSur | fat32, apfs | 80.0 GiB | 57.3 GiB (72%) | 5,163 |
+| AF-Case2 | ntfs | 40.0 GiB | 24.2 GiB (60%) | 888 |
+| NTFS-HiddenFiles | ntfs | 0.1 GiB | 0.1 GiB (92%) | 2 |
+
+None of them falls back now. Each took under a second.
+
+**Name the image, never its size.** `jfalkenunencrypted` and `PC-MUS-001` are both exactly
+256,060,514,304 bytes, so "the 238.5 GiB Windows acquisition" names two different disks whose
+free space differs by 28 GiB. A figure recalled against the size alone has an even chance of
+being attached to the wrong disk, and that has already happened twice here.
 
 When the scope is used the case meta records the runs and bytes scanned, so a report can say
 what was covered rather than implying the whole disk was.
