@@ -1091,13 +1091,16 @@ def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
 
     A signature found inside an allocated run belongs to a file the directory
     tree already names, so scanning only what a volume reports free is both far
-    less work and far better material: on a 238.5 GiB Windows acquisition it took
-    a carve from 384,386 hits in about 40 minutes to 7,233 in 8.3 minutes, and
-    what it dropped was the 90.2% that were resources embedded inside live files.
+    less work and far better material: of the 384,386 hits a carve of a 238.5 GiB
+    Windows acquisition returned, 90.2% sat inside a live file and 2.1% in space
+    no file claimed.
 
-    None means scan everything. Only NTFS reports its free space so far, and a
-    volume that cannot answer must not be quietly skipped: leaving part of a disk
-    unscanned while reporting a carve as done is worse than scanning all of it.
+    None means scan everything. Only NTFS reports its free space, through
+    $Bitmap, and a volume that cannot answer must not be quietly skipped: leaving
+    part of a disk unscanned while reporting a carve as done is worse than
+    scanning all of it. Both Windows acquisitions measured here carry a FAT32 EFI
+    system partition beside their NTFS volumes, and FAT reports no free space, so
+    on those the scope is dropped and the whole image is scanned.
     """
     out = []
     for base, size, fskind, _label in vols:

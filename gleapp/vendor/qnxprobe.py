@@ -41,7 +41,7 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.18"
+QNXPROBE_VERSION = "1.19"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
@@ -1128,6 +1128,7 @@ NTFS_ATTR_COMPRESSED = 0x0001
 NTFS_ATTR_ENCRYPTED  = 0x4000
 NTFS_ATTR_SPARSE     = 0x8000
 
+NTFS_BITMAP       = 6            # $Bitmap: one bit per cluster, set when in use
 NTFS_MFT_IN_USE   = 0x0001
 NTFS_MFT_IS_DIR   = 0x0002
 
@@ -1483,6 +1484,65 @@ class NtfsWalker:
         data = self._data_attr(num)
         size = 0 if data is None else (len(data.value) if data.resident else data.data_size)
         return (0o100644, size, mtime)
+
+    def free_extents(self, min_bytes=0):
+        """[(byte offset, length)] for the runs of space the volume says are free.
+
+        NTFS records one bit per cluster in $Bitmap, the unnamed $DATA of MFT
+        record 6, set when the cluster is in use. What is left is where deleted
+        content survives until something overwrites it, and it is the only part
+        of a volume a carver can tell apart from a live file: a signature found
+        inside an allocated run belongs to a file the tree already names.
+
+        Offsets are into the image rather than the volume, so a caller reading
+        the whole disk can use them directly. ``min_bytes`` drops runs too short
+        to hold anything worth recovering.
+
+        Whole bytes of the bitmap are tested before their bits are, because a
+        volume of this size has tens of millions of clusters and almost all of
+        them sit in runs: on a 237.6 GiB volume that is 62,289,344 clusters, and
+        looking at each one individually is not worth doing.
+        """
+        attr = self._data_attr(NTFS_BITMAP)
+        if attr is None:
+            return []
+        size = len(attr.value) if attr.resident else attr.data_size
+        if not size:
+            return []
+        bits = b"".join(self.read_file(NTFS_BITMAP, size))
+        clusters = (self.total_sectors * self.bps) // self.cluster
+        total = min(len(bits) * 8, clusters or len(bits) * 8)
+
+        runs, run_start = [], None
+        pos = 0
+        while pos < total:
+            byte = bits[pos >> 3]
+            if not (pos & 7) and pos + 8 <= total and byte in (0x00, 0xFF):
+                if byte == 0x00:                     # eight free clusters
+                    if run_start is None:
+                        run_start = pos
+                else:                                # eight used ones
+                    if run_start is not None:
+                        runs.append((run_start, pos - run_start))
+                        run_start = None
+                pos += 8
+                continue
+            if byte & (1 << (pos & 7)):
+                if run_start is not None:
+                    runs.append((run_start, pos - run_start))
+                    run_start = None
+            elif run_start is None:
+                run_start = pos
+            pos += 1
+        if run_start is not None:
+            runs.append((run_start, total - run_start))
+
+        out = []
+        for first, count in runs:
+            length = count * self.cluster
+            if length >= min_bytes:
+                out.append((self.base + first * self.cluster, length))
+        return out
 
     def named_streams(self, num):
         """[(name, size)] for every alternate data stream on this record. A named
@@ -6349,6 +6409,52 @@ def self_test():
         _SeqOnly()._index_entries(bytes(idx), 0, found, set())  # pylint: disable=protected-access
         stale_ok = found == [("live.txt", 70)]
 
+        # $Bitmap read back as free runs. The bitmap is built here bit by bit and
+        # the runs it must produce are written out separately as literals, so the
+        # test cannot agree with the code by sharing its arithmetic. The last
+        # cluster is deliberately FREE, so the run reaching the end of the volume
+        # is exercised; a reader that only closes a run when it meets a used
+        # cluster loses it, and a fixture ending in a used cluster never notices.
+        # The bits past the volume's last cluster are left free here, which real
+        # NTFS does not do, so that a reader failing to stop at the volume's end
+        # runs off it and is caught.
+        FREE_CLUSTER_SIZE = 4096
+        FREE_TOTAL = 40                      # clusters the volume has
+        FREE_USED = {0, 1, 2, 9, 20, 21, 22, 23}
+        # by hand from that set: free runs are 3..8, 10..19, 24..39
+        FREE_WANT_CLUSTERS = [(3, 6), (10, 10), (24, 16)]
+        FREE_BASE = 1 << 20
+
+        _bm = bytearray((FREE_TOTAL + 7) // 8 + 2)     # spare bytes, left free
+        for _c in FREE_USED:
+            _bm[_c >> 3] |= 1 << (_c & 7)
+
+        class _BitmapOnly:
+            """Only what free_extents asks of a walker."""
+            free_extents = NtfsWalker.free_extents  # pylint: disable=protected-access
+            base = FREE_BASE
+            cluster = FREE_CLUSTER_SIZE
+            bps = 512
+            total_sectors = FREE_TOTAL * FREE_CLUSTER_SIZE // 512
+
+            def _data_attr(self, _num):
+                attr = _NtfsAttr(NTFS_DATA, "", 0, False)
+                attr.data_size = len(_bm)
+                return attr
+
+            def read_file(self, _num, _size):
+                yield bytes(_bm)
+
+        _got = _BitmapOnly().free_extents()
+        _want = [(FREE_BASE + c * FREE_CLUSTER_SIZE, n * FREE_CLUSTER_SIZE)
+                 for c, n in FREE_WANT_CLUSTERS]
+        _volume_end = FREE_BASE + FREE_TOTAL * FREE_CLUSTER_SIZE
+        free_ok = (_got == _want
+                   and all(at + n <= _volume_end for at, n in _got))
+        # a floor drops the runs too short to hold anything worth recovering
+        free_floor_ok = (_BitmapOnly().free_extents(min_bytes=11 * FREE_CLUSTER_SIZE)
+                         == [(FREE_BASE + 24 * FREE_CLUSTER_SIZE, 16 * FREE_CLUSTER_SIZE)])
+
         for label, cond in (
                 ("an NTFS boot sector is identified by its own geometry",
                  bool(ntfs_named) and ntfs_named[0] == "ntfs"),
@@ -6362,7 +6468,11 @@ def self_test():
                 ("a record's sector fixups are applied, and a torn one is "
                  "refused", fixup_ok),
                 ("an index entry naming a record of a different generation is "
-                 "not followed", stale_ok)):
+                 "not followed", stale_ok),
+                ("the cluster bitmap reads back as the runs of free space it "
+                 "describes", free_ok),
+                ("a free-space floor drops the runs too short to be worth "
+                 "carving", free_floor_ok)):
             if not cond:
                 ok = False
             print(f"  [{'PASS' if cond else 'FAIL'}] {label}")

@@ -159,17 +159,19 @@ So a walk is the primary read and a carve reaches the deleted material a walk ca
 **A carve can be asked for later, and can be scoped.** `gleapp source carve <name>` carves
 a source already ingested, so the choice is not stuck at ingest time; the pipeline runs over
 just the new rows because `process()` takes a where clause. `--unallocated-only` reads only
-the space a volume reports free, which on the same acquisition is 149.0 GiB instead of
-238.5, 8.3 minutes instead of about 40, and 7,233 hits instead of 384,386.
+the space a volume reports free, which is where the 2.1% of hits in the table above live.
 
 **A volume that cannot report its free space drops the scope for the WHOLE image.** Reading
 part of a disk while reporting the carve finished is worse than reading all of it, so
 `_unclaimed_space()` returns None the moment any volume cannot answer, and None means scan
-everything. Only NTFS answers so far, through `$Bitmap`, and the copy vendored here does
-not have that yet, so today the fallback is what always happens and a Mac image still gets
-a whole-disk carve. When the
-scope is used the case meta records the runs and bytes scanned, so a report can say what was
-covered rather than implying the whole disk was.
+everything. Only NTFS answers, through `$Bitmap`. Measured on both Windows acquisitions in
+hand, the scope is dropped on each: they carry a 0.2 GiB FAT32 EFI system partition beside
+their NTFS volumes, and FAT reports no free space, so a whole-image carve is what runs. Their
+NTFS volumes do answer, at 176.9 GiB free of 238.5 and 176.2 GiB of 232.9, and that is what a
+scope would cover once FAT can report. A Mac image gets a whole-disk carve for the same
+reason, since APFS and HFS+ report no free space either. When the scope is used the case meta
+records the runs and bytes scanned, so a report can say what was covered rather than implying
+the whole disk was.
 
 Testing that fallback needs **two** volumes, one that answers and one that does not. With a
 single volume, "skip the quiet one" and "drop the scope" both produce the same empty answer,
