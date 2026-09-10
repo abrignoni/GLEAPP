@@ -42,7 +42,7 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.22"
+QNXPROBE_VERSION = "1.23"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
@@ -3029,6 +3029,13 @@ class _HfsTree:
             kind = desc[0]
             if kind == HFSP_LEAF:
                 return node_no
+            if kind != HFSP_INDEX:
+                # Only an index node carries pointers to follow. A tree that is
+                # allocated but empty says root 0, depth 0, and node 0 is its
+                # own header, so a descent lands here and would otherwise read
+                # the header's records as pointers. Every HFS+ volume with no
+                # extended attributes and no fragmented file has that shape.
+                return None
             nxt = struct.unpack_from(">I", recs[0][1], 0)[0]
             for key, data in recs:
                 if key_of(key) is None:
@@ -6882,6 +6889,69 @@ def self_test():
         hfs_free_floor_ok = (_AllocOnly().free_extents(min_bytes=11 * HFS_BLOCK)
                              == [(24 * HFS_BLOCK, 14 * HFS_BLOCK)])
 
+        # A B-tree that is allocated but holds nothing says root 0, depth 0 in
+        # its header, and node 0 is that header rather than a leaf. Every HFS+
+        # volume with no extended attributes and no fragmented file has exactly
+        # that shape, so this is the ordinary case: nps-2009-hfsjtest1 has it,
+        # and descending into the header read its own records as index pointers
+        # and raised. Two fixtures, because two separate guards stand here and
+        # one fixture would let either of them look load-bearing on its own.
+        class _TinyVol:
+            block_size = 4096
+            base = 0
+
+            def __init__(self, buf):
+                self.fh = io.BytesIO(bytes(buf))
+
+        def _hfs_node(buf, at, kind, records):
+            """One B-tree node: a descriptor, the records, and the offset array."""
+            struct.pack_into(">bBH", buf, at + 8, kind, 0, len(records))
+            pos, offs = 14, []
+            for rec in records:
+                offs.append(pos)
+                buf[at + pos:at + pos + len(rec)] = rec
+                pos += len(rec)
+            offs.append(pos)
+            for i, off in enumerate(offs):
+                struct.pack_into(">H", buf, at + 4096 - 2 * (i + 1), off)
+
+        # empty tree: header node only, root 0 and depth 0, and its first record
+        # carries no four byte pointer, which is what raised on the real volume
+        # the real shape, read off nps-2009-hfsjtest1: three records, the last
+        # of them carrying a long key and NO data, which is the one the descent
+        # tried to read a node pointer out of
+        _empty = bytearray(2 * 4096)
+        # the last record's key length swallows the whole record, so its data
+        # is empty, exactly as the real header node's third record is
+        _hfs_node(_empty, 0, HFSP_HEADER,
+                  [struct.pack(">H", 0) + bytes(102),
+                   struct.pack(">H", 0) + bytes(124),
+                   struct.pack(">H", 200) + bytes(198)])
+        struct.pack_into(">HI", _empty, 14, 0, 0)        # depth 0, root 0
+        struct.pack_into(">H", _empty, 14 + 16, 4096)    # node size
+        _t_empty = _HfsTree(_TinyVol(_empty), len(_empty), [(0, 1)], "attributes")
+
+        # a tree whose root points at a map node, which is neither index nor leaf
+        _mapped = bytearray(3 * 4096)
+        _hfs_node(_mapped, 0, HFSP_HEADER, [b""])
+        struct.pack_into(">HI", _mapped, 14, 1, 1)       # depth 1, root node 1
+        struct.pack_into(">H", _mapped, 14 + 16, 4096)
+        _hfs_node(_mapped, 4096, HFSP_MAP, [b"\x00\x00"])
+        _t_mapped = _HfsTree(_TinyVol(_mapped), len(_mapped), [(0, 1), (1, 1)], "attributes")
+
+        def _finds_nothing(tree):
+            # key_of answers below the wanted key for every record, the way the
+            # real attribute keys do for a file id that is not in the tree, so
+            # the descent walks the whole record list and reaches the last one
+            try:
+                return tree.find(1, lambda key: 0) is None
+            except Exception:                            # pylint: disable=broad-except
+                return False                             # raising is the defect
+
+        empty_tree_ok = (_t_empty.root == 0 and _t_empty.depth == 0
+                         and _finds_nothing(_t_empty))
+        odd_node_ok = _t_mapped.root == 1 and _finds_nothing(_t_mapped)
+
         for label, cond in (
                 ("an HFS+ volume header is identified by its own geometry",
                  bool(hfs_named) and hfs_named[0] == "hfs+"),
@@ -6898,7 +6968,11 @@ def self_test():
                 ("the two bit orders hold the same number of free blocks, so a "
                  "count cannot tell them apart", hfs_bit_order_ok),
                 ("an HFS+ free-space floor drops the short runs",
-                 hfs_free_floor_ok)):
+                 hfs_free_floor_ok),
+                ("a B-tree that is allocated but empty is read as holding "
+                 "nothing, not descended into", empty_tree_ok),
+                ("a descent that reaches a node which is neither index nor leaf "
+                 "stops rather than reading it as a pointer", odd_node_ok)):
             if not cond:
                 ok = False
             print(f"  [{'PASS' if cond else 'FAIL'}] {label}")
