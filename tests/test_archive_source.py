@@ -164,3 +164,29 @@ def test_common_root_needs_every_member_under_one_folder():
     assert archive.common_root(["Dump/a", "Other/b"]) == ""
     assert archive.common_root(["Dump/a", "loose"]) == ""
     assert archive.common_root(["Dump/a", "__MACOSX/._a"]) == "Dump/"   # resource forks do not count
+
+
+# The magic 0x00051607, version 2, and the 16-byte "Mac OS X" filler, read from
+# a sidecar macOS wrote onto a FAT32 volume on 2026-09-10. Written out here
+# rather than imported, so the test does not read the constant it checks.
+_AD_HEX = "00051607000200004d6163204f5320582020202020202020"
+APPLEDOUBLE = bytes.fromhex(_AD_HEX) + b"\x00" * 4064
+
+
+def test_a_macos_sidecar_in_an_ordinary_path_is_not_an_image(tmp_path):
+    """``__MACOSX/`` is the convention a Mac ZIP WRITER uses, and is already
+    skipped. A zip made from a directory that came off a FAT card carries the
+    sidecars in place instead, named after the files they belong to, so they
+    reach the ingest wearing an image extension.
+    """
+    z = tmp_path / "EXTRACTION_FFS.zip"
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Dump/DCIM/photo.jpg", _jpg((200, 40, 40)))
+        zf.writestr("Dump/DCIM/._photo.jpg", APPLEDOUBLE)
+    c = open_case(tmp_path / "case", create=True, examiner="t")
+    try:
+        sources, _ = parse_source_spec(z)
+        ingest_sources(c, sources)
+        assert set(r["orig_path"] for r in c.db.iter_files()) == {"Dump/DCIM/photo.jpg"}
+    finally:
+        c.close()

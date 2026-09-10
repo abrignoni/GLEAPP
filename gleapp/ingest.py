@@ -32,6 +32,41 @@ ISOBMFF_AUDIO_BRANDS = frozenset({
 })
 
 
+# macOS writes a sidecar named ``._<name>`` beside every file it copies onto a
+# volume that cannot hold the file's extended attributes: FAT, exFAT, and most
+# network shares. The sidecar carries the resource fork and Finder info in
+# AppleDouble form, and it takes the *whole* name of the file it belongs to, so
+# ``._holiday.jpg`` ends in an image extension and holds no image. Classifying
+# one by its extension makes it an image that then fails to decode, which reads
+# as evidence corruption: a card that has been in a Mac carries one per file.
+#
+# Magic and version were read from a sidecar macOS wrote onto a FAT32 volume on
+# 2026-09-10 (``00 05 16 07 00 02 00 00``) and match Apple's AppleSingle/
+# AppleDouble specification. AppleSingle's 0x00051600 is a different format and
+# is deliberately not matched, because macOS does not write one in this place.
+APPLEDOUBLE_MAGIC = b"\x00\x05\x16\x07"
+APPLEDOUBLE_PREFIX = "._"
+
+
+def is_appledouble_name(name: str) -> bool:
+    """True when ``name``'s last path component looks like a macOS sidecar.
+
+    The name alone does not classify one, since a real file can be called
+    ``._x.jpg``; it only says the bytes are worth reading.
+    """
+    return name.replace("\\", "/").rsplit("/", 1)[-1].startswith(APPLEDOUBLE_PREFIX)
+
+
+def is_appledouble(name: str, head: bytes) -> bool:
+    """True for a macOS AppleDouble sidecar: the ``._`` name *and* the magic.
+
+    Both halves are required. The name alone would reclassify a real image
+    somebody happened to name ``._x.jpg``; the magic alone is four bytes some
+    other format could open with.
+    """
+    return is_appledouble_name(name) and head[:4] == APPLEDOUBLE_MAGIC
+
+
 def classify(ext: str) -> str:
     ext = ext.lower()
     if ext in IMAGE_EXTS:
@@ -75,18 +110,22 @@ def _kind_from_magic(h: bytes) -> str:
     return "other"
 
 
+def _head(path: str | Path, n: int = 16) -> bytes:
+    """The first ``n`` bytes of ``path``, or empty when it cannot be read."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(n)
+    except OSError:
+        return b""
+
+
 def sniff_kind(path: str | Path) -> str:
     """Classify a file by content when its name gives nothing away.
 
     Covers extension-less exports (Snapchat's ``SCContent`` cache names files
     by hash) and files with a wrong/missing extension.
     """
-    try:
-        with open(path, "rb") as fh:
-            head = fh.read(16)
-    except OSError:
-        return "other"
-    return _kind_from_magic(head)
+    return _kind_from_magic(_head(path))
 
 
 @dataclass
@@ -118,6 +157,9 @@ def scan(
             fp = Path(dirpath) / name
             ext = fp.suffix.lower()
             kind = classify(ext)
+            # a sidecar carries its sibling's whole name, extension and all
+            if kind != "other" and is_appledouble(name, _head(fp)):
+                kind = "other"
             if kind == "other":
                 # extension says nothing - look at the bytes (Snapchat's
                 # SCContent cache and many app caches drop the extension)
@@ -147,6 +189,8 @@ def scan(
 def _one(fp: Path, root: Path) -> Iterator[Discovered]:
     st = fp.stat()
     kind = classify(fp.suffix)
+    if kind != "other" and is_appledouble(fp.name, _head(fp)):
+        kind = "other"
     if kind == "other":
         kind = sniff_kind(fp)
     yield Discovered(

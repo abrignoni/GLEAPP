@@ -183,6 +183,37 @@ def test_two_identical_walked_files_hash_alike_once_copied_in(tmp_path):
     assert rows["lba0/HOLIDAY.JPG"]["md5"] == true_md5
 
 
+# The magic 0x00051607, version 2, and the 16-byte "Mac OS X" filler, read from
+# a sidecar macOS wrote onto a FAT32 volume on 2026-09-10. Written out here
+# rather than imported, so the test does not read the constant it checks.
+_AD_HEX = "00051607000200004d6163204f5320582020202020202020"
+
+
+def test_a_macos_sidecar_is_not_registered_as_an_image(tmp_path):
+    """macOS writes ``._name`` beside every file it copies onto a FAT card.
+
+    The sidecar takes the whole name of the file it belongs to, so it ends in
+    an image extension and holds AppleDouble, not an image. Registering one as
+    an image puts a file in the case that then fails to decode, and a card that
+    has been in a Mac carries one per file, so the error count reads as damaged
+    evidence.
+    """
+    sidecar = bytes.fromhex(_AD_HEX) + b"\x00" * 4064
+    case, _ = _ingest(tmp_path, _image(tmp_path, files=[
+        ("HOLIDAY", "JPG", JPG, (2023, 6, 1, 12, 30, 0)),
+        ("._HOLIDA", "JPG", sidecar, (2023, 6, 1, 12, 30, 0)),
+    ]))
+    assert set(_rows(case)) == {"lba0/HOLIDAY.JPG"}
+
+
+def test_a_walked_file_named_like_a_sidecar_but_holding_an_image_is_kept(tmp_path):
+    """The name is not enough on its own to throw a file away."""
+    case, _ = _ingest(tmp_path, _image(tmp_path, files=[
+        ("._HOLIDA", "JPG", JPG, (2023, 6, 1, 12, 30, 0)),
+    ]))
+    assert set(_rows(case)) == {"lba0/._HOLIDA.JPG"}
+
+
 def test_a_volume_the_reader_cannot_open_does_not_cost_the_others(tmp_path):
     """One unreadable filesystem must not lose an image's other volumes."""
     good = build_fat32([("KEEP", "JPG", JPG, (2020, 1, 1, 0, 0, 0))])

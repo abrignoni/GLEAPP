@@ -71,7 +71,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from . import storage_views
-from .ingest import IMAGE_EXTS, VIDEO_EXTS, _kind_from_magic
+from .ingest import (IMAGE_EXTS, VIDEO_EXTS, _kind_from_magic, is_appledouble,
+                     is_appledouble_name)
 from .vendor import ewfprobe, mediacarve, qnxprobe
 
 _SLUG = re.compile(r"[^A-Za-z0-9._-]+")
@@ -935,6 +936,14 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
             elif ext in VIDEO_EXTS:
                 kind = "video"
             else:
+                kind = "other"
+            # A macOS sidecar carries its sibling's whole name, so its extension
+            # names a picture it does not hold. Only "._" names are read for it.
+            if kind != "other" and is_appledouble_name(name):
+                with zf.open(info) as fh:
+                    if is_appledouble(name, fh.read(16)):
+                        kind = "other"
+            if kind == "other":
                 with zf.open(info) as fh:
                     kind = _kind_from_magic(fh.read(16))
                 if kind == "other" and not src.include_other:
@@ -1040,11 +1049,18 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
                 elif ext in VIDEO_EXTS:
                     kind = "video"
                 else:
+                    kind = "other"
+                if kind == "other" or is_appledouble_name(path):
                     try:
                         head = _walk_head(walker, node, fsize)
                     except Exception:                # pylint: disable=broad-except
                         tally.failed += 1
                         continue
+                # A macOS sidecar carries its sibling's whole name, so its
+                # extension names a picture it does not hold.
+                if kind != "other" and is_appledouble(path, head):
+                    kind = "other"
+                if kind == "other":
                     kind = _kind_from_magic(head)
                     if kind == "other" and not src.include_other:
                         continue
@@ -1269,8 +1285,15 @@ def _ingest_tar(case, src, tar_path: Path, fmt: str, *, count: int, progress) ->
             elif ext in VIDEO_EXTS:
                 kind = "video"
             else:
+                kind = "other"
+            if kind == "other" or is_appledouble_name(name):
                 fin = tf.extractfile(member)
                 head = fin.read(16) if fin is not None else b""
+            # A macOS sidecar carries its sibling's whole name, so its extension
+            # names a picture it does not hold.
+            if kind != "other" and is_appledouble(name, head):
+                kind = "other"
+            if kind == "other":
                 kind = _kind_from_magic(head)
                 if kind == "other" and not src.include_other:
                     continue

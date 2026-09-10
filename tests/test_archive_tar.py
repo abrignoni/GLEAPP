@@ -286,3 +286,28 @@ def test_streaming_pass_time_is_the_file_size(tmp_path):
         assert n == 3 and dt < 5, dt
     finally:
         c.close()
+
+
+# The magic 0x00051607, version 2, and the 16-byte "Mac OS X" filler, read from
+# a sidecar macOS wrote onto a FAT32 volume on 2026-09-10. Written out here
+# rather than imported, so the test does not read the constant it checks.
+_AD_HEX = "00051607000200004d6163204f5320582020202020202020"
+APPLEDOUBLE = bytes.fromhex(_AD_HEX) + b"\x00" * 4064
+
+
+def test_a_macos_sidecar_in_a_tar_is_not_an_image(tmp_path):
+    """A tar of a tree that came off a FAT card carries ``._name`` beside each
+    file, wearing that file's extension and holding AppleDouble."""
+    t = tmp_path / "EXTRACTION_FFS.tar"
+    with tarfile.open(t, "w") as tf:
+        for member, data in (("Dump/DCIM/photo.jpg", _jpg((200, 40, 40))),
+                             ("Dump/DCIM/._photo.jpg", APPLEDOUBLE)):
+            info = tarfile.TarInfo(member)
+            info.size = len(data)
+            info.mtime = MTIME
+            tf.addfile(info, io.BytesIO(data))
+    c, _ = _ingest(tmp_path, t, "case", do_process=False)
+    try:
+        assert set(_rows(c)) == {"Dump/DCIM/photo.jpg"}
+    finally:
+        c.close()
