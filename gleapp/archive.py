@@ -1051,7 +1051,12 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
                 dest = _staged_path(staged_dir, slug, name)
                 if stage:
                     try:
-                        _write_stream(_walk_reader(walker, node, fsize), dest, head)
+                        # No head here. _walk_head above read the sniff bytes from
+                        # a generator of its own, so the walker hands them back
+                        # again from offset 0; passing them would write them twice.
+                        # (A tar member is read through the one handle the sniff
+                        # consumed, which is why that path does pass its head.)
+                        _write_stream(_walk_reader(walker, node, fsize), dest)
                     except Exception:                # pylint: disable=broad-except
                         with contextlib.suppress(OSError):
                             dest.unlink()

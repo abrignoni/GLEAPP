@@ -14,6 +14,7 @@ that does it.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sqlite3
@@ -144,6 +145,42 @@ def test_staging_writes_the_walked_bytes_out(tmp_path):
     case, _ = _ingest(tmp_path, _image(tmp_path), stage=True)
     row = _rows(case)["lba0/HOLIDAY.JPG"]
     assert Path(row["path"]).read_bytes() == JPG
+
+
+def test_staging_a_file_whose_name_gives_no_extension_writes_it_once(tmp_path):
+    """A file with no extension is sniffed before it is copied, and the sniff
+    must not leave its first bytes in the copy twice.
+
+    The extension decides whether the walk reads a header at all, so a named
+    .JPG never exercised this and an extension-less file (an app cache names
+    files by hash) is copied out through the path that does.
+    """
+    case, _ = _ingest(tmp_path, _image(tmp_path, files=[
+        ("PHOTO", "", JPG, (2023, 6, 1, 12, 30, 0)),
+        ("HOLIDAY", "JPG", JPG, (2023, 6, 1, 12, 30, 0)),
+    ]), stage=True)
+    rows = _rows(case)
+    assert Path(rows["lba0/PHOTO"]["path"]).read_bytes() == JPG
+    assert Path(rows["lba0/HOLIDAY.JPG"]["path"]).read_bytes() == JPG
+
+
+def test_two_identical_walked_files_hash_alike_once_copied_in(tmp_path):
+    """The recorded hash has to describe the evidence, not the copy.
+
+    The same bytes under two names must give the same digest; a copy that
+    gained bytes on the way out would give the case a hash matching no file
+    that was ever on the volume, and would hide the two as duplicates.
+    """
+    from gleapp.pipeline import process                # pylint: disable=import-outside-toplevel
+    case, _ = _ingest(tmp_path, _image(tmp_path, files=[
+        ("PHOTO", "", JPG, (2023, 6, 1, 12, 30, 0)),
+        ("HOLIDAY", "JPG", JPG, (2023, 6, 1, 12, 30, 0)),
+    ]), stage=True)
+    process(case)
+    rows = _rows(case)
+    true_md5 = hashlib.md5(JPG).hexdigest()
+    assert rows["lba0/PHOTO"]["md5"] == true_md5
+    assert rows["lba0/HOLIDAY.JPG"]["md5"] == true_md5
 
 
 def test_a_volume_the_reader_cannot_open_does_not_cost_the_others(tmp_path):
