@@ -202,16 +202,57 @@ def test_only_an_acquisition_can_be_carved(tmp_path):
 
 # ---- scoping a carve to the space no volume claims --------------------------
 
-def test_unallocated_only_falls_back_when_a_volume_cannot_say(tmp_path):
-    """A volume that cannot report its free space must not be quietly skipped.
+def test_unallocated_only_scopes_a_fat_volume_and_leaves_its_live_files_alone(tmp_path):
+    """FAT reports its free clusters, so the scope is real rather than dropped.
 
-    Leaving part of a disk unscanned while reporting the carve as finished is
-    worse than scanning all of it, so the scope is dropped rather than the data.
-    FAT reports nothing, so this fixture exercises exactly that path.
+    The only carvable file in this fixture is a live one the walk already names,
+    and a signature found inside an allocated run belongs to a file the directory
+    tree has already reported. So scoping to free space is expected to find less
+    than a whole-image carve, and that difference is the point of the scope.
+
+    This test asserted the opposite until qnxprobe 1.20: FAT reported nothing, one
+    quiet volume dropped the scope, and the fixture could only ever exercise the
+    fallback.
     """
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="fatscope")
+    rec = list(archive.source_records(case).values())[0]
+    img = archive.ewfprobe.open_ewf(rec["path"])
+    vols = archive._volumes(img)                     # pylint: disable=protected-access
+    spans = archive._unclaimed_space(img, vols)      # pylint: disable=protected-access
+    assert spans is not None, "FAT reports free clusters, so the scope must not be dropped"
+    scanned = sum(n for _at, n in spans)
+    assert 0 < scanned < img.media_size, (
+        f"the scope must cover part of the image, not none or all of it; "
+        f"{scanned} of {img.media_size}")
+    img.close()
+    case.close()
+
+    case2, _ = _ingest(tmp_path, _image(tmp_path), name="fatscope2")
+    scoped = archive.carve_source(case2, "acq.E01", unallocated_only=True)
+    case2.close()
+    case3, _ = _ingest(tmp_path, _image(tmp_path), name="fatscope3")
+    whole = archive.carve_source(case3, "acq.E01")
+    case3.close()
+    assert whole > 0, "the whole-image carve found nothing, so the fixture proves nothing"
+    assert scoped < whole, (
+        f"scoping to free space must skip the live file the walk already named; "
+        f"scoped {scoped}, whole {whole}")
+
+
+def test_a_dropped_scope_still_carves_the_whole_image(monkeypatch, tmp_path):
+    """The fallback, end to end, with a volume that genuinely cannot answer.
+
+    Every filesystem the fixture can build now reports its free space, so the
+    quiet volume has to be arranged rather than found.
+    """
+    class _Cannot:
+        pass                                         # no free_extents at all
+
+    monkeypatch.setattr(archive.qnxprobe, "walker_for", lambda *a, **k: _Cannot())
     case, _ = _ingest(tmp_path, _image(tmp_path), name="fb")
     scoped = archive.carve_source(case, "acq.E01", unallocated_only=True)
     case.close()
+    monkeypatch.undo()
     case2, _ = _ingest(tmp_path, _image(tmp_path), name="fb2")
     whole = archive.carve_source(case2, "acq.E01")
     case2.close()

@@ -1095,12 +1095,12 @@ def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
     Windows acquisition returned, 90.2% sat inside a live file and 2.1% in space
     no file claimed.
 
-    None means scan everything. Only NTFS reports its free space, through
-    $Bitmap, and a volume that cannot answer must not be quietly skipped: leaving
-    part of a disk unscanned while reporting a carve as done is worse than
-    scanning all of it. Both Windows acquisitions measured here carry a FAT32 EFI
-    system partition beside their NTFS volumes, and FAT reports no free space, so
-    on those the scope is dropped and the whole image is scanned.
+    None means scan everything, and a volume that cannot answer must not be
+    quietly skipped: leaving part of a disk unscanned while reporting a carve as
+    done is worse than scanning all of it. NTFS answers through $Bitmap, FAT32
+    through its allocation table and exFAT through its allocation bitmap, so a
+    Windows disk scopes to 177.1 GiB of 238.5 and to 176.3 GiB of 232.9. APFS and
+    HFS+ do not answer, so a Mac image is still scanned whole.
     """
     out = []
     for base, size, fskind, _label in vols:

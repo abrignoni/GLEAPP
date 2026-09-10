@@ -164,14 +164,19 @@ the space a volume reports free, which is where the 2.1% of hits in the table ab
 **A volume that cannot report its free space drops the scope for the WHOLE image.** Reading
 part of a disk while reporting the carve finished is worse than reading all of it, so
 `_unclaimed_space()` returns None the moment any volume cannot answer, and None means scan
-everything. Only NTFS answers, through `$Bitmap`. Measured on both Windows acquisitions in
-hand, the scope is dropped on each: they carry a 0.2 GiB FAT32 EFI system partition beside
-their NTFS volumes, and FAT reports no free space, so a whole-image carve is what runs. Their
-NTFS volumes do answer, at 176.9 GiB free of 238.5 and 176.2 GiB of 232.9, and that is what a
-scope would cover once FAT can report. A Mac image gets a whole-disk carve for the same
-reason, since APFS and HFS+ report no free space either. When the scope is used the case meta
-records the runs and bytes scanned, so a report can say what was covered rather than implying
-the whole disk was.
+everything. NTFS answers through `$Bitmap`, FAT32 through its allocation table, and exFAT
+through its allocation bitmap.
+
+**One quiet volume is enough, and it is usually the small one.** Every Windows disk carries a
+0.2 GiB FAT32 EFI system partition beside its NTFS volumes, so until FAT could answer, 0.09%
+of the disk decided the behaviour of the other 99.91% and both Windows acquisitions fell back
+to a whole-image carve. Measured now, through `_unclaimed_space()` itself rather than through
+one volume's half of it: 177.1 GiB of 238.5 in 3,500 runs, and 176.3 GiB of 232.9 in 1,372
+runs, both in about half a second. A Mac image is still scanned whole, because APFS reports no
+free space yet and neither does HFS+.
+
+When the scope is used the case meta records the runs and bytes scanned, so a report can say
+what was covered rather than implying the whole disk was.
 
 Testing that fallback needs **two** volumes, one that answers and one that does not. With a
 single volume, "skip the quiet one" and "drop the scope" both produce the same empty answer,

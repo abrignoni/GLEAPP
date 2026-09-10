@@ -26,6 +26,7 @@ its fields checked for internal consistency before it is reported CONFIRMED.
 Read-only throughout. Never writes to the image.
 """
 import os, re, struct, sys, datetime, json, time, uuid, zipfile, bisect, collections
+import array
 
 # ewfprobe is vendored beside this file (see vendored.json) so an EnCase/EWF
 # .E01 acquisition can be read as an ordinary image. It is optional: without it
@@ -41,11 +42,15 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.19"
+QNXPROBE_VERSION = "1.20"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
 SECTOR         = 512
+# How many FAT entries free_extents() reads at once. Four bytes each, so a
+# megabyte a pass, which keeps one read per 262,144 clusters instead of one
+# per cluster.
+FAT_SCAN_ENTRIES = 262144
 
 MBR_QNX_TYPES = {   # util-linux include/pt-mbr-partnames.h v2.40
     0x4d: "QNX4.x", 0x4e: "QNX4.x 2nd part", 0x4f: "QNX4.x 3rd part",
@@ -869,6 +874,11 @@ class Fat32Walker:
         self.reserved = struct.unpack_from("<H", bpb, 14)[0]
         self.nfats = bpb[16]
         self.spf = struct.unpack_from("<I", bpb, 36)[0]
+        # BPB_TotSec16 is zero on FAT32 and the count lives in BPB_TotSec32, but
+        # read both: a volume small enough to use the 16-bit field is still a
+        # legal FAT32, and free_extents needs the count to size the cluster area.
+        self.total_sectors = (struct.unpack_from("<H", bpb, 19)[0]
+                              or struct.unpack_from("<I", bpb, 32)[0])
         self.root_clus = struct.unpack_from("<I", bpb, 44)[0]
         self.fat_start = base + self.reserved * self.bps
         self.data_start = self.fat_start + self.nfats * self.spf * self.bps
@@ -877,8 +887,13 @@ class Fat32Walker:
 
     def _fat_next(self, clus):
         off = self.fat_start + clus * 4
-        val = struct.unpack_from("<I", read_at(self.fh, off, 4), 0)[0] & 0x0FFFFFFF
-        return val
+        raw = read_at(self.fh, off, 4)
+        if len(raw) < 4:
+            # Past the end of the image, which is what the first segment of a
+            # split acquisition looks like. That is the end of the chain, not a
+            # reason to raise: the volume is truncated, not unreadable.
+            return 0x0FFFFFFF
+        return struct.unpack_from("<I", raw, 0)[0] & 0x0FFFFFFF
 
     def _chain(self, clus):
         seen = set()
@@ -897,6 +912,64 @@ class Fat32Walker:
             if size is not None and len(out) >= size:
                 break
         return bytes(out[:size]) if size is not None else bytes(out)
+
+    def free_extents(self, min_bytes=0):
+        """[(byte offset, length)] for the runs of space the volume says are free.
+
+        FAT keeps no separate allocation bitmap. The file allocation table is
+        both the chain of every file and the record of what is in use, and an
+        entry of zero is a free cluster. Numbering starts at 2, so entry n
+        addresses the data area at (n - 2) cluster widths in, and entries 0 and
+        1 are the media descriptor and the end-of-chain marker rather than
+        clusters.
+
+        Offsets are into the image rather than the volume, so a caller reading
+        the whole disk can use them directly. ``min_bytes`` drops runs too short
+        to hold anything worth recovering.
+
+        The table is read a megabyte at a time and unpacked as machine words,
+        because reading four bytes per cluster through the image would be one
+        seek per cluster.
+        """
+        cluster = self.cluster_bytes
+        if not cluster or not self.total_sectors:
+            return []
+        data_sectors = self.total_sectors - (self.reserved + self.nfats * self.spf)
+        count = data_sectors // self.spc if self.spc else 0
+        if count <= 0:
+            return []
+        last = count + 2                             # entries 0 .. count + 1
+
+        runs, run_start, pos = [], None, 0
+        while pos < last:
+            want = min(FAT_SCAN_ENTRIES, last - pos)
+            raw = read_at(self.fh, self.fat_start + pos * 4, want * 4)
+            if len(raw) < want * 4:                  # a truncated image stops here
+                raw += b"\x00" * (want * 4 - len(raw))
+            words = array.array("I")
+            words.frombytes(raw)
+            if sys.byteorder != "little":
+                words.byteswap()
+            for i, val in enumerate(words):
+                num = pos + i
+                if num < 2:
+                    continue
+                if val & 0x0FFFFFFF:
+                    if run_start is not None:
+                        runs.append((run_start, num - run_start))
+                        run_start = None
+                elif run_start is None:
+                    run_start = num
+            pos += want
+        if run_start is not None:
+            runs.append((run_start, last - run_start))
+
+        out = []
+        for first, n in runs:
+            length = n * cluster
+            if length >= min_bytes:
+                out.append((self._cluster_off(first), length))
+        return out
 
     def inode(self, node):
         return node    # (cluster, size, is_dir) already carries what entry() needs
@@ -977,14 +1050,17 @@ class ExfatWalker:
         self.fat_off = struct.unpack_from("<I", b, 80)[0]
         self.heap_off = struct.unpack_from("<I", b, 88)[0]
         self.root_clus = struct.unpack_from("<I", b, 96)[0]
+        self.cluster_count = struct.unpack_from("<I", b, 92)[0]
         self.cluster_bytes = self.bps * self.spc
         self.fat_start = base + self.fat_off * self.bps
         self.heap_start = base + self.heap_off * self.bps
         self.root = (self.root_clus, 0, True, False)
 
     def _fat_next(self, clus):
-        v = struct.unpack_from("<I", read_at(self.fh, self.fat_start + clus * 4, 4), 0)[0]
-        return v
+        raw = read_at(self.fh, self.fat_start + clus * 4, 4)
+        if len(raw) < 4:
+            return 0xFFFFFFFF                        # truncated image, end of chain
+        return struct.unpack_from("<I", raw, 0)[0]
 
     def _cluster_off(self, clus):
         return self.heap_start + (clus - 2) * self.cluster_bytes
@@ -1045,6 +1121,74 @@ class ExfatWalker:
                 i += 32 * (secs + 1)
             else:
                 i += 32
+        return out
+
+    def free_extents(self, min_bytes=0):
+        """[(byte offset, length)] for the runs of space the volume says are free.
+
+        exFAT does not use its FAT to say what is in use, the way FAT32 does. It
+        keeps an Allocation Bitmap, one bit per cluster, and finds it through a
+        directory entry of type 0x81 in the root directory. A set bit means the
+        cluster is not available, so what is left is where deleted content
+        survives until something overwrites it.
+
+        Field offsets are from Microsoft's exFAT specification: the bitmap entry
+        gives FirstCluster at 20 and DataLength at 24 (section 7.1), the boot
+        sector gives ClusterCount at 92 (section 3.1), and the first bit of the
+        bitmap is the lowest bit of the first byte and stands for cluster 2.
+
+        Offsets are into the image rather than the volume, so a caller reading
+        the whole disk can use them directly. ``min_bytes`` drops runs too short
+        to hold anything worth recovering. An empty list means the bitmap was not
+        found, which a caller must not read as "nothing is free".
+        """
+        cluster = self.cluster_bytes
+        if not cluster or not self.cluster_count:
+            return []
+        first_clus = length = 0
+        raw = self._read(self.root_clus, 0, False)
+        for i in range(0, len(raw) - 31, 32):
+            if raw[i] == 0x00:                       # end of the directory
+                break
+            if raw[i] != 0x81:
+                continue
+            if raw[i + 1] & 0x01:                    # the second TexFAT bitmap
+                continue
+            first_clus = struct.unpack_from("<I", raw, i + 20)[0]
+            length = struct.unpack_from("<Q", raw, i + 24)[0]
+            break
+        if not first_clus or not length:
+            return []
+        bits = self._read(first_clus, length, False)
+        total = min(len(bits) * 8, self.cluster_count)
+
+        runs, run_start, pos = [], None, 0
+        while pos < total:
+            byte = bits[pos >> 3]
+            if not (pos & 7) and pos + 8 <= total and byte in (0x00, 0xFF):
+                if byte == 0x00:                     # eight free clusters
+                    if run_start is None:
+                        run_start = pos
+                elif run_start is not None:          # eight used ones
+                    runs.append((run_start, pos - run_start))
+                    run_start = None
+                pos += 8
+                continue
+            if byte & (1 << (pos & 7)):
+                if run_start is not None:
+                    runs.append((run_start, pos - run_start))
+                    run_start = None
+            elif run_start is None:
+                run_start = pos
+            pos += 1
+        if run_start is not None:
+            runs.append((run_start, total - run_start))
+
+        out = []
+        for first, n in runs:
+            size = n * cluster
+            if size >= min_bytes:
+                out.append((self._cluster_off(first + 2), size))
         return out
 
     def read_file(self, node, size):
@@ -6455,6 +6599,119 @@ def self_test():
         free_floor_ok = (_BitmapOnly().free_extents(min_bytes=11 * FREE_CLUSTER_SIZE)
                          == [(FREE_BASE + 24 * FREE_CLUSTER_SIZE, 16 * FREE_CLUSTER_SIZE)])
 
+        # FAT32 says what is free in the file allocation table itself: an entry
+        # of zero is a free cluster. A volume is built here by hand, small
+        # enough that the answer can be written out rather than computed, and
+        # the used clusters and the runs they leave are two separate statements
+        # so the test cannot agree with the code by construction.
+        FAT_BPS, FAT_SPC, FAT_RSVD, FAT_NFATS = 512, 1, 32, 1
+        FAT_DATA_CLUSTERS = 40
+        FAT_USED = {2, 3, 4, 11, 22, 23, 24, 25}
+        # by hand from that set: free runs are 5..10, 12..21, 26..41
+        FAT_WANT = [(5, 6), (12, 10), (26, 16)]
+        FAT_SPF = 4                                  # 4 sectors holds 512 entries
+        _fatbuf = bytearray(FAT_RSVD * FAT_BPS + FAT_NFATS * FAT_SPF * FAT_BPS
+                            + FAT_DATA_CLUSTERS * FAT_SPC * FAT_BPS)
+        struct.pack_into("<H", _fatbuf, 11, FAT_BPS)
+        _fatbuf[13] = FAT_SPC
+        struct.pack_into("<H", _fatbuf, 14, FAT_RSVD)
+        _fatbuf[16] = FAT_NFATS
+        struct.pack_into("<I", _fatbuf, 32,
+                         FAT_RSVD + FAT_NFATS * FAT_SPF + FAT_DATA_CLUSTERS * FAT_SPC)
+        struct.pack_into("<I", _fatbuf, 36, FAT_SPF)
+        struct.pack_into("<I", _fatbuf, 44, 2)       # root cluster
+        _fat_at = FAT_RSVD * FAT_BPS
+        struct.pack_into("<I", _fatbuf, _fat_at, 0x0FFFFFF8)      # media descriptor
+        struct.pack_into("<I", _fatbuf, _fat_at + 4, 0x0FFFFFFF)  # end of chain
+        for _c in FAT_USED:
+            struct.pack_into("<I", _fatbuf, _fat_at + _c * 4, 0x0FFFFFFF)
+        _fatw = Fat32Walker(io.BytesIO(bytes(_fatbuf)), 0)
+        _fat_data = _fat_at + FAT_NFATS * FAT_SPF * FAT_BPS
+        fat_free_ok = (_fatw.free_extents()
+                       == [(_fat_data + (c - 2) * FAT_BPS, n * FAT_BPS)
+                           for c, n in FAT_WANT])
+        fat_floor_ok = (_fatw.free_extents(min_bytes=11 * FAT_BPS)
+                        == [(_fat_data + 24 * FAT_BPS, 16 * FAT_BPS)])
+
+        # Entries 0 and 1 are the media descriptor and the end-of-chain marker,
+        # not clusters, and a volume whose table has been wiped holds zero in
+        # both. Read as clusters they would be reported free at offsets that
+        # land two clusters before the data area, which is inside the table
+        # itself, so a carve would scan the allocation table as free space.
+        _wiped = bytearray(_fatbuf)
+        struct.pack_into("<I", _wiped, _fat_at, 0)
+        struct.pack_into("<I", _wiped, _fat_at + 4, 0)
+        _wiped_runs = Fat32Walker(io.BytesIO(bytes(_wiped)), 0).free_extents()
+        fat_reserved_ok = bool(_wiped_runs) and all(at >= _fat_data
+                                                    for at, _n in _wiped_runs)
+
+        # exFAT does not use its FAT for this. It keeps an allocation bitmap and
+        # names it with a 0x81 entry in the root directory, so the entry has to
+        # be found before a bit can be read. Same shape of volume, built by hand.
+        EX_BPS_SHIFT, EX_SPC_SHIFT = 9, 0            # 512 byte clusters
+        # 38, not a multiple of eight, so the bitmap's last byte carries two
+        # padding bits. They are zero, and a reader that trusts the bitmap's
+        # length instead of the volume's cluster count reports them as two free
+        # clusters sitting past the end of the heap.
+        EX_CLUSTERS = 38
+        EX_HEAP_SECTOR = 8
+        EX_BITMAP_CLUS, EX_ROOT_CLUS = 2, 3
+        EX_USED = {2, 3, 4, 11, 22, 23, 24, 25}      # bitmap, root, and files
+        # by hand from that set, over clusters 2 to 39: free runs are 5..10,
+        # 12..21, 26..39
+        EX_WANT = [(5, 6), (12, 10), (26, 14)]
+        _exbuf = bytearray((EX_HEAP_SECTOR + EX_CLUSTERS + 2) * 512)
+        _exbuf[3:11] = b"EXFAT   "
+        struct.pack_into("<I", _exbuf, 80, 4)        # FatOffset, sector 4
+        struct.pack_into("<I", _exbuf, 88, EX_HEAP_SECTOR)
+        struct.pack_into("<I", _exbuf, 92, EX_CLUSTERS)
+        struct.pack_into("<I", _exbuf, 96, EX_ROOT_CLUS)
+        _exbuf[108] = EX_BPS_SHIFT
+        _exbuf[109] = EX_SPC_SHIFT
+        _exbuf[510:512] = b"\x55\xaa"
+        _ex_heap = EX_HEAP_SECTOR * 512
+        _ex_root = _ex_heap + (EX_ROOT_CLUS - 2) * 512
+        # A TexFAT volume carries two bitmaps and the first entry in the root can
+        # be the second of them, flagged in BitmapFlags bit 0. It describes the
+        # other allocation, so a reader that takes the first 0x81 it meets reads
+        # the wrong one. This one points at a cluster holding all-ones.
+        _exbuf[_ex_root] = 0x81
+        _exbuf[_ex_root + 1] = 0x01                               # the second bitmap
+        struct.pack_into("<I", _exbuf, _ex_root + 20, EX_CLUSTERS + 1)
+        struct.pack_into("<Q", _exbuf, _ex_root + 24, (EX_CLUSTERS + 7) // 8)
+        _ex_decoy = _ex_heap + (EX_CLUSTERS + 1 - 2) * 512
+        for _b in range((EX_CLUSTERS + 7) // 8):
+            _exbuf[_ex_decoy + _b] = 0xFF
+        _ex_root += 32                                            # the real one next
+        _exbuf[_ex_root] = 0x81                                   # allocation bitmap
+        struct.pack_into("<I", _exbuf, _ex_root + 20, EX_BITMAP_CLUS)
+        struct.pack_into("<Q", _exbuf, _ex_root + 24, (EX_CLUSTERS + 7) // 8)
+        _ex_bits = _ex_heap + (EX_BITMAP_CLUS - 2) * 512
+        for _c in EX_USED:
+            _exbuf[_ex_bits + ((_c - 2) >> 3)] |= 1 << ((_c - 2) & 7)
+        _exw = ExfatWalker(io.BytesIO(bytes(_exbuf)), 0)
+        exfat_free_ok = (_exw.free_extents()
+                         == [(_ex_heap + (c - 2) * 512, n * 512) for c, n in EX_WANT])
+        # a volume whose root names no bitmap must say nothing, not say nothing is free
+        _nobm = bytearray(_exbuf)
+        _nobm[_ex_root] = 0x85                       # an ordinary file entry instead
+        _nobm[_ex_root - 32] = 0x85                  # and the TexFAT one with it
+        exfat_no_bitmap_ok = ExfatWalker(io.BytesIO(bytes(_nobm)), 0).free_extents() == []
+
+        # The first segment of a split acquisition holds the boot sector and
+        # stops. Both FAT readers follow a chain by reading four bytes per
+        # cluster, and past the end of the file that read comes back short, so
+        # each must answer rather than raise.
+        # Cut each image so the read of the next FAT entry falls off the end.
+        try:
+            _cut_fat = Fat32Walker(io.BytesIO(bytes(_fatbuf)[:_fat_at + 8]), 0)
+            _cut_ex = ExfatWalker(io.BytesIO(bytes(_exbuf)[:1024]), 0)
+            fat_truncated_ok = (list(_cut_fat._chain(2)) == [2]      # pylint: disable=protected-access
+                                and _cut_ex.free_extents() == []
+                                and isinstance(_cut_fat.free_extents(), list))
+        except Exception:                            # pylint: disable=broad-except
+            fat_truncated_ok = False
+
         for label, cond in (
                 ("an NTFS boot sector is identified by its own geometry",
                  bool(ntfs_named) and ntfs_named[0] == "ntfs"),
@@ -6472,7 +6729,18 @@ def self_test():
                 ("the cluster bitmap reads back as the runs of free space it "
                  "describes", free_ok),
                 ("a free-space floor drops the runs too short to be worth "
-                 "carving", free_floor_ok)):
+                 "carving", free_floor_ok),
+                ("a FAT32 volume reads its free clusters out of the allocation "
+                 "table", fat_free_ok),
+                ("a FAT32 free-space floor drops the short runs", fat_floor_ok),
+                ("the two reserved FAT entries are not reported as free space "
+                 "inside the allocation table", fat_reserved_ok),
+                ("an exFAT volume finds its allocation bitmap and reads the free "
+                 "clusters out of it", exfat_free_ok),
+                ("an exFAT volume whose root names no bitmap reports nothing "
+                 "rather than nothing free", exfat_no_bitmap_ok),
+                ("a FAT or exFAT volume cut short by a split acquisition answers "
+                 "rather than raising", fat_truncated_ok)):
             if not cond:
                 ok = False
             print(f"  [{'PASS' if cond else 'FAIL'}] {label}")
