@@ -1403,7 +1403,8 @@ document.addEventListener("keydown", e => {
     $("#helpDlg").style.display = "none"; $("#hexDlg").style.display = "none";
     $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
     $("#stashWipeDlg").style.display = "none"; $("#hashImportDlg").style.display = "none";
-    $("#refDlg").style.display = "none";
+    $("#refDlg").style.display = "none"; $("#histDlg").style.display = "none";
+    $("#helpMenu").style.display = "none";
     return;
   }
   if (e.key === "?" && !$("#helpDlg").style.display.includes("block")) {
@@ -1520,7 +1521,29 @@ async function openHelp() {
   }
   $("#helpDoc").scrollTop = 0;
 }
-$("#btnHelp").onclick = openHelp;
+/* "? Help ▾" opens a small menu: Manual (the manual dialog) or Processing history
+   (the audit-log dialog). The launcher's own Help button has no case, so it opens
+   the manual directly. */
+function toggleHelpMenu() {
+  const m = $("#helpMenu");
+  if (m.style.display === "block") { m.style.display = "none"; return; }
+  const b = $("#btnHelp").getBoundingClientRect();
+  m.style.display = "block";
+  m.style.top = (b.bottom + 4) + "px";
+  m.style.left = Math.max(4, b.right - m.offsetWidth) + "px";
+}
+$("#btnHelp").onclick = toggleHelpMenu;
+$("#helpMenu").addEventListener("click", e => {
+  const which = e.target.dataset.help;
+  if (!which) return;
+  $("#helpMenu").style.display = "none";
+  if (which === "manual") openHelp();
+  else if (which === "history") openHistDlg();
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#helpMenu") && !e.target.closest("#btnHelp"))
+    $("#helpMenu").style.display = "none";
+});
 $("#btnHelpLauncher").onclick = openHelp;      // same manual, from the launcher
 $("#helpClose").onclick = () => $("#helpDlg").style.display = "none";
 $("#helpDlg").addEventListener("click", e => {
@@ -2172,6 +2195,86 @@ $("#snapDlg").addEventListener("click", e => {
   if (e.target.id === "snapDlg") $("#snapDlg").style.display = "none";
 });
 $("#btnSnapshot").onclick = openSnapDlg;
+
+/* ---------- processing history (audit log) ---------- */
+// Actions written by a background run, vs. an examiner edit. Anything not listed
+// here is treated as an edit for the "Show" filter.
+const HIST_RUN_ACTIONS = new Set([
+  "ingest", "ingest-archive", "process", "screen_pass", "rematch_hashes",
+  "hashset_import", "hashset_remove", "import_vic", "export_vic",
+  "carve-source", "stage-source", "unstage-source", "relink-source",
+  "snapshot", "restore_snapshot",
+]);
+// A Python dict repr (single quotes, None/True/False) -> object, best effort.
+function _parsePyRepr(s) {
+  if (typeof s !== "string" || s[0] !== "{") return null;
+  try {
+    return JSON.parse(s
+      .replace(/'/g, '"').replace(/\bNone\b/g, "null")
+      .replace(/\bTrue\b/g, "true").replace(/\bFalse\b/g, "false"));
+  } catch (_e) { return null; }
+}
+function _histDetail(e) {
+  const d = _parsePyRepr(e.detail);
+  if (e.action === "process" && d) {
+    const bits = [
+      `${d.discovered ?? "?"} files`,
+      `${d.processed ?? 0} processed`,
+      d.skipped ? `${d.skipped} skipped` : null,
+      `${d.errors ?? 0} errored`,
+      d.hashset_hits ? `${d.hashset_hits} known-hash hits` : null,
+      d.redundant_duplicates ? `${d.redundant_duplicates} exact dups` : null,
+      d.visual_stacks ? `${d.visual_stacks} visual stacks` : null,
+      d.clusters ? `${d.clusters} clusters` : null,
+    ].filter(Boolean);
+    let html = `<div class="hdetail">${esc(bits.join(" · "))}</div>`;
+    const stages = d.stages || {};
+    const keys = Object.keys(stages);
+    if (keys.length) {
+      html += `<div class="hstages">` + keys.map(k => {
+        const v = String(stages[k]);
+        const bad = v.startsWith("failed");
+        return `<span class="hpill ${bad ? "fail" : "ok"}" title="${esc(v)}">`
+          + `${esc(k)}${bad ? " ✗" : " ✓"}</span>`;
+      }).join("") + `</div>`;
+    }
+    return html;
+  }
+  return e.detail ? `<div class="hdetail">${esc(e.detail)}</div>` : "";
+}
+function _histMatch(e, f) {
+  if (f === "runs") return HIST_RUN_ACTIONS.has(e.action);
+  if (f === "edits") return !HIST_RUN_ACTIONS.has(e.action);
+  if (f === "failed") return /failed/i.test(e.detail || "");
+  return true;
+}
+async function refreshHistList() {
+  const box = $("#histList");
+  box.textContent = "Loading…";
+  const rows = await api("/api/audit").catch(() => []);
+  const f = $("#histFilter").value;
+  const shown = rows.filter(e => _histMatch(e, f));
+  if (!shown.length) { box.textContent = rows.length ? "Nothing matches this filter." : "No history recorded yet."; return; }
+  box.innerHTML = shown.map(e => `<div class="histrow">
+    <div class="htop">
+      <time>${esc(fmtEpoch(e.ts))}</time>
+      <span class="hact">${esc(e.action)}</span>
+      <span class="hactor">${esc(e.actor || "")}</span>
+    </div>
+    ${_histDetail(e)}
+  </div>`).join("");
+}
+function openHistDlg() {
+  $("#histDlg").style.display = "block";
+  refreshHistList();
+}
+$("#histFilter").onchange = refreshHistList;
+$("#histRefresh").onclick = refreshHistList;
+$("#histClose").onclick = () => $("#histDlg").style.display = "none";
+$("#histDlg").addEventListener("click", e => {
+  if (e.target.id === "histDlg") $("#histDlg").style.display = "none";
+});
+// opened from the "? Help ▾" menu — see toggleHelpMenu
 
 /* ---------- local hash stash ---------- */
 const STASH_CAT_NAMES = { 1: "CAM", 2: "Child Exploitative", 3: "CGI / Animation" };

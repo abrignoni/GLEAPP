@@ -14,7 +14,7 @@ import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image
@@ -37,6 +37,10 @@ class RunStats:
     visual_stacks: int = 0
     clusters: int = 0
     hashset_hits: int = 0
+    # Per-stage outcome: stage name -> "ok" or "failed: <reason>". A stage that
+    # raises is recorded here and the run continues, so one broken stage does not
+    # discard the record that the earlier ones succeeded.
+    stages: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -429,11 +433,27 @@ def process(
     progress=None,
     stage_cb=None,
 ) -> RunStats:
+    stats = RunStats()
+
     def stage(msg: str) -> None:
         if stage_cb:
             stage_cb(msg)
 
-    stats = RunStats()
+    def run_stage(name: str, msg: str, fn):
+        """Run one post-processing stage, recording its outcome. A stage that
+        raises is logged as failed and the run carries on to the next one."""
+        stage(msg)
+        try:
+            result = fn()
+            stats.stages[name] = "ok"
+            return result
+        # pylint: disable=broad-exception-caught
+        except Exception as exc:  # noqa: BLE001 - any stage failure, record and continue
+            reason = f"{type(exc).__name__}: {exc}".replace("'", "").replace('"', "")
+            stats.stages[name] = f"failed: {reason}"[:300]
+            traceback.print_exc()
+            return None
+
     rows = case.db.iter_files(where)
     stats.discovered = len(rows)
     total = len(rows)
@@ -482,16 +502,27 @@ def process(
                         screen=screen, workers=workers, write=_write)
     case.db.commit()
 
-    # Known-hash matching (needs all hashes present).
-    stage("Matching known-hash lists…")
-    stats.hashset_hits = rematch_hashes(case)
+    # Media processing (hashes, metadata, thumbnails/keyframes, screening) ran
+    # above; record it as one stage. A per-file failure is counted in
+    # stats.errors and stored on the row, not here.
+    stats.stages["media_processing"] = (
+        f"ok: {stats.processed} processed, {stats.skipped} skipped, "
+        f"{stats.errors} errored")
 
-    stage("Stacking exact duplicates…")
-    stats.redundant_duplicates = dedupe.stack_exact(case.db)
-    stage("Stacking visual matches…")
-    stats.visual_stacks = dedupe.stack_visual(case.db)
-    stage("Clustering near-duplicates…")
-    stats.clusters = dedupe.cluster_near(case.db, threshold=phash_cluster_threshold)
+    # Known-hash matching (needs all hashes present).
+    stats.hashset_hits = run_stage(
+        "hashset_match", "Matching known-hash lists…",
+        lambda: rematch_hashes(case)) or 0
+
+    stats.redundant_duplicates = run_stage(
+        "stack_exact", "Stacking exact duplicates…",
+        lambda: dedupe.stack_exact(case.db)) or 0
+    stats.visual_stacks = run_stage(
+        "stack_visual", "Stacking visual matches…",
+        lambda: dedupe.stack_visual(case.db)) or 0
+    stats.clusters = run_stage(
+        "cluster_near", "Clustering near-duplicates…",
+        lambda: dedupe.cluster_near(case.db, threshold=phash_cluster_threshold)) or 0
 
     # screening ran inline with processing (screen=True) - record it so the UI
     # doesn't keep offering "Run screening" for a collection that's already done

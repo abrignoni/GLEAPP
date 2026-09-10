@@ -152,6 +152,17 @@ Export Project VIC (VIC cases), Export report, ? Help, and ↻ Refresh — which
 current filter so files that no longer match it (e.g. ones you just categorized)
 drop out of view.
 
+**? Help ▾** opens a small menu with two entries:
+
+- **Manual** — this document.
+- **Processing history** — the case processing log: every ingest, process,
+  screening, hash-set match, carve and examiner edit run against this case,
+  newest first. A **process** run lists each stage — media processing, known-hash
+  match, exact stacking, visual stacking, near-duplicate clustering — with a ✓ or
+  ✗ for whether it succeeded, so a stage that failed does not hide the ones that
+  worked. The "Show" menu narrows the list to runs, examiner edits, or only runs
+  with a failed stage. This is the same audit log written into the LAVA export.
+
 ## 4. Tiles & badges
 
 Each tile shows the thumbnail, the file **name**, a coloured bar with its
