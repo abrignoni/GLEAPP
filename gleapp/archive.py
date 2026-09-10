@@ -324,9 +324,10 @@ def source_records(case) -> dict[str, dict]:
 
 
 def source_status(case) -> list[dict]:
-    """One entry per archive source: the record, how many files it registered, and
-    ``status``: ``ok``, ``changed`` (a file is at the recorded path but its size or
-    date differ) or ``missing``."""
+    """One entry per archive source: the record, how many files it registered
+    (``files``, split into ``walked`` and ``carved``), and ``status``: ``ok``,
+    ``changed`` (a file is at the recorded path but its size or date differ) or
+    ``missing``."""
     out = []
     for name, rec in sorted(source_records(case).items()):
         try:
@@ -342,9 +343,17 @@ def source_status(case) -> list[dict]:
                 with contextlib.suppress(ewfprobe.EwfError, OSError):
                     same = len(ewfprobe.ewf_segments(rec["path"])) >= rec["segments"]
             status = "ok" if same else "changed"
-        n = case.db.conn.execute("SELECT COUNT(*) n FROM files WHERE source=?",
-                                 (name,)).fetchone()["n"]
-        out.append({**rec, "status": status, "files": n})
+        # Split the count by how each row was actually recovered, rather than
+        # inferring it from the format: an acquisition whose filesystems could
+        # be read is walked, and carving it is a separate thing to ask for, so
+        # one source can hold both kinds of row and usually holds only walked
+        # ones. 'walk' and 'carve' are the values _register writes.
+        by_origin = {r["origin"] or "": r["n"] for r in case.db.conn.execute(
+            "SELECT origin, COUNT(*) n FROM files WHERE source=? GROUP BY origin",
+            (name,))}
+        out.append({**rec, "status": status, "files": sum(by_origin.values()),
+                    "walked": by_origin.get("walk", 0),
+                    "carved": by_origin.get("carve", 0)})
     return out
 
 
