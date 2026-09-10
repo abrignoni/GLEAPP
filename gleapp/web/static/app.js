@@ -85,15 +85,16 @@ function filterParams() {
   // the list view always shows every row, duplicates included - collapsing is a
   // grid-only convenience
   if ($("#fcollapse").checked && state.view !== "list") p.set("dupes", "collapse");
+  // both views sort by the same state.sortCol / state.sortDir, so switching view
+  // never re-sorts the results; the grid's Sort dropdown and the list's column
+  // headers are two ways to set it
+  p.set("sort", state.sortCol || "name");
+  p.set("dir", state.sortDir || "asc");
   if (state.view === "list") {
-    p.set("sort", state.sortCol || "name");
-    p.set("dir", state.sortDir || "asc");
     const cf = [];
     for (const v of Object.values(state.colFilters))
       if (v && v.clauses) cf.push(...v.clauses);
     if (cf.length) p.set("colfilters", JSON.stringify(cf));
-  } else {
-    p.set("sort", $("#fsort").value);
   }
   p.set("limit", state.pageSize);
   p.set("offset", (state.page - 1) * state.pageSize);
@@ -773,9 +774,52 @@ function toggleColMenu() {
   };
 }
 
+// The grid's Sort dropdown and the list's clickable column headers are two ways
+// to set one sort (state.sortCol / state.sortDir), so switching view never
+// re-sorts. The dropdown offers the six sorts it can name; picking one sets the
+// state, and any list sort is reflected back onto the dropdown (a list-only sort
+// like Camera or MD5 shows as a transient "— column —" entry).
+const GRID_SORT_TO_LIST = {
+  path: ["name", "asc"], date: ["created_dt", "asc"], size: ["size", "asc"],
+  skin: ["skin_ratio", "desc"], faces: ["faces", "desc"], cluster: ["cluster_id", "asc"],
+};
+const LIST_SORT_TO_GRID = {
+  name: "path", file_path: "path", rel_path: "path", orig_name: "path", path: "path",
+  created_dt: "date", size: "size", skin_ratio: "skin", faces: "faces",
+  cluster_id: "cluster",
+};
+
+// Show state.sortCol/Dir on the grid's Sort dropdown.
+function reflectGridSort() {
+  const sel = $("#fsort");
+  if (!sel) return;
+  sel.querySelector("option.tmpsort")?.remove();
+  const gv = LIST_SORT_TO_GRID[state.sortCol];
+  if (gv) { sel.value = gv; return; }
+  const def = LIST_DEFS.find(d => (d.filterKey || d.key) === state.sortCol);
+  const o = document.createElement("option");
+  o.className = "tmpsort";
+  o.value = "__list__";
+  o.textContent = (def ? def.label : state.sortCol)
+    + (state.sortDir === "desc" ? " ↓" : " ↑");
+  sel.appendChild(o);
+  sel.value = "__list__";
+}
+
+$("#fsort").addEventListener("change", () => {
+  const g = GRID_SORT_TO_LIST[$("#fsort").value];
+  if (!g) return;                          // the transient "__list__" entry
+  state.sortCol = g[0];
+  state.sortDir = g[1];
+  reflectGridSort();                       // clears the transient entry, if any
+  persistListPrefs();
+  reload();
+});
+
 function setView(v) {
   if (state.view === v) return;
   state.view = v;
+  if (v === "grid") reflectGridSort();
   syncViewControls(v);
   $("#colMenu").style.display = "none";
   updateClearFiltersBtn();
@@ -1455,8 +1499,9 @@ document.addEventListener("keydown", e => {
 });
 
 /* ---------- filter wiring ---------- */
+// #fsort has its own handler (it maps to state.sortCol/Dir), so it's not here
 ["#fq", "#fkind", "#fcat", "#fsrc", "#forigin", "#fdup", "#ffaces", "#fgps",
- "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fsort"].forEach(s => {
+ "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
@@ -1653,7 +1698,8 @@ $("#btnClearFilters").onclick = () => {
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
   $("#fcollapse").checked = true;
   $("#fskin").value = "0";
-  $("#fsort").value = "path";
+  state.sortCol = "name"; state.sortDir = "asc";
+  reflectGridSort();
   state.vstack = null; state.stack = null; state.similarOf = null;
   $("#simBanner").style.display = "none";
   // also drop the list-view per-column filters
@@ -2944,6 +2990,7 @@ $("#mapViewClose").onclick = closeMapView;
       document.documentElement.style.setProperty("--tile", tl + "px"); }
   } catch (e) {}
   restoreListPrefs();
+  reflectGridSort();          // mirror the restored sort onto the grid dropdown
   await load();
 
   // a processing job is still running (we entered the gallery early) — show the
