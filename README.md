@@ -25,7 +25,7 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | Area | What GLEAPP does |
 |---|---|
 | **Ingestion** | Recursive scan of folders / mounted evidence, or a `ingest.json` job spec listing multiple named sources (size caps, symlink policy per source) |
-| **Extractions and acquisitions** | A full-file-system extraction (zip, or tar plain or compressed) is read in place, its media registered by device path. An **EnCase/EWF acquisition** (`.E01` and its segments) has its filesystems **walked** file by file, so each file keeps the name, path and dates the filesystem recorded: ext2/3/4, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. **Carving** the free space for deleted media is a separate step, asked for after ingest |
+| **Extractions and acquisitions** | A full-file-system extraction (zip, or tar plain or compressed) is read in place, its media registered by device path. An **EnCase/EWF acquisition** (`.E01` and its segments) has its filesystems **walked** file by file, so each file keeps the name, path and dates the filesystem recorded: ext2/3/4, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. **Carving** the free space for deleted media is optional and separate: a launcher checkbox to do it during ingest, or a Source-panel button (and `gleapp source carve`) to do it later |
 | **Hashing** | MD5 / SHA-1 / SHA-256 in one pass, plus aHash / pHash / dHash perceptual hashes |
 | **Deduplication** | Three tiers: exact-file **stacking** (same hash), **visual stacking** ("same picture to the eye" — pHash *and* dHash agree; collapses like a stack, badged **≈ N**), and a looser browsable **similar-group** cluster. Featureless images (gradients, flat screenshots) are excluded from perceptual grouping |
 | **Project VIC** | Import a Project VIC 2.0 (US) case file directly — registers every `Media` entry, resolves the media folder, keeps MD5 / MediaID / original name & path / MIME / victim-offender flags; **export back** to VIC JSON with your categories filled in |
@@ -133,7 +133,8 @@ python -m gleapp --case mycase ingest  sample_evidence\ingest.json
 #    read on demand. An E01 acquisition (.E01 with its numbered segments beside it) is
 #    a source too: its filesystems are walked file by file, so each file keeps the name,
 #    path and dates the filesystem recorded. Carving its free space for deleted media is
-#    a separate step, asked for after ingest. An Android image that
+#    optional and separate: a launcher checkbox at ingest, or the Source panel / "gleapp
+#    source carve" later. An Android image that
 #    carries one file under several storage views (data/data, data/user/0, data_mirror,
 #    storage/emulated) registers it once; the other paths show in the details pane as
 #    "Also under" and are searchable.

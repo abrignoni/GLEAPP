@@ -806,6 +806,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 eq("kind", q["kind"])
             if q.get("source"):
                 eq("source", q["source"])
+            if q.get("origin") in ("walk", "carve"):
+                eq("origin", q["origin"])
             if q.get("category") not in (None, "", "any"):
                 eq("category", int(q["category"]))
             if q.get("cluster"):
@@ -1344,6 +1346,47 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             abort(400, description=str(exc))
         return jsonify({"ok": True, "removed": n})
 
+    @app.post("/api/source/carve")
+    def source_carve():
+        """Carve an already-walked E01 acquisition for deleted media, then process
+        the new rows. Runs as a background job; the bottom bar follows it."""
+        case = C()
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        name = str((request.get_json(force=True) or {}).get("name", ""))
+        rec = archive.source_record(case, name)
+        if rec is None:
+            abort(404, description=f"{name!r} is not an archive source of this case")
+        if rec["format"] != archive.FORMAT_EWF:
+            abort(400, description="only an E01 acquisition can be carved")
+        state["job"] = {"running": True, "stage": "carve", "done": 0, "total": 0,
+                        "message": f"Carving {name} for deleted media…",
+                        "stats": None, "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                added = archive.carve_source(
+                    case, name, unallocated_only=True,
+                    progress=lambda k: j.update(done=k, message=f"Carving… {k:,} found"))
+                if added:
+                    j.update(stage="process", done=0, total=added,
+                             message=f"Processing {added:,} carved file(s)…")
+                    process(case, where="md5 IS NULL",
+                            progress=lambda d, t: j.update(done=d, total=t),
+                            stage_cb=lambda m: j.update(message=m))
+                j.update(running=False, stage="done",
+                         message=(f"{added:,} file(s) recovered by carving"
+                                  if added else "Carving found nothing new"),
+                         stats={"carved": added})
+            except (ValueError, archive.ArchiveUnavailable, OSError,
+                    sqlite3.Error) as exc:
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
     @app.get("/api/stats")
     def stats():
         return jsonify(C().db.stats())
@@ -1636,6 +1679,24 @@ def _run_job(state: dict, sources, opts: dict) -> None:
             # now that the case has content, it's worth remembering
             appconfig.push_recent(str(case.root),
                                   case.db.get_meta("case_name") or case.root.name)
+
+        # An E01 was just walked file by file. If carving was asked for, also scan
+        # the space no volume claims for deleted media, before processing so the
+        # carved rows are hashed and thumbnailed in the same pass.
+        if opts.get("carve"):
+            for src in sources:
+                if src.kind != "archive":
+                    continue
+                rec = archive.source_record(case, src.name)
+                if not rec or rec["format"] != archive.FORMAT_EWF:
+                    continue
+                job.update(stage="carve", done=0, total=0,
+                           message=f"Carving {src.name} for deleted media…")
+                n += archive.carve_source(
+                    case, src.name, unallocated_only=True,
+                    progress=lambda k, _s=src.name: job.update(
+                        done=k, message=f"Carving {_s}… {k:,} found"))
+
         job.update(stage="process", total=n, message=f"Processing {n} files…")
 
         def progress(done: int, total: int) -> None:

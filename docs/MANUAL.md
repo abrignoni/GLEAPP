@@ -34,17 +34,21 @@ button (top-right of the launcher, and in every case's header) opens this manual
     **E01 acquisition** (`.E01` with its numbered segments beside it), whose
     filesystems are walked file by file so each file keeps the name, path and
     dates the filesystem recorded: ext2, ext3, ext4, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume that cannot be read is named
-    in the Source panel afterwards. Carving the free space for deleted media is
-    a separate step, asked for after ingest;
+    in the Source panel afterwards. **Carving** the free space for deleted media
+    is optional and separate from the walk: tick *Carve E01 free space for
+    deleted media* to do it during this ingest, or run it later from the Source
+    panel (see §16);
   - **Browse for JSON** — a GLEAPP job spec (a list of named sources) **or** a
     **Project VIC 2.0 (US) JSON**, detected automatically; the VIC media folder
     is resolved next to the file, and existing MediaID / category / original
     path / MIME / victim-offender flags are imported.
 
 Ingest options: **Face / skin screening** (on by default; can be run later),
-**video key frames per clip** (default 6), and **Copy media out of extraction
+**video key frames per clip** (default 6), **Copy media out of extraction
 archives into the case** (off = the case stays small but the archive must stay
-put; on = the case is self-contained). Click **Create case & ingest**.
+put; on = the case is self-contained), and **Carve E01 free space for deleted
+media** (E01 acquisitions only; off by default — see §16). Click
+**Create case & ingest**.
 
 **The gallery opens as soon as files are registered — you don't wait for
 processing to finish.** A progress bar along the bottom of the window shows the
@@ -267,7 +271,8 @@ examiner name. Codes map 1:1 to Project VIC codes on export; code 0 exports as
 ## 8. Filtering — every option
 
 Filters combine with AND and apply as you change them. The top of the sidebar is
-always visible — **Search**, **Category**, **Type**, **Source** — and below it is
+always visible — **Search**, **Category**, **Type**, **Source**, **How
+recovered** — and below it is
 one collapsible section per feature (Known hashes, Faces & skin, Duplicates,
 Errors, Location); each section holds its filter controls *and* its buttons
 (import, re-check, screen, retry, re-scan). A section with an active filter shows
@@ -282,12 +287,15 @@ word it matches across relative path, absolute path, original device name and
 path, camera, notes, MIME, source, capture date, examiner, known-hash name, error
 text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
 
-### Category / Type / Source
+### Category / Type / Source / How recovered
 - **Category** — **Any**, a specific category, or **Uncategorized**. Uncategorized
   enables the auto-advance review flow.
 - **Type** — **image**, **video**, or **other** (non-decodable — archives,
   documents, unknown formats).
 - **Source** — restrict to one ingest source.
+- **How recovered** — *All*, *Walked* (files read out of a filesystem, with names
+  and dates) or *Carved* (recovered by signature from unallocated space, no name
+  or date). Only shown when the case holds an E01 acquisition — see §16.
 
 ### Known hashes
 - **Show** — *all files* (default), *any imported hash set*, or *only* one named
@@ -678,6 +686,33 @@ date, label (`auto`, `manual`, or your text) and size:
 
 Each reports progress next to its own button. A full reprocess is available from
 the command line: `gleapp process --force`.
+
+### Carving an E01 for deleted media
+
+An E01 acquisition is **walked** — its filesystems are read file by file, so
+every file keeps the name, path and dates the filesystem recorded. **Carving**
+is the separate pass that scans the space no volume claims for image and video
+signatures, recovering files the filesystem no longer lists (deleted, or in a
+volume that could not be read). A carved file has **no name, path or date of its
+own** — it is filed under the byte offset it was found at, and its date columns
+are blank.
+
+To carve:
+
+- **At ingest** — tick *Carve E01 free space for deleted media* on the launcher.
+  The walk runs first, then the carve, then everything is processed together.
+- **Later** — open the sidebar's **Source** section and click **Carve for
+  deleted media** (it becomes **Carve again** once a source has been carved;
+  re-running skips offsets already recovered). The bar at the bottom follows it,
+  and the new files are hashed, thumbnailed and grouped when the carve finishes.
+- **Command line** — `gleapp source carve <name>` (`--unallocated-only` to scope
+  it, which the GUI always does).
+
+Carving reads the whole free area, so on a large drive it takes a while and
+most of what it returns on a used disk is application assets rather than
+user media. The Source panel shows the split: *N walked · M carved*, and the
+sidebar's **How recovered** filter (§8) narrows the gallery to just the walked
+or just the carved rows.
 
 ## 17. Keyboard shortcuts
 
