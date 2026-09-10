@@ -592,6 +592,7 @@ current selection — and one or more **formats**:
 | KMZ | geolocated media for Google Earth / mapping tools — a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location |
 | MD5 list | one hash per row (also from the selection bar / right-click) |
 | Project VIC JSON | the original VIC file with Category / Comments / Tags written back, keyed by MediaID and MD5 (VIC cases) |
+| LAVA report | a project folder LAVA opens: the media, a location map for each geolocated file and an overview map drawn offline from the basemap you imported, the video key frames, and the artifact tables. Takes minutes rather than seconds, so it runs as a job and the bar at the bottom follows it |
 
 Filesystem / ingest times in the HTML and CSV are rendered in the case's
 **timezone** (section 3), with the abbreviation shown (e.g. `2024-07-01 11:00

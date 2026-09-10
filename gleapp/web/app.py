@@ -22,7 +22,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 
-from .. import appconfig, archive, backup, basemaps, categories, report
+from .. import appconfig, archive, backup, basemaps, categories, lava, report
 from ..case import open_case, parse_source_spec
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
@@ -1457,30 +1457,51 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "categorized only": "categorized",
             "uncategorized only": "uncategorized",
         }.get(label, "selection")
-        made = []
-        if "csv" in fmts:
-            made.append(str(report.export_csv(case, out / f"report{tag}.csv", where, tz=tz)))
-        if "json" in fmts:
-            made.append(str(report.export_json(case, out / f"report{tag}.json", where,
-                                               header=header)))
-        if "html" in fmts:
-            made.append(str(report.export_html(
-                case, out / f"report{tag}.html", where,
-                header=header, fields=fields, scope_label=label,
-                full_images=full_images, full_videos=full_videos, tz=tz,
-                maps=want_maps)))
-        if "kml" in fmts:
-            made.append(str(report.export_kml(case, out / f"geolocation{tag}.kmz", where)))
-        if "md5" in fmts:
-            made.append(str(report.export_md5(case, out / f"md5{tag}.csv", where)))
-        if "vic" in fmts:
-            try:
-                made.append(str(report.export_projectvic(
-                    case, out / "projectvic_export.json",
-                    only_categorized=body.get("scope") == "categorized"
-                    or bool(body.get("only_categorized")))))
-            except FileNotFoundError as exc:
-                return jsonify({"error": "no_vic", "message": str(exc)}), 400
+
+        # A LAVA project stages every file's media, draws a locator map for each
+        # geolocated one and copies the frames out of every video, so it is
+        # minutes of work on a real case rather than the seconds the other
+        # formats take. It runs as a job with the bottom bar following it, and
+        # the formats picked alongside it run in the same job.
+        if "lava" in fmts:
+            if state["job"]["running"]:
+                abort(409, description="a job is already running")
+            state["job"] = {"running": True, "stage": "export", "done": 0,
+                            "total": 0, "message": "Building the LAVA report…",
+                            "stats": None, "error": None}
+
+            def _job() -> None:
+                j = state["job"]
+                try:
+                    written = _write_reports(
+                        case, fmts, out, tag, where, label, header=header,
+                        fields=fields, full_images=full_images,
+                        full_videos=full_videos, maps=want_maps, tz=tz,
+                        only_categorized=body.get("scope") == "categorized"
+                        or bool(body.get("only_categorized")),
+                        progress=lambda d, t: j.update(done=d, total=t),
+                        stage_cb=lambda m: j.update(message=m))
+                    j.update(running=False, stage="done",
+                             message="Export complete",
+                             stats={"written": written, "report_dir": str(out)})
+                # any writer failing has to reach the bar rather than the log
+                except Exception as exc:  # pylint: disable=broad-except
+                    j.update(running=False, stage="error",
+                             error=f"{type(exc).__name__}: {exc}")
+
+            threading.Thread(target=_job, daemon=True).start()
+            return jsonify({"ok": True, "job": True, "scope": label,
+                            "dir": str(out)})
+
+        try:
+            made = _write_reports(
+                case, fmts, out, tag, where, label, header=header, fields=fields,
+                full_images=full_images, full_videos=full_videos,
+                maps=want_maps, tz=tz,
+                only_categorized=body.get("scope") == "categorized"
+                or bool(body.get("only_categorized")))
+        except FileNotFoundError as exc:
+            return jsonify({"error": "no_vic", "message": str(exc)}), 400
         return jsonify({"ok": True, "written": made, "dir": str(out), "scope": label})
 
     @app.post("/api/export/md5")
@@ -1552,6 +1573,49 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         return jsonify({"ok": True, "restored": name})
 
     return app
+
+
+# Every format the export route can write. The gallery's export dialog offers
+# one checkbox per entry, and a test holds the two together: the LAVA report was
+# written by the route months before the dialog offered it, so the one output
+# that carries the media and the location maps into LAVA could only be made from
+# the command line.
+REPORT_FORMATS = ("html", "csv", "json", "kml", "md5", "vic", "lava")
+
+
+def _write_reports(case, fmts, out, tag, where, label, *, header, fields,
+                   full_images, full_videos, maps, tz, only_categorized,
+                   progress=None, stage_cb=None) -> list[str]:
+    """Write every picked format into ``out`` and return the paths written.
+
+    Shared by the inline route and the job the LAVA format runs in, so the two
+    cannot drift into writing different things for the same request.
+    """
+    made: list[str] = []
+    if "csv" in fmts:
+        made.append(str(report.export_csv(case, out / f"report{tag}.csv", where, tz=tz)))
+    if "json" in fmts:
+        made.append(str(report.export_json(case, out / f"report{tag}.json", where,
+                                           header=header)))
+    if "html" in fmts:
+        made.append(str(report.export_html(
+            case, out / f"report{tag}.html", where,
+            header=header, fields=fields, scope_label=label,
+            full_images=full_images, full_videos=full_videos, tz=tz, maps=maps)))
+    if "kml" in fmts:
+        made.append(str(report.export_kml(case, out / f"geolocation{tag}.kmz", where)))
+    if "md5" in fmts:
+        made.append(str(report.export_md5(case, out / f"md5{tag}.csv", where)))
+    if "vic" in fmts:
+        made.append(str(report.export_projectvic(
+            case, out / "projectvic_export.json",
+            only_categorized=only_categorized)))
+    if "lava" in fmts:
+        if stage_cb:
+            stage_cb("Building the LAVA report…")
+        made.append(str(lava.export_lava(case, out / f"lava{tag}", where,
+                                         maps=maps, tz_name=tz, progress=progress)))
+    return made
 
 
 def _run_job(state: dict, sources, opts: dict) -> None:
