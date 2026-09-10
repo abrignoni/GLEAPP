@@ -71,6 +71,7 @@ function filterParams() {
   if ($("#fkind").value) p.set("kind", $("#fkind").value);
   if ($("#fcat").value !== "any") p.set("category", $("#fcat").value);
   if ($("#fsrc").value) p.set("source", $("#fsrc").value);
+  if ($("#forigin").value) p.set("origin", $("#forigin").value);
   if ($("#fdup").value) p.set("hasdup", $("#fdup").value);
   if ($("#ffaces").checked) p.set("faces", "1");
   if ($("#fgps").checked) p.set("has_gps", "1");
@@ -1444,7 +1445,7 @@ document.addEventListener("keydown", e => {
 });
 
 /* ---------- filter wiring ---------- */
-["#fq", "#fkind", "#fcat", "#fsrc", "#fdup", "#ffaces", "#fgps",
+["#fq", "#fkind", "#fcat", "#fsrc", "#forigin", "#fdup", "#ffaces", "#fgps",
  "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fsort"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
@@ -1461,7 +1462,7 @@ const SEC_ACTIVE = {
 function countActiveFilters() {
   let n = 0;
   if ($("#fq").value.trim()) n++;
-  ["#fcat", "#fkind", "#fsrc", "#fhashset", "#fdup"].forEach(s => {
+  ["#fcat", "#fkind", "#fsrc", "#forigin", "#fhashset", "#fdup"].forEach(s => {
     const v = $(s).value;
     if (v && v !== "any") n++;
   });
@@ -1635,6 +1636,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fkind").value = "";
   $("#fcat").value = "any";
   $("#fsrc").value = "";
+  $("#forigin").value = "";
   $("#fdup").value = "";
   $("#fhashset").value = "";
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
@@ -2501,7 +2503,7 @@ async function pollJob() {
   }
   // Open the gallery as soon as files exist — the user reviews already-processed
   // files while the rest process, with a live progress bar at the bottom.
-  if (j.stage === "process" || j.stage === "done" ||
+  if (j.stage === "process" || j.stage === "done" || j.stage === "carve" ||
       (j.stage === "ingest" && j.done > 0)) {
     $("#jobMsg").textContent = "Opening case…";
     setTimeout(() => location.reload(), 400);
@@ -2558,7 +2560,7 @@ $("#createGo").onclick = async () => {
     body: JSON.stringify({
       spec: specs[0] || null, sources: folders,
       options: { screen: $("#optScreen").checked, keyframes: +$("#optKf").value,
-                 stage: $("#optStage").checked }
+                 stage: $("#optStage").checked, carve: $("#optCarve").checked }
     })
   }).catch(() => ({ error: true, message: "request failed" }));
   if (ing.error) return fail(ing.message || "Ingest failed");
@@ -2578,6 +2580,10 @@ function renderSourcePanel(list) {
   const el = $("#srcInfo");
   if (!el) return;
   list = list || [];
+  // the "How recovered" filter only means something when an acquisition is in
+  // play, since only an E01 yields both walked and carved rows
+  const ow = $("#foriginWrap");
+  if (ow) ow.hidden = !list.some(s => s.format === "ewf");
   if (!list.length) { el.innerHTML = ""; return; }
   el.innerHTML = list.map(s => {
     const ok = s.status === "ok";
@@ -2626,9 +2632,14 @@ function renderSourcePanel(list) {
              : "Delete the copies and read from the archive on demand again. Refused unless the archive still holds every registered file."}">Drop copies</button>`
       : `<button class="btn sm" data-stage="${esc(s.name)}"${ok ? "" : " disabled"}
            title="Copy every registered file out of the archive into the case, so the case no longer needs it.">Copy into case</button>`;
+    // an E01 can be carved for deleted media after the walk — once, or again
+    const carveBtn = ewf
+      ? `<button class="btn sm" data-carve="${esc(s.name)}"${ok ? "" : " disabled"}
+           title="Scan the space no volume claims for deleted images and video. A carved file has no name, path or date of its own. Runs the whole free area${cut ? "; offsets already carved are skipped" : ""}.">${cut ? "Carve again" : "Carve for deleted media"}</button>`
+      : "";
     return `<div style="margin:3px 0"><b title="${esc(s.path)}">${esc(s.name)}</b>
       <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${origin}${state}
-      ${vols}<div style="margin-top:2px">${btn}</div></div>`;
+      ${vols}<div style="margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">${btn}${carveBtn}</div></div>`;
   }).join("");
   const post = (url, body) => api(url, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -2649,6 +2660,17 @@ function renderSourcePanel(list) {
     if (r.error) { toast(r.message || "Refused"); return; }
     toast(`${(r.removed || 0).toLocaleString()} copies removed; ${name} is read from the archive again`);
     try { showSourceStatus((await api("/api/context")).archive_sources); } catch (e) {}
+  });
+  el.querySelectorAll("[data-carve]").forEach(b => b.onclick = async () => {
+    const name = b.dataset.carve;
+    if (!confirm(`Carve ${name} for deleted media?\n\n`
+      + "This scans the whole of the space no volume claims for image and video "
+      + "signatures, then processes what it finds. It can take a while on a large "
+      + "acquisition. Carved files have no name, path or date of their own.")) return;
+    const r = await post("/api/source/carve", { name });
+    if (r.error) { toast(r.message || "Could not start carving"); return; }
+    toast(`Carving ${name} — the bar at the bottom follows it`);
+    liveTick = 0; liveJob();
   });
 }
 
