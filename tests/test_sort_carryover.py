@@ -28,9 +28,14 @@ def test_both_views_query_by_the_shared_sort_state():
     # the dropdown maps both ways
     assert "GRID_SORT_TO_LIST" in js and "LIST_SORT_TO_GRID" in js
     assert "reflectGridSort" in js
-    grid_vals = {"path", "date", "size", "skin", "faces", "cluster"}
+    # every value the grid Sort dropdown offers has a list-column target
+    tpl = (Path(__file__).resolve().parents[1]
+           / "gleapp/web/templates/index.html").read_text(encoding="utf-8")
+    dd = tpl[tpl.index('<select id="fsort">'):]
+    dd = dd[:dd.index("</select>")]
+    grid_vals = set(re.findall(r'<option value="(\w+)"', dd))
     mapped = set(re.findall(r"(\w+): \[\"", js.split("GRID_SORT_TO_LIST")[1].split("}")[0]))
-    assert grid_vals <= mapped
+    assert grid_vals and grid_vals <= mapped
 
 
 def test_the_server_orders_by_a_grid_and_a_list_sort_key_alike(tmp_path):

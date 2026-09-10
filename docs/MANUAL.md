@@ -328,7 +328,6 @@ text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
   | Has any duplicate | in a ≥2 exact stack, a visual stack, or a near-dup cluster |
   | Has an exact copy | a byte-identical twin exists (same MD5) |
   | Has a visual copy | the same picture, re-encoded or resized |
-  | In a near-dup cluster | burst shots, crops, filtered/annotated versions, video frame grabs |
 
 - **Collapse duplicates & visual matches** (on by default) — one tile per visual
   group in the **grid**. The representative is chosen from files that *match your
