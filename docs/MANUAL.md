@@ -275,15 +275,14 @@ examiner name. Codes map 1:1 to Project VIC codes on export; code 0 exports as
 ## 8. Filtering — every option
 
 Filters combine with AND and apply as you change them. The top of the sidebar is
-always visible — **Search**, **Category**, **Type**, **Source**, **How
-recovered** — and below it is
+always visible — **Search**, **Category**, **Type**, **Source** — and below it is
 one collapsible section per feature (Known hashes, Faces & skin, Duplicates,
-Errors, Location); each section holds its filter controls *and* its buttons
-(import, re-check, screen, retry, re-scan). A section with an active filter shows
-a **dot** on its header — so you can see what's applied even when it's collapsed
-— and each section remembers whether you left it open. The top of the sidebar
-also shows a **filter count** with **Clear**; the header stat line shows the
-match count.
+Errors, Location, and — when they apply to the case — Carving and Archives). Each
+section holds its filter controls *and* its buttons (import, re-check, screen,
+retry, re-scan, carve, expand). A section with an active filter shows a **dot** on
+its header — so you can see what's applied even when it's collapsed — and each
+section remembers whether you left it open. The top of the sidebar also shows a
+**filter count** with **Clear**; the header stat line shows the match count.
 
 ### Search
 Free text. Each whitespace-separated word must match somewhere (AND); within a
@@ -291,7 +290,7 @@ word it matches across relative path, absolute path, original device name and
 path, camera, notes, MIME, source, capture date, examiner, known-hash name, error
 text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
 
-### Category / Type / Source / How recovered
+### Category / Type / Source
 - **Category** — **Any**, a specific category, or **Uncategorized**. Uncategorized
   enables the auto-advance review flow.
 - **Type** — **image**, **video**, or **other** (non-decodable — documents,
@@ -300,9 +299,18 @@ text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
   gallery and reports by default** — only the image and video members found
   inside them are shown.
 - **Source** — restrict to one ingest source.
+
+### Carving *(E01 acquisitions only)*
 - **How recovered** — *All*, *Walked* (files read out of a filesystem, with names
   and dates) or *Carved* (recovered by signature from unallocated space, no name
-  or date). Only shown when the case holds an E01 acquisition — see §16.
+  or date).
+- Below it, each E01 in the case with its *walked* / *carved* counts and a
+  **Carve for deleted media** / **Carve again** button — see §16.
+
+### Archives *(when the case holds any `.zip` / `.7z` / `.tar` / `.gz`)*
+- **Extracted from an archive** — only files that came out of a container.
+- Below it, the archive count and the **Expand archives** / **Re-check archives**
+  button — see §16.
 
 ### Known hashes
 - **Show** — *all files* (default), *any imported hash set*, or *only* one named

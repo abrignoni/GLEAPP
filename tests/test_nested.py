@@ -283,6 +283,12 @@ def test_the_container_is_hidden_from_the_gallery_and_reports(tmp_path):
     # the case stat count and the export "all" scope both exclude it
     assert cl.get("/api/context").get_json()["stats"]["total"] == 2
 
+    # the "Extracted from an archive" filter shows the two members, not the .zip
+    d = cl.get("/api/files?in_archive=1").get_json()
+    assert d["total"] == 2
+    assert sorted(r["rel_path"].replace("\\", "/") for r in d["files"]) == \
+        ["pics.zip/a.jpg", "pics.zip/b.jpg"]
+
     from gleapp import report                          # pylint: disable=import-outside-toplevel
     case2 = open_case(tmp_path / "case")
     rows = report._rows(case2)     # noqa: SLF001  # pylint: disable=protected-access

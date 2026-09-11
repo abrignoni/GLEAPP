@@ -172,9 +172,11 @@ def test_the_how_recovered_filter_narrows_to_walked_or_carved(tmp_path):
     # a bogus value is ignored rather than filtering to nothing
     assert total("?origin=nonsense") == everything
 
-    # the control is only shown when an acquisition is present
+    # the "How recovered" control lives in the Carving section, which is hidden
+    # until an acquisition is present
     template = TEMPLATE.read_text(encoding="utf-8")
-    assert 'id="foriginWrap" hidden' in template
+    assert '<details class="fsec" data-sec="carve" hidden>' in template
+    assert 'id="forigin"' in template
     js = APPJS.read_text(encoding="utf-8")
     assert 'p.set("origin"' in js
     assert 's.format === "ewf"' in js

@@ -22,7 +22,8 @@ APPJS = Path(__file__).resolve().parents[1] / "gleapp/web/static/app.js"
 def test_both_views_query_by_the_shared_sort_state():
     js = APPJS.read_text(encoding="utf-8")
     # both views send state.sortCol / state.sortDir - not $("#fsort").value
-    fp = js[js.index("function filterParams"):js.index("function filterParams") + 1400]
+    start = js.index("function filterParams")
+    fp = js[start:js.index("\n}", start)]
     assert 'p.set("sort", state.sortCol' in fp and 'p.set("dir", state.sortDir' in fp
     assert '$("#fsort").value' not in fp        # the grid no longer sorts by the raw dropdown value
     # the dropdown maps both ways
