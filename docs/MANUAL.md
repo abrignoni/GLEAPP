@@ -43,6 +43,19 @@ button (top-right of the launcher, and in every case's header) opens this manual
     is resolved next to the file, and existing MediaID / category / original
     path / MIME / victim-offender flags are imported.
 
+    Exporters store one copy per distinct MD5, so several Media entries routinely
+    name the same stored file. Those become **one row**, carrying the first
+    entry's device path with the others listed as *Also under*. The count GLEAPP
+    reports is in entries, so it can exceed the number of rows, and the Source
+    panel's import line says both when they differ.
+
+    Two case-header fields are deliberately ignored, because exporters do not
+    agree with them. `TotalMediaFiles` counts Media entries in one export and
+    distinct MD5 values in another, so GLEAPP counts the array instead.
+    `IsPrecategorized` and `TotalPrecategorized` are not read at all: one export
+    set `IsPrecategorized` true on every one of its 19,209 entries while every
+    `Category` was null. The category you see always comes from `Category`.
+
 Ingest options: **Face / skin screening** (on by default; can be run later),
 **video key frames per clip** (default 6), **Copy media out of extraction
 archives into the case** (off = the case stays small but the archive must stay
@@ -147,6 +160,13 @@ resolved the file on your machine; add it from **Columns ▾** if you need it.
 | **FS created** | filesystem creation time. From `os.stat` on a folder scan; from `MediaFiles.Created` on a Project VIC import. |
 | **FS written** | filesystem last-modified time. `os.stat` mtime, or VIC `MediaFiles.Written`. |
 | **FS accessed** | filesystem last-access time. `os.stat` atime, or VIC `MediaFiles.Accessed`. |
+
+**A Project VIC export decides which of these it carries.** Measured on two
+exports: one wrote created, written and accessed on about 25,500 of its 34,731
+entries; the other wrote written on 6,901, created on 17 and accessed on none at
+all. GLEAPP reads every timestamp either one wrote, in both the `...Z` and the
+`...-05:00` forms. A sparse timestamp column on a VIC case is the export, not a
+failed parse.
 
 A filesystem timestamp is **not** a capture time — GLEAPP never fills "Captured"
 from one. All four appear in the details pane, the list view and as report
