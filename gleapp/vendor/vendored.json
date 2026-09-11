@@ -6,9 +6,9 @@
       "version": "1.23",
       "upstream": "https://github.com/abrignoni/qnxprobe",
       "upstream_file": "qnxprobe.py",
-      "commit": "30d34141541aacb84edec71987715c1e10868775",
-      "commit_date": "2026-09-11T00:34:05-04:00",
-      "sha256": "450b8c97144d5793bd3b3f5040198edfdfc8c00b5b01c1f954b72e2acecc230a",
+      "commit": "9ec20096403d2206c8d1bcd8ee7f04979a19215f",
+      "commit_date": "2026-09-11T08:03:11-04:00",
+      "sha256": "c5201bdb69baedb8d5003951d78346d861daf360c70d5c1c5fd23e6e5f2ba437",
       "licence": "MIT",
       "licence_file": "gleapp/vendor/LICENSE-qnxprobe",
       "note": "Copied verbatim. Fix upstream and re-vendor; edits here are reverted by the next sync. Reads the filesystems inside a disk image; it imports ewfprobe from beside it to open an .E01."
