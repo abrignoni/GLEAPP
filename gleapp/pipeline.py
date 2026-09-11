@@ -143,8 +143,15 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
     upd: dict = {}
     kfs: list[tuple[float, str, str | None]] = []
     try:
-        # trust the hash from a Project VIC import; only hash if we don't have one
-        if not row["md5"] or force:
+        # A Project VIC import supplies the hashes the exporting tool recorded, and
+        # those are trusted rather than recomputed. Which hashes arrive is up to the
+        # exporter: one measured export carried MD5 and SHA1 on every entry, another
+        # carried MD5 and wrote SHA1 as an empty string on all 19,209 of its entries.
+        # crypto_hashes computes all three in one read, so ask for that read whenever
+        # any of them is missing. Testing only MD5 left SHA1 and SHA256 empty for the
+        # whole case, and hashdb matches sha256 -> sha1 -> md5, so a case imported
+        # from such an export could only ever match a known-hash set on MD5.
+        if force or not (row["md5"] and row["sha1"] and row["sha256"]):
             upd.update(crypto_hashes(local))
 
         # A Snapchat "LZC" bundle isn't itself an image/video - pull the best
@@ -154,6 +161,7 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
             got = lzc.extract_best(local)
             if got is None:
                 return {"id": fid, "status": "error", "keyframes": [], "fields": {
+                    **upd,
                     "error": "Snapchat LZC bundle - no displayable media inside",
                     "kind": "other"}}
             ekind, eext, edata = got
@@ -225,9 +233,13 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
         if "_partial" in on or "_embedded_" in on:
             err = (f"Incomplete carve by the source tool ({on}) - the embedded "
                    f"media was not fully extracted; recover it from the parent file")
+        # Keep whatever this call already derived, the hashes above especially. A
+        # file GLEAPP cannot decode is exactly the one an examiner wants to look up
+        # in a known-hash set, and returning only the error text left an
+        # undecodable file with no MD5, SHA1 or SHA256 at all.
         return {
             "id": fid, "status": "error",
-            "fields": {"error": err},
+            "fields": {**upd, "error": err},
             "keyframes": [],
         }
 
@@ -361,13 +373,13 @@ def _video_result_to_payload(row, res: dict | None, *, screen: bool,
     # capture time comes only from embedded metadata (res["info"]) below;
     # filesystem timestamps are not a capture time.
     upd: dict = {"created_dt": existing_dt}
-    if not row["md5"]:
+    if not (row["md5"] and row["sha1"] and row["sha256"]):
         try:
             upd.update(crypto_hashes(src))
         except OSError as exc:
             err = imaging.scrub_local_paths(str(exc), row["path"]) or type(exc).__name__
             return {"id": fid, "status": "error",
-                    "fields": {"error": err[:300]}, "keyframes": []}
+                    "fields": {**upd, "error": err[:300]}, "keyframes": []}
     if res is None:
         upd["error"] = _video_failure_reason(
             src, "video could not be decoded (corrupt or unsupported)")
