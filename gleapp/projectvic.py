@@ -193,8 +193,11 @@ def case_summary(doc: dict) -> dict:
 def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = None):
     """Register every Media entry from ``vic_path`` into ``case``.
 
-    Returns (registered, missing).  Files are not hashed/thumbnailed here - the
-    normal pipeline does that next (and trusts the VIC MD5, skipping re-hash).
+    Returns (registered, missing), both counted in Media entries rather than in
+    rows: entries that name the same file become one row carrying the other device
+    paths as ``alt_paths``.  Files are not hashed/thumbnailed here - the normal
+    pipeline does that next, and fills in whichever hashes the VIC file did not
+    carry.
     """
     vic_path = Path(vic_path).resolve()
     fdir = Path(files_dir).resolve() if files_dir else None
@@ -214,9 +217,27 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
     seen_cats: set[int] = set()
     registered = missing = 0
     json_dir = vic_path.parent
+
+    # Several Media entries routinely name one file. An exporter stores a single
+    # copy per distinct MD5 under a hash-derived name, so a picture the device held
+    # at three paths arrives as three entries pointing at the same file. Measured on
+    # two real exports: 34,731 entries over 29,364 files and 19,209 over 14,656, with
+    # one file named by as many as 116 entries.
+    #
+    # ``upsert_file`` is keyed on the path, so those entries collapse into one row
+    # and, written one at a time, only the last entry's device path would survive.
+    # Group first, keep the first entry's fields, and carry the other device paths
+    # on the row as ``alt_paths``: a JSON list of path strings, the shape
+    # ``storage_views`` already uses for the Android views of one file and which the
+    # gallery shows as "Also under".
+    groups: dict[str, list[VicRecord]] = {}
     for r in iter_records(doc, json_dir=json_dir, files_dir=fdir):
         if not r.abs_path:
             continue
+        groups.setdefault(r.abs_path, []).append(r)
+
+    for abs_path, recs in groups.items():
+        r = recs[0]
         fields = dict(
             rel_path=r.rel_path,
             source=VIC_SOURCE_NAME,
@@ -240,15 +261,30 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
             vic_series=_as_text(r.series),
             vic_tags=json.dumps(r.tags) if r.tags else None,
         )
-        if r.category:
-            fields["category"] = r.category
-            seen_cats.add(r.category)
+        # The device paths the other entries recorded for this same file, in file
+        # order, without repeats and without restating the one already on the row.
+        primary = r.orig_path or r.orig_name
+        others: list[str] = []
+        for o in recs[1:]:
+            where = o.orig_path or o.orig_name
+            if where and where != primary and where not in others:
+                others.append(where)
+        if others:
+            fields["alt_paths"] = json.dumps(others)
+
+        # A category recorded on any entry of the group is the group's category.
+        # Reading it only off the first entry would drop a recorded verdict that
+        # happened to sit on the second.
+        cat = next((x.category for x in recs if x.category), None)
+        if cat:
+            fields["category"] = cat
+            seen_cats.add(cat)
         if not r.exists:
             fields["error"] = "file not found on disk"
-            missing += 1
+            missing += len(recs)
         else:
-            registered += 1
-        case.db.upsert_file(r.abs_path, **fields)
+            registered += len(recs)
+        case.db.upsert_file(abs_path, **fields)
 
     # make sure category rows exist for every VIC code we saw (blank name -> the
     # examiner names them)
@@ -256,8 +292,14 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
         if case.db.get_category(code) is None:
             _ensure_category(case.db, code)
     case.db.commit()
-    case.db.audit_log(case.examiner, "import_vic",
-                      f"{vic_path.name}: {registered} files, {missing} missing")
+    # ``registered`` and ``missing`` count Media entries, which is what the VIC file
+    # claims to hold. Say how many files those entries landed on when the two differ,
+    # so a count that looks short against the file is explained on the spot.
+    present = sum(1 for recs in groups.values() if recs[0].exists)
+    note = (f"{vic_path.name}: {registered} entries on {present} files, {missing} missing"
+            if present and registered != present
+            else f"{vic_path.name}: {registered} files, {missing} missing")
+    case.db.audit_log(case.examiner, "import_vic", note)
     return registered, missing
 
 

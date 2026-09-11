@@ -1,0 +1,162 @@
+"""What a Project VIC import must carry across, and what it must not invent.
+
+Measured against two real exports (Magnet AXIOM 10.0.0.48329 and Cellebrite
+Inseyets Physical Analyzer 10.9.0.3029) on 2026-09-11.  Both store one copy per
+distinct MD5 under a hash-derived name, so a picture the device held at several
+paths arrives as several Media entries pointing at one file: 34,731 entries over
+29,364 files, and 19,209 over 14,656.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from gleapp.case import open_case
+from gleapp import projectvic
+
+
+def _write_vic(tmp_path: Path, media: list[dict], *, files: dict[str, bytes]) -> Path:
+    """Write a VIC document plus the stored copies its entries point at."""
+    fdir = tmp_path / "VIC_Files"
+    fdir.mkdir(exist_ok=True)
+    for name, data in files.items():
+        (fdir / name).write_bytes(data)
+    doc = {
+        "@odata.context": "http://github.com/VICSDATAMODEL/ProjectVic/DataModels/"
+                          "2.0.xml/US/$metadata#Cases",
+        "value": [{"CaseID": "fidelity-1", "CaseNumber": "OP-FID-1",
+                   "SourceApplicationName": "UnitTest", "Media": media}],
+    }
+    p = tmp_path / "vic.json"
+    p.write_text(json.dumps(doc), encoding="utf-8")
+    return p
+
+
+def _entry(media_id: int, stored: str, *, device_path: str, name: str | None = None,
+           md5: str = "0" * 32, **over) -> dict:
+    e = {
+        "MD5": md5, "MediaID": media_id, "Category": None, "SHA1": "",
+        "RelativeFilePath": f"VIC_Files\\{stored}", "MimeType": "image/png",
+        "MediaFiles": [{"FileName": name or Path(device_path).name,
+                        "FilePath": device_path}],
+    }
+    e.update(over)
+    return e
+
+
+@pytest.fixture()
+def case(tmp_path):
+    c = open_case(tmp_path / "case", create=True, examiner="t")
+    yield c
+    c.close()
+
+
+# --------------------------------------------------------------------------
+# D. several entries naming one stored copy
+
+def test_entries_sharing_a_file_keep_every_device_path(tmp_path, case):
+    """Three entries, one stored copy, three device paths of which two differ.
+
+    The row keeps the first entry's path and carries the other on ``alt_paths``,
+    which is what the gallery shows as "Also under".  Without this the second and
+    third entries overwrite the first and only the last path survives.
+    """
+    media = [
+        _entry(1, "aaa.png", device_path="/DCIM/holiday.png"),
+        _entry(2, "aaa.png", device_path="/Download/holiday.png"),
+        _entry(3, "aaa.png", device_path="/DCIM/holiday.png"),   # an exact repeat
+    ]
+    vic = _write_vic(tmp_path, media, files={"aaa.png": b"\x89PNG\r\n\x1a\n one"})
+
+    registered, missing = projectvic.import_vic(case, vic)
+    assert (registered, missing) == (3, 0), "counts are in Media entries"
+
+    rows = list(case.db.iter_files())
+    assert len(rows) == 1, "one stored copy is one row"
+    row = rows[0]
+    assert row["orig_path"] == "/DCIM/holiday.png"
+    assert json.loads(row["alt_paths"]) == ["/Download/holiday.png"], (
+        "the second path is kept and the exact repeat is not restated")
+
+
+@pytest.mark.parametrize("on_entry", [1, 2, 3])
+def test_a_category_anywhere_in_the_group_is_not_lost(tmp_path, case, on_entry):
+    """The verdict can sit on any entry of a group and must survive.
+
+    Not a regression guard: writing the entries one at a time already preserved a
+    category, because an entry without one omits the column rather than nulling
+    it.  Pinned because grouping makes the choice explicit, and because a group
+    whose entries disagree now keeps the first rather than the last.
+    """
+    media = [
+        _entry(i, "aaa.png", device_path=f"/d{i}/a.png",
+               **({"Category": 3} if i == on_entry else {}))
+        for i in (1, 2, 3)
+    ]
+    vic = _write_vic(tmp_path, media, files={"aaa.png": b"one"})
+    projectvic.import_vic(case, vic)
+    rows = list(case.db.iter_files())
+    assert len(rows) == 1
+    assert rows[0]["category"] == 3
+    assert case.db.get_category(3) is not None, "the code gets a category row"
+
+
+def test_entries_on_different_files_gain_no_alt_paths(tmp_path, case):
+    """The control: nothing shared means nothing to carry, and no extra rows."""
+    media = [
+        _entry(1, "aaa.png", device_path="/DCIM/a.png"),
+        _entry(2, "bbb.png", device_path="/DCIM/b.png", md5="1" * 32),
+    ]
+    vic = _write_vic(tmp_path, media, files={"aaa.png": b"one", "bbb.png": b"two"})
+    projectvic.import_vic(case, vic)
+    rows = list(case.db.iter_files())
+    assert len(rows) == 2
+    assert [r["alt_paths"] for r in rows] == [None, None]
+
+
+def test_a_missing_file_still_counts_every_entry_that_named_it(tmp_path, case):
+    media = [
+        _entry(1, "gone.png", device_path="/DCIM/a.png"),
+        _entry(2, "gone.png", device_path="/Download/a.png"),
+    ]
+    vic = _write_vic(tmp_path, media, files={})
+    registered, missing = projectvic.import_vic(case, vic)
+    assert (registered, missing) == (0, 2)
+    rows = list(case.db.iter_files())
+    assert len(rows) == 1 and rows[0]["error"] == "file not found on disk"
+    assert json.loads(rows[0]["alt_paths"]) == ["/Download/a.png"]
+
+
+def test_the_audit_line_says_entries_and_files_when_they_differ(tmp_path, case):
+    media = [_entry(1, "aaa.png", device_path="/DCIM/a.png"),
+             _entry(2, "aaa.png", device_path="/Download/a.png")]
+    vic = _write_vic(tmp_path, media, files={"aaa.png": b"one"})
+    projectvic.import_vic(case, vic)
+    detail = [r["detail"] for r in case.db.conn.execute(
+        "SELECT detail FROM audit WHERE action='import_vic'")]
+    assert detail and "2 entries on 1 files" in detail[0]
+
+
+def test_the_row_carries_the_first_entry_of_the_group(tmp_path, case):
+    """Which entry's identity lands on the row, stated so it cannot drift.
+
+    Written one at a time the last entry won every column, so the row described
+    whichever entry the exporter happened to write last.  Grouping keeps the first
+    in file order, which is deterministic and is what makes ``alt_paths`` read as
+    "the other places this same file was".
+    """
+    media = [
+        _entry(10, "aaa.png", device_path="/DCIM/first.png", name="first.png"),
+        _entry(11, "aaa.png", device_path="/Download/second.png", name="second.png"),
+        _entry(12, "aaa.png", device_path="/tmp/third.png", name="third.png"),
+    ]
+    vic = _write_vic(tmp_path, media, files={"aaa.png": b"one"})
+    projectvic.import_vic(case, vic)
+    row = list(case.db.iter_files())[0]
+    assert row["media_id"] == 10
+    assert row["orig_name"] == "first.png"
+    assert row["orig_path"] == "/DCIM/first.png"
+    assert json.loads(row["alt_paths"]) == ["/Download/second.png", "/tmp/third.png"]
