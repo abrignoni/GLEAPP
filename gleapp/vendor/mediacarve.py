@@ -112,8 +112,14 @@ _SCAN = re.compile(
     b"|ftyp",                    # ISO-BMFF, four bytes in
     re.DOTALL)
 
-# Top-level ISO-BMFF box types worth walking. A box type outside this set ends
-# the walk, which is what stops a file running into whatever follows it.
+# Top-level ISO-BMFF box types the carver knows. A file has to show at least one
+# of these after its ftyp to count as a file. A box outside this set is skipped
+# when it is well formed (four printable type bytes, a sane size), because
+# writers add vendor boxes: four screen recordings on one Windows volume all
+# carried a "beam" box between ftyp and moov, and the deleted one was the only
+# recoverable file in 1.88 GB of free space, which this walk ended at box two.
+# Anything that is not a box at all still ends the walk, which is what stops a
+# file running into whatever follows it.
 _BMFF_BOXES = frozenset({
     b"ftyp", b"moov", b"mdat", b"free", b"skip", b"wide", b"pnot", b"uuid",
     b"meta", b"moof", b"mfra", b"styp", b"sidx", b"ssix", b"prft", b"emsg",
@@ -295,19 +301,22 @@ def _bmff_length(stream, offset, cap):
     pos = offset
     end = offset + min(cap, _ABSOLUTE_CAP)
     seen_ftyp = False
-    boxes = 0
+    boxes = known = 0
     while pos < end:
         head = _read_at(stream, pos, 16)
         if len(head) < 8:
             break
         size = struct.unpack(">I", head[:4])[0]
         btype = head[4:8]
-        if btype not in _BMFF_BOXES:
-            break
-        if btype == b"ftyp":
-            if seen_ftyp:
-                break                             # the next file starts here
-            seen_ftyp = True
+        if btype in _BMFF_BOXES:
+            if btype == b"ftyp":
+                if seen_ftyp:
+                    break                         # the next file starts here
+                seen_ftyp = True
+            known += 1
+        elif not all(0x20 <= b < 0x7F for b in btype):
+            break                                 # not a box: the file has ended
+        # a well-formed box of a type not listed above is a vendor box; skipped
         if size == 1:                             # 64-bit largesize
             if len(head) < 16:
                 break
@@ -319,8 +328,9 @@ def _bmff_length(stream, offset, cap):
         pos += size
         boxes += 1
     length = pos - offset
-    if boxes < 2 or length < 16:
-        return None                              # ftyp alone is not a file
+    if boxes < 2 or known < 2 or length < 16:
+        return None                              # ftyp alone, or ftyp plus
+                                                 # only boxes it cannot vouch for
     return length, "header", kind
 
 
