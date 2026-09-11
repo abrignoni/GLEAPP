@@ -302,7 +302,8 @@ text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
 
 ### Carving *(E01 acquisitions only)*
 - **How recovered** — *All*, *Walked* (files read out of a filesystem, with names
-  and dates) or *Carved* (recovered by signature from unallocated space, no name
+  and dates), *Recovered* (a deleted NTFS file rebuilt from its MFT record, with
+  its real name and dates) or *Carved* (recovered by signature from unallocated space, no name
   or date).
 - Below it, each E01 in the case with its *walked* / *carved* counts and a
   **Carve for deleted media** / **Carve again** button — see §16.
@@ -725,12 +726,22 @@ the command line: `gleapp process --force`.
 ### Carving an E01 for deleted media
 
 An E01 acquisition is **walked** — its filesystems are read file by file, so
-every file keeps the name, path and dates the filesystem recorded. **Carving**
-is the separate pass that scans the space no volume claims for image and video
-signatures, recovering files the filesystem no longer lists (deleted, or in a
-volume that could not be read). A carved file has **no name, path or date of its
-own** — it is filed under the byte offset it was found at, and its date columns
-are blank.
+every file keeps the name, path and dates the filesystem recorded. The
+**deleted-media** pass then recovers what was deleted, in two steps:
+
+- **From the MFT** (NTFS only): a deleted file whose MFT record still names it is
+  recovered with its **real name and dates**. This is the only way to reach a
+  file whose data was *resident*, small enough to live inside the record, which
+  a carve can never see because it never occupied a cluster. A non-resident file
+  is recovered while its clusters are still free, and refused once a later file
+  has taken one, so overwritten bytes are never presented as the file.
+- **By carving**: the space no volume claims is scanned for image and video
+  signatures, recovering files no surviving record names. A carved file has **no
+  name, path or date of its own** — it is filed under the byte offset it was
+  found at, and its date columns are blank.
+
+The MFT pass runs first, so a deleted NTFS file comes back with its name rather
+than as a nameless carved twin.
 
 To carve:
 
@@ -745,7 +756,8 @@ To carve:
 
 Carving reads the whole free area, so on a large drive it takes a while and
 most of what it returns on a used disk is application assets rather than
-user media. The Source panel shows the split: *N walked · M carved*, and the
+user media. The Source panel shows the split: *N walked · M carved · K recovered* (recovered
+being the MFT deleted files), and the
 sidebar's **How recovered** filter (§8) narrows the gallery to just the walked
 or just the carved rows.
 

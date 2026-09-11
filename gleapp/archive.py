@@ -368,7 +368,8 @@ def source_status(case) -> list[dict]:
             (name,))}
         out.append({**rec, "status": status, "files": sum(by_origin.values()),
                     "walked": by_origin.get("walk", 0),
-                    "carved": by_origin.get("carve", 0)})
+                    "carved": by_origin.get("carve", 0),
+                    "recovered": by_origin.get("deleted", 0)})
     return out
 
 
@@ -1539,8 +1540,135 @@ def stage_source(case, name: str, *, progress=None) -> int:
     return written
 
 
+def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
+    """Recover deleted files from an acquisition's NTFS volumes, from the MFT.
+
+    A walk lists what a filesystem still holds; a carve reads bytes no file
+    claims; this reads the records of files that were deleted while the record
+    still names them. It reaches a file whose data was **resident**, small
+    enough to live inside the MFT record, which a carve cannot see because it
+    never occupied a cluster. A non-resident file is recovered by its real name
+    and dates while its clusters are still free, and refused once a later file
+    has taken one, so overwritten bytes are never presented as the file.
+
+    Only NTFS carries this today. Returns (rows added, the set of image byte
+    offsets recovered), the second so a carve run alongside can skip the
+    nameless twin of a non-resident file recovered here with its name.
+
+    Recovered files are always copied into the case: a deleted file is not one
+    contiguous run the way a carved hit is (a resident one is not on the disk at
+    all), so it cannot be read back later by a single offset.
+    """
+    rec = _require(case, name)
+    if rec["format"] != FORMAT_EWF:
+        raise ValueError(f"{name} is not an image source; only an acquisition is recovered from")
+    slug = _slug(Path(rec["path"]).stem)
+    staged_dir = case.staged_dir
+    src_obj = _CarveSource(name, rec["path"], case)
+    max_bytes = None
+    tally = _Tally()
+    recovered_offsets: set = set()
+    n = len(case.db.iter_files("source = ?", (name,)))
+
+    img = ewfprobe.open_ewf(Path(rec["path"]))
+    try:
+        for base, size, fskind, _label in _volumes(img):
+            if fskind != "ntfs":
+                continue                             # only NTFS records deleted files this way
+            walker = qnxprobe.walker_for(fskind, img, base, size)
+            if walker is None:
+                continue
+            for e in walker.deleted_files():
+                if e.is_dir or not e.recoverable or not e.size:
+                    continue
+                ext = PurePosixPath(e.name).suffix.lower()
+                if ext in IMAGE_EXTS:
+                    kind = "image"
+                elif ext in VIDEO_EXTS:
+                    kind = "video"
+                else:
+                    kind = "other"
+                # read a head once: it settles the kind for an extension-less
+                # name and screens a macOS sidecar wearing an image extension
+                head = b""
+                try:
+                    for chunk in walker.read_deleted(e, 16):
+                        head += chunk
+                        if len(head) >= 16:
+                            break
+                except qnxprobe.NtfsUnreadable:
+                    continue
+                if kind != "other" and is_appledouble(e.name, head):
+                    kind = "other"
+                if kind == "other":
+                    kind = _kind_from_magic(head)
+                    if kind == "other":
+                        continue                     # not media; deleted recovery is media triage
+                if max_bytes and e.size > max_bytes:
+                    tally.skipped_size += 1
+                    continue
+                dest = _staged_path(staged_dir, slug, f"{e.record}_{e.name}")
+                try:
+                    _write_stream(_DeletedReader(walker, e), dest)
+                except (qnxprobe.NtfsUnreadable, OSError):
+                    with contextlib.suppress(OSError):
+                        dest.unlink()
+                    tally.failed += 1
+                    continue
+                if e.modified:
+                    with contextlib.suppress(OSError):
+                        os.utime(dest, (e.accessed or e.modified, e.modified))
+                # the first data cluster's image offset, so a carve alongside can
+                # skip the nameless twin of this file. _data is the deleted entry's
+                # own $DATA attribute, the field read_deleted() reads it from.
+                data_attr = e._data                  # pylint: disable=protected-access
+                if not e.resident and data_attr and data_attr.runs:
+                    first = next((lcn for lcn, _c in data_attr.runs if lcn is not None), None)
+                    if first is not None:
+                        recovered_offsets.add(base + first * walker.cluster)
+                _register(case, src_obj, dest, e.name, e.name, kind, ext, e.size,
+                          e.modified or None, e.created or None, None, None,
+                          origin="deleted", volume_base=int(base))
+                tally.registered += 1
+                n += 1
+                if n % 100 == 0:
+                    case.db.commit()
+                    if progress:
+                        progress(n)
+    finally:
+        img.close()
+    case.db.commit()
+    case.db.audit_log(case.examiner, "recover-deleted",
+                      f"{name}: {tally.registered} deleted file(s) recovered from the MFT "
+                      f"({tally.failed} unreadable, {tally.skipped_size} over the size limit)")
+    if progress:
+        progress(n)
+    return tally.registered, recovered_offsets
+
+
+class _DeletedReader:
+    """A file-like over a recovered deleted file, so _write_stream copies it."""
+
+    def __init__(self, walker, entry) -> None:
+        self._it = walker.read_deleted(entry)
+        self._buf = b""
+        self._done = False
+
+    def read(self, n: int = -1) -> bytes:
+        while (n < 0 or len(self._buf) < n) and not self._done:
+            try:
+                self._buf += next(self._it)
+            except StopIteration:
+                self._done = True
+        if n < 0:
+            out, self._buf = self._buf, b""
+            return out
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+
 def carve_source(case, name: str, *, unallocated_only: bool = False,
-                 progress=None) -> int:
+                 extra_skip: set | None = None, progress=None) -> int:
     """Carve an image source that has already been walked, adding what the walk
     could not reach. Returns the number of rows added.
 
@@ -1569,6 +1697,10 @@ def carve_source(case, name: str, *, unallocated_only: bool = False,
                            unallocated_only=unallocated_only)
     already = {int(r["member_offset"]) for r in case.db.iter_files(
         "source = ? AND member_offset IS NOT NULL", (name,))}
+    if extra_skip:
+        # offsets already recovered by name from the MFT, so the carve does not
+        # add a nameless twin of a deleted file we recovered with its real name
+        already |= {int(o) for o in extra_skip}
     before_rows = len(case.db.iter_files("source = ?", (name,)))
     n = _ingest_ewf(case, src_obj, Path(rec["path"]), count=before_rows,
                     progress=progress, skip_offsets=already)

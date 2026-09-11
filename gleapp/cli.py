@@ -227,13 +227,17 @@ def cmd_source(args: argparse.Namespace) -> int:
             def carve_progress(done: int) -> None:
                 print(f"\r  {done:,} files", end="", flush=True)
 
+            recovered, offsets = archive.recover_deleted(
+                case, args.name, progress=carve_progress)
+            print()
             n = archive.carve_source(case, args.name,
                                      unallocated_only=args.unallocated_only,
-                                     progress=carve_progress)
+                                     extra_skip=offsets, progress=carve_progress)
             print()
-            _p(f"Recovered {n:,} files by signature from {args.name}. "
-               f"They are marked as carved, and carry no name, path or date of "
-               f"their own; run 'process' to hash and thumbnail them.")
+            _p(f"Recovered {recovered:,} deleted file(s) from the MFT (with their name "
+               f"and dates, resident files included) and {n:,} by signature carving "
+               f"(no name or date) from {args.name}; run 'process' to hash and "
+               f"thumbnail them.")
             return 0
         n = archive.unstage_source(case, args.name)
         _p(f"Removed {n:,} copies; {args.name} is read from the archive on demand again.")

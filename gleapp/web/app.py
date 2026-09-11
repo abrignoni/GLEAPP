@@ -1418,25 +1418,37 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         if rec["format"] != archive.FORMAT_EWF:
             abort(400, description="only an E01 acquisition can be carved")
         state["job"] = {"running": True, "stage": "carve", "done": 0, "total": 0,
-                        "message": f"Carving {name} for deleted media…",
+                        "message": f"Recovering deleted media from {name}…",
                         "stats": None, "error": None}
 
         def _job() -> None:
             j = state["job"]
             try:
+                # First recover deleted files from the MFT, by name and date and
+                # reaching resident files a carve cannot, then carve the free
+                # space by signature for whatever no surviving record names,
+                # skipping the offsets already recovered here.
+                recovered, offsets = archive.recover_deleted(
+                    case, name,
+                    progress=lambda k: j.update(done=k, message=f"Recovering deleted files… {k:,}"))
                 added = archive.carve_source(
-                    case, name, unallocated_only=True,
+                    case, name, unallocated_only=True, extra_skip=offsets,
                     progress=lambda k: j.update(done=k, message=f"Carving… {k:,} found"))
-                if added:
-                    j.update(stage="process", done=0, total=added,
-                             message=f"Processing {added:,} carved file(s)…")
+                total_new = recovered + added
+                if total_new:
+                    j.update(stage="process", done=0, total=total_new,
+                             message=f"Processing {total_new:,} recovered file(s)…")
                     process(case, where="md5 IS NULL",
                             progress=lambda d, t: j.update(done=d, total=t),
                             stage_cb=lambda m: j.update(message=m))
+                parts = []
+                if recovered:
+                    parts.append(f"{recovered:,} recovered from the MFT")
+                if added:
+                    parts.append(f"{added:,} carved")
                 j.update(running=False, stage="done",
-                         message=(f"{added:,} file(s) recovered by carving"
-                                  if added else "Carving found nothing new"),
-                         stats={"carved": added})
+                         message=("; ".join(parts) if parts else "Nothing new was recovered"),
+                         stats={"recovered": recovered, "carved": added})
             except (ValueError, archive.ArchiveUnavailable, OSError,
                     sqlite3.Error) as exc:
                 j.update(running=False, stage="error",
@@ -1749,9 +1761,13 @@ def _run_job(state: dict, sources, opts: dict) -> None:
                 if not rec or rec["format"] != archive.FORMAT_EWF:
                     continue
                 job.update(stage="carve", done=0, total=0,
-                           message=f"Carving {src.name} for deleted media…")
-                n += archive.carve_source(
-                    case, src.name, unallocated_only=True,
+                           message=f"Recovering deleted media from {src.name}…")
+                recovered, offsets = archive.recover_deleted(
+                    case, src.name,
+                    progress=lambda k, _s=src.name: job.update(
+                        done=k, message=f"Recovering deleted files from {_s}… {k:,}"))
+                n += recovered + archive.carve_source(
+                    case, src.name, unallocated_only=True, extra_skip=offsets,
                     progress=lambda k, _s=src.name: job.update(
                         done=k, message=f"Carving {_s}… {k:,} found"))
 
