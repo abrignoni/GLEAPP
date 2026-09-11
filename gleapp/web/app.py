@@ -509,13 +509,18 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             from .. import hashdb
             hs_id, added = hashdb.import_hashset(
                 case.db, raw, name=name, kind=kind)
+            counts = hashdb.algo_counts(case.db.conn, hs_id)
         except (OSError, ValueError, sqlite3.Error) as exc:
             abort(400, description=f"could not read hash list: {exc}")
+        note = hashdb.photodna_note(counts)
         case.db.audit_log(case.examiner, "hashset_import",
-                          f"{name!r} ({kind}): {added} entries from {Path(raw).name}")
+                          f"{name!r} ({kind}): {added} entries from {Path(raw).name}"
+                          + (f". {note}" if note else ""))
         _rematch_job(case, f"Flagging files against {name}…")
         return jsonify({"ok": True, "id": hs_id, "name": name,
-                        "kind": kind, "entries": added})
+                        "kind": kind, "entries": added,
+                        "photodna": counts.get(hashdb.PHOTODNA_ALGO, 0),
+                        "photodna_note": note})
 
     @app.post("/api/hashset/remove")
     def hashset_remove():
@@ -591,10 +596,14 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                         case, progress=lambda d, t: j.update(
                             done=d, total=t,
                             message="Re-checking case files against known hashes…"))
+                from .. import hashdb
+                note = hashdb.photodna_note(hashstore.algo_counts(_hs))
                 j.update(running=False, stage="done",
-                         stats={"entries": added, "hashset_hits": hits},
+                         stats={"entries": added, "hashset_hits": hits,
+                                "photodna_note": note},
                          message=f"{name}: {added:,} hashes imported"
-                         + (f" — {hits} case hit(s)" if case is not None else ""))
+                         + (f" — {hits} case hit(s)" if case is not None else "")
+                         + (f". {note}" if note else ""))
             except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                 j.update(running=False, stage="error",
                          error=f"{type(exc).__name__}: {exc}")

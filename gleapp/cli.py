@@ -89,7 +89,9 @@ def cmd_hashset(args: argparse.Namespace) -> int:
         s = hashstore.summary()
         _p(f"Global hash store: {s['entries']:,} entries across {len(s['sets'])} set(s)")
         for hs in s["sets"]:
-            _p(f"  [{hs['id']}] {hs['name']}  {hs['count']:,}  ({hs['kind']})")
+            pdna = int(hs.get("photodna") or 0)
+            _p(f"  [{hs['id']}] {hs['name']}  {hs['count']:,}  ({hs['kind']})"
+               + (f"  [{pdna:,} PhotoDNA, not matched]" if pdna else ""))
         return 0
 
     # NSRL RDSv3 helpers: build a .db from a full .sql dump, and/or apply a delta
@@ -128,12 +130,16 @@ def cmd_hashset(args: argparse.Namespace) -> int:
             src, name=name, kind=args.kind, table=args.table,
             algos=algos, progress=prog)
         _p(f"Imported '{name}' into the global store: {added:,} hashes.")
+        note = hashdb.photodna_note(hashstore.algo_counts(hs_id))
     else:
         case = open_case(args.case, create=True, examiner=args.examiner)
         hs_id, added = hashdb.import_hashset(
             case.db, src, name=name, kind=args.kind)
         _p(f"Imported hash set '{name}' into the case: {added:,} entries.")
+        note = hashdb.photodna_note(hashdb.algo_counts(case.db.conn, hs_id))
         case.close()
+    if note:
+        _p(f"  {note}")
     return 0
 
 

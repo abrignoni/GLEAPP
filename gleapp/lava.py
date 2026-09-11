@@ -801,7 +801,11 @@ def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) ->
 
 def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> int:
     name = "Known Hash Sets"
+    # "PhotoDNA (not matched)" is part of "Entries" and can never flag a file:
+    # comparing PhotoDNA needs a licensed implementation this tool does not
+    # ship, so an entry count on its own overstates what a set could match.
     headers = ["Hash Set", "Kind", "Source", "Scope", ("Entries", "integer"),
+               ("PhotoDNA (not matched)", "integer"),
                ("Files Matched", "integer"), ("Imported", "datetime")]
     data = []
     seen = set()
@@ -809,7 +813,7 @@ def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> int:
         seen.add(record["name"])
         data.append([record["name"], record["kind"] or "",
                      _source_name(record["source"]), "this case",
-                     record["count"], record["hits"],
+                     record["count"], record["photodna"], record["hits"],
                      _epoch(record["imported_at"])])
     # the shared store is imported once and used by every case, so a hit can name a
     # set this case never imported itself
@@ -827,7 +831,7 @@ def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> int:
         seen.add(record.get("name"))
         data.append([record.get("name") or "", record.get("kind") or "",
                      _source_name(record.get("source")), "shared store",
-                     record.get("count"),
+                     record.get("count"), record.get("photodna"),
                      sum(1 for r in rows if r.get("hashset_hit") == record.get("name")),
                      _epoch(record.get("imported_at"))])
     # The examiner's own stash is a third source, checked on MD5 before the shared
@@ -841,9 +845,9 @@ def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> int:
         if total or stash_hits:
             seen.add(stash.STASH_NAME)
             data.append([stash.STASH_NAME, "known", "", "examiner's local stash",
-                         total, stash_hits, None])
+                         total, 0, stash_hits, None])
     for orphan in sorted(n for n in matched - seen if n):
-        data.append([orphan, "", "", "no longer listed", None,
+        data.append([orphan, "", "", "no longer listed", None, None,
                      sum(1 for r in rows if r.get("hashset_hit") == orphan), None])
     writer.add_artifact(
         "GLEAPP Hash Sets", name, headers, data, icon="list",
@@ -863,7 +867,13 @@ def _artifact_hash_sets(writer: "_Writer", case: Case, rows: list[dict]) -> int:
             "rather than at the time of the check. A row reading 'no longer listed' "
             "is a name files still carry from a list that has since been removed, "
             "which records that the check happened and that the list is no longer "
-            "there to re-run it."))
+            "there to re-run it. PhotoDNA (not matched) is how many of a list's "
+            "Entries are PhotoDNA values rather than hashes this tool can compare: "
+            "PhotoDNA is a robust hash unrelated to the perceptual hash GLEAPP "
+            "computes, comparing two of them needs a licensed PhotoDNA "
+            "implementation, and this tool ships none. They are recorded so Entries "
+            "says what the list held, and none of them can flag a file, so the "
+            "hashes this list could match against is Entries minus this column."))
     return len(data)
 
 

@@ -13,6 +13,10 @@ Accepted inputs (``import_path`` auto-detects):
   batches so multi-million-row sets import without exhausting memory.
 * **Project VIC JSON**, **CAID CSV/JSON**, **plain hash lists** - reuses the
   parsers in ``hashdb``.
+
+A ``PhotoDNA``/``PDNA`` field in one of those lists is stored under the
+``photodna`` algo and never matched: see ``hashdb`` for why. ``iter_phash``
+returns perceptual hashes only, so the matching pass cannot reach them.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import appconfig
+from .db import PHASH_ALGO, PHOTODNA_ALGO
 
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
 _ALGO_BY_LEN = {32: "md5", 40: "sha1", 64: "sha256"}
@@ -139,16 +144,29 @@ def lookup(algo: str, value: str) -> dict | None:
 
 
 def iter_phash() -> list[sqlite3.Row]:
+    """Perceptual-hash entries only. PhotoDNA lives under its own algo and is
+    deliberately not returned: nothing here can compare one."""
     return _ro_query(
         "SELECT e.value v, e.category c, hs.name n, hs.kind k "
         "FROM hashset_entries e JOIN hashsets hs ON hs.id = e.hashset_id "
-        "WHERE e.algo = 'phash'")
+        "WHERE e.algo = ?", (PHASH_ALGO,))
+
+
+def algo_counts(hashset_id: int) -> dict[str, int]:
+    """How many entries of each algo a stored set holds."""
+    return {r[0]: int(r[1]) for r in _ro_query(
+        "SELECT algo, COUNT(*) FROM hashset_entries WHERE hashset_id = ? "
+        "GROUP BY algo", (hashset_id,))}
 
 
 def sets() -> list[dict]:
+    # the photodna count is a range over the (hashset_id, algo) key prefix, so
+    # it costs nothing on a set that holds none, which is every NSRL-style one
     return [dict(r) for r in _ro_query(
-        "SELECT id, name, source, kind, count, imported_at FROM hashsets "
-        "ORDER BY imported_at DESC")]
+        "SELECT hs.id, hs.name, hs.source, hs.kind, hs.count, hs.imported_at, "
+        "  (SELECT COUNT(*) FROM hashset_entries e WHERE e.hashset_id = hs.id "
+        "     AND e.algo = ?) AS photodna "
+        "FROM hashsets hs ORDER BY hs.imported_at DESC", (PHOTODNA_ALGO,))]
 
 
 def summary() -> dict:
@@ -369,8 +387,14 @@ def _import_entries(name: str, source: str, kind: str, entries) -> tuple[int, in
     added = 0
     try:
         for algo, value, cat in entries:
-            v = (str(value).strip().lower() if algo == "phash"
-                 else _norm(algo, value))
+            if algo == PHASH_ALGO:
+                v = str(value).strip().lower()
+            elif algo == PHOTODNA_ALGO:
+                # verbatim: PhotoDNA travels base64 as often as hex, and
+                # base64 is case-sensitive, so folding case destroys it
+                v = str(value).strip()
+            else:
+                v = _norm(algo, value)
             if not v:
                 continue
             batch.append((hs_id, algo, v, cat))
