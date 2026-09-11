@@ -54,10 +54,10 @@ case's header) opens this manual.</p>
       (<code>.E01</code> with its numbered segments beside it), whose filesystems are
       walked file by file so each file keeps the name, path and dates the filesystem
       recorded: ext2, ext3, ext4, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume that cannot be read is named in the Source panel
-      afterwards. <strong>Carving</strong> the free space for deleted media is
-      optional and separate from the walk: tick <em>Carve E01 free space for
-      deleted media</em> to do it during this ingest, or run it later from the
-      Source panel (see &sect;16);</li>
+      afterwards. <strong>Recovering deleted media</strong> is optional and
+      separate from the walk: tick <em>Recover deleted media from an E01 (deleted
+      records and carving)</em> to do it during this ingest, or run it later from
+      the Source panel (see &sect;16);</li>
       <li><strong>Browse for JSON</strong> — a GLEAPP job spec (named sources) <strong>or</strong>
       a <strong>Project VIC 2.0 (US) JSON</strong>, detected automatically; the VIC
       media folder is resolved next to the file, and existing MediaID / category /
@@ -69,8 +69,8 @@ case's header) opens this manual.</p>
 later instead), <strong>video key frames per clip</strong> (default 6),
 <strong>Copy media out of extraction archives into the case</strong> (off = the case
 stays small but the archive must stay put; on = the case is self-contained), and
-<strong>Carve E01 free space for deleted media</strong> (E01 acquisitions only;
-off by default &mdash; see &sect;16). Click <strong>Create case &amp; ingest</strong>.</p>
+<strong>Recover deleted media from an E01 (deleted records and carving)</strong>
+(E01 acquisitions only; off by default, see &sect;16). Click <strong>Create case &amp; ingest</strong>.</p>
 <p><strong>The gallery opens as soon as files are registered — you don't wait for
 processing to finish.</strong> A progress bar along the bottom of the window
 shows the running count and stage; thumbnails fill in as each file is processed
@@ -364,10 +364,11 @@ whose date is in July 2024.</p>
 <h3>Carving <em>(E01 acquisitions only)</em></h3>
 <ul>
   <li><strong>How recovered</strong> — <em>All</em>, <em>Walked</em> (files read
-  out of a filesystem, with names and dates), <em>Recovered</em> (a deleted NTFS
-  file rebuilt from its MFT record, keeping its name and dates) or <em>Carved</em> (recovered by
+  out of a filesystem, with names and dates), <em>Recovered</em> (a deleted file
+  rebuilt from the record that still named it, an NTFS MFT record or a FAT32 or
+  exFAT directory entry, with its real name) or <em>Carved</em> (recovered by
   signature from unallocated space, no name or date).</li>
-  <li>Below it, each E01 with its <em>walked</em> / <em>carved</em> / <em>recovered</em> counts and a
+  <li>Below it, each E01 with its <em>walked</em> / <em>carved</em> counts and a
   <strong>Carve for deleted media</strong> / <strong>Carve again</strong> button
   &mdash; see &sect;16.</li>
 </ul>
@@ -776,15 +777,48 @@ the command line (<code>gleapp process --force</code>).</p>
 <h3>Carving an E01 for deleted media</h3>
 <p>An E01 acquisition is <strong>walked</strong> &mdash; its filesystems are read
 file by file, so every file keeps the name, path and dates the filesystem
-recorded. <strong>Carving</strong> is the separate pass that scans the space no
-volume claims for image and video signatures, recovering files the filesystem no
-longer lists (deleted, or in a volume that could not be read). A carved file has
-<strong>no name, path or date of its own</strong> &mdash; it is filed under the
-byte offset it was found at, and its date columns are blank.</p>
+recorded. The <strong>deleted-media</strong> pass then recovers what was
+deleted, in two steps:</p>
 <ul>
-  <li><strong>At ingest</strong> &mdash; tick <em>Carve E01 free space for
-    deleted media</em> on the launcher. The walk runs first, then the carve,
-    then everything is processed together.</li>
+  <li><strong>From deleted records</strong> (NTFS, FAT32 and exFAT): a deleted
+    file whose record still names it is recovered with its <strong>real
+    name</strong>.
+    <ul>
+      <li>On <strong>NTFS</strong> the record is the MFT entry, and the file keeps
+        its dates. This is the only way to reach a file whose data was
+        <em>resident</em>, small enough to live inside the record, which a carve
+        can never see because it never occupied a cluster.</li>
+      <li>On <strong>FAT32</strong> and <strong>exFAT</strong> the record is the
+        deleted directory entry, which keeps the name, the first cluster and the
+        size. <strong>FAT32</strong> zeroes the cluster chain on delete, so a file
+        longer than one cluster is read on the assumption that it lay in one run;
+        the delete also overwrites the first character of a short (8.3) name,
+        which is shown as <code>_</code>, while a long name is rebuilt in full.
+        <strong>exFAT</strong> keeps what it needs: a file written in one run says
+        so in its entry and is read exactly as recorded, and a fragmented file is
+        followed along the chain it kept; one whose chain was cleared is refused
+        rather than read on a guess.</li>
+      <li>FAT32 and exFAT store a wall-clock time with no zone, so no date is set
+        on the file and the date columns stay blank. The times are kept as
+        recorded, and the HTML report shows them when <em>Recorded (as stored, no
+        zone)</em> is ticked in the Export dialog.</li>
+      <li>On all three, a file is recovered only while its clusters are still
+        free, and refused once a later file has taken one, so overwritten bytes
+        are never presented as the file.</li>
+    </ul></li>
+  <li><strong>By carving</strong>: the space no volume claims is scanned for image
+    and video signatures, recovering files no surviving record names (deleted, or
+    in a volume that could not be read). A carved file has <strong>no name, path
+    or date of its own</strong>: it is filed under the byte offset it was
+    found at, and its date columns are blank.</li>
+</ul>
+<p>The deleted-record pass runs first, so a deleted file comes back with its name
+rather than as a nameless carved twin.</p>
+<p>To carve:</p>
+<ul>
+  <li><strong>At ingest</strong> &mdash; tick <em>Recover deleted media from an
+    E01 (deleted records and carving)</em> on the launcher. The walk runs first,
+    then the recovery, then everything is processed together.</li>
   <li><strong>Later</strong> &mdash; the sidebar's <strong>Source</strong>
     section has a <strong>Carve for deleted media</strong> button for each E01
     (it reads <strong>Carve again</strong> once a source has been carved;
@@ -795,8 +829,9 @@ byte offset it was found at, and its date columns are blank.</p>
 </ul>
 <p>Carving reads the whole free area, so on a large drive it takes a while and
 most of what it returns on a used disk is application assets rather than user
-media. The Source panel shows the split: <em>N walked &middot; M carved</em>,
-and the sidebar's <strong>How recovered</strong> filter (&sect;8) narrows the
+media. The Source panel shows the split: <em>N walked &middot; M carved
+&middot; K recovered</em> (recovered being the files brought back from deleted
+records), and the sidebar's <strong>How recovered</strong> filter (&sect;8) narrows the
 gallery to just the walked or just the carved rows.</p>
 
 <h2 id="keys">17. Keyboard shortcuts</h2>

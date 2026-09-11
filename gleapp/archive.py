@@ -1553,11 +1553,13 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
 
     A file is refused once a later file has taken a cluster it needs, so
     overwritten bytes are never presented as the file. FAT32 zeroes the cluster
-    chain on delete and exFAT keeps one only for a fragmented file, so a
-    multi-cluster recovery there assumes the file lay in one contiguous run,
-    which qnxprobe checks is still free before reading. NTFS times are real
-    instants (FILETIME is UTC based); FAT and exFAT store a wall clock with no
-    zone, carried as text and never turned into an instant here.
+    chain on delete, so a multi-cluster FAT32 recovery assumes the file lay in
+    one run, which qnxprobe checks is still free before reading. exFAT needs no
+    such assumption: a file written in one run says so in its entry, and a
+    fragmented one is followed along the chain it kept, or refused if that chain
+    was cleared. NTFS times are real instants (FILETIME is UTC based); FAT and
+    exFAT store a wall clock with no zone, carried as text and never turned into
+    an instant here.
 
     Returns (rows added, the set of image byte offsets recovered), the second so
     a carve run alongside can skip the nameless twin of a file recovered here
