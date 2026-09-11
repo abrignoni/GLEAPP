@@ -309,9 +309,13 @@ Import into **this case** (sidebar **Hash sets → Import hash set…**, or
 `gleapp hashset --global FILE`). Formats auto-detected:
 
 * **Project VIC JSON** – objects with `MD5` / `SHA1` / `SHA256` and optional `Category`.
-* **CAID / other JSON** – same idea; `PhotoDNA`/`PDNA`/`PHash` → `phash` entries.
-* **CSV / text** – `hash` per line, or `hash,category` per line. Algorithm inferred
-  from hash length (32→md5, 40→sha1, 64→sha256).
+* **CAID / other JSON** – same idea; a `PHash` field becomes a `phash` entry and a
+  `PhotoDNA`/`PDNA` field a `photodna` entry. **PhotoDNA is stored, never matched**
+  (see below).
+* **CSV / text** – the first field of each line, taken as a hash at 32, 40 or 64 hex
+  characters (32→md5, 40→sha1, 64→sha256), with an optional `,category` after it. No
+  other column is read, so a delimited list's PhotoDNA or pHash column does not come
+  in this way; use the JSON form for those.
 * **SQLite database** – any table/view with `md5` / `sha1` / `sha256` columns.
   For the **NSRL RDS**: import the yearly full `.db` directly; a quarterly
   `_delta.sql` merges onto the previous full `.db` before importing (the merge
@@ -324,6 +328,30 @@ Import into **this case** (sidebar **Hash sets → Import hash set…**, or
 (NSRL etc.) — a hit auto-categorizes an uncategorized file **Non-pertinent** and
 is hidden by the sidebar's **Hide known-NSRL**. **Re-check known hashes** in the
 gallery re-runs matching without a full reprocess.
+
+### PhotoDNA is stored, not matched
+
+A Project VIC or CAID list often carries a PhotoDNA value beside the cryptographic
+hashes. PhotoDNA is a 144-byte robust hash and is not the 64-bit perceptual hash
+GLEAPP computes: the two cannot be compared, and comparing two PhotoDNA values needs
+a licensed PhotoDNA implementation, which GLEAPP does not ship.
+
+Those entries are kept under their own `photodna` algo so a set's total says what the
+list held, and the matching pass reads `phash` entries only, so nothing tries to
+compare them. **A PhotoDNA entry can never flag a file.** The count is stated where
+the set is: after a `gleapp hashset` import and in `gleapp hashset --list`, on the
+set's row in the sidebar, in the case audit log, and as the *PhotoDNA (not matched)*
+column of the **Known Hash Sets** artifact in the LAVA export. Read a set's entry
+count against that column: the hashes a list could match against is its entry count
+minus its PhotoDNA count.
+
+A set imported before this separation existed holds those values labelled `phash`.
+They were inert either way, since a PhotoDNA value never matched a perceptual hash,
+so this only affects the count. To relabel a **case** set, remove it and import the
+list again: a case import adds to a set of the same name rather than replacing it,
+so importing over the top leaves the old `phash` rows in place (measured). A
+**global** set of the same name is replaced on import, so re-importing is enough
+there.
 
 ---
 
@@ -496,8 +524,9 @@ ingest → hash → metadata → thumbnails/keyframes → visual screen
 * **Better face/scene detection** – replace the functions in `detect.py` with
   another model; the pipeline and UI already carry `faces` / `skin_ratio`
   columns and filters.
-* **PhotoDNA / other robust hashes** – add an `algo` to `hashset_entries` and a
-  branch in `hashdb.match_file`.
+* **Matching PhotoDNA / other robust hashes** – `photodna` entries are already
+  imported and stored; matching them needs a licensed PhotoDNA implementation plus a
+  branch in `hashdb.match_file` that compares with it instead of `hashing.hamming`.
 * **New report formats** – add a function to `report.py` and wire it into
   `cli.cmd_report` / the `/api/report` route.
 

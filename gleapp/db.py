@@ -16,6 +16,25 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 14
 
+# Perceptual / robust hash algorithms that can appear in ``hashset_entries.algo``.
+#
+# ``phash`` is GLEAPP's own perceptual hash (imagehash's 64-bit pHash, 16 hex
+# characters) and is the only one ``hashdb.match_file`` Hamming-compares.
+#
+# ``photodna`` is Microsoft's PhotoDNA, a 144-byte robust hash that Project VIC
+# and CAID distributions carry alongside the cryptographic hashes. It is not a
+# pHash and cannot be compared with one: comparing two PhotoDNA values needs a
+# licensed PhotoDNA implementation, which this project does not ship. Entries
+# are stored under their own algo so the count stays honest about what a list
+# held, and so nothing tries to match them.
+PHASH_ALGO = "phash"
+PHOTODNA_ALGO = "photodna"
+
+# Values are folded to lower case so lookups can be case-insensitive. PhotoDNA
+# is distributed base64-encoded as often as hex, and base64 is case-sensitive,
+# so those are stored exactly as the list wrote them.
+_CASE_SENSITIVE_ALGOS = (PHOTODNA_ALGO,)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -123,6 +142,7 @@ CREATE TABLE IF NOT EXISTS hashsets (
 CREATE TABLE IF NOT EXISTS hashset_entries (
     hashset_id INTEGER NOT NULL REFERENCES hashsets(id) ON DELETE CASCADE,
     algo       TEXT NOT NULL,     -- 'md5' | 'sha1' | 'sha256' | 'phash'
+                                  -- | 'photodna' (stored, never matched)
     value      TEXT NOT NULL,
     category   INTEGER,
     PRIMARY KEY (hashset_id, algo, value)
@@ -516,10 +536,12 @@ class CaseDB:
     def add_hashset_entries(self, hashset_id: int, rows: Iterable[tuple[str, str, int | None]]) -> int:
         n = 0
         for algo, value, category in rows:
+            value = (value.strip() if algo in _CASE_SENSITIVE_ALGOS
+                     else value.lower().strip())
             self.conn.execute(
                 "INSERT OR IGNORE INTO hashset_entries(hashset_id, algo, value, category) "
                 "VALUES(?,?,?,?)",
-                (hashset_id, algo, value.lower().strip(), category),
+                (hashset_id, algo, value, category),
             )
             n += 1
         self.conn.execute(
@@ -543,8 +565,12 @@ class CaseDB:
         flags."""
         return self.conn.execute(
             "SELECT hs.id, hs.name, hs.kind, hs.source, hs.count, hs.imported_at, "
-            "  (SELECT COUNT(*) FROM files f WHERE f.hashset_hit = hs.name) AS hits "
-            "FROM hashsets hs ORDER BY hs.imported_at DESC"
+            "  (SELECT COUNT(*) FROM files f WHERE f.hashset_hit = hs.name) AS hits, "
+            # counted separately because these are stored and never matched, so
+            # folding them into "count" overstates what the set can flag
+            "  (SELECT COUNT(*) FROM hashset_entries e WHERE e.hashset_id = hs.id "
+            "     AND e.algo = ?) AS photodna "
+            "FROM hashsets hs ORDER BY hs.imported_at DESC", (PHOTODNA_ALGO,)
         ).fetchall()
 
     def delete_hashset(self, hashset_id: int) -> str | None:

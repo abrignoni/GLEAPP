@@ -24,10 +24,11 @@ const state = {
   tz: "UTC",                      // display timezone for epoch timestamps (not EXIF)
 };
 
-function toast(msg) {
+function toast(msg, ms) {
   const t = $("#toast");
   t.textContent = msg; t.style.display = "block";
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = "none", 1800);
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.style.display = "none", ms || 1800);
 }
 const fmtDur = s => {
   if (!s && s !== 0) return "";
@@ -2044,6 +2045,16 @@ $("#btnRehash").onclick = async () => {
 };
 
 /* ---------- import a hash set (CyberTip MD5s, CAID, CSV, VIC JSON) ---------- */
+/* PhotoDNA entries sit in a set's total but can never flag a file: comparing
+   them needs a licensed PhotoDNA implementation, which GLEAPP does not ship.
+   Say so next to the count rather than letting the total read as coverage. */
+const PDNA_WHY = "PhotoDNA values are stored but never matched: comparing PhotoDNA "
+  + "needs a licensed PhotoDNA implementation, which GLEAPP does not ship.";
+function pdnaBadge(n) {
+  n = +n || 0;
+  return n ? ` <span class="muted" title="${esc(PDNA_WHY)}">· ${n.toLocaleString()} PhotoDNA, not matched</span>` : "";
+}
+
 function renderCaseSets(sets) {
   sets = sets || [];
   const el = $("#caseSets");
@@ -2053,6 +2064,7 @@ function renderCaseSets(sets) {
       `<span title="${esc(s.source || "")}">${s.kind === "known" ? "<b>⚑</b> " : "· "}` +
       `${esc(s.name)}</span>` +
       `<span class="muted">${(s.count || 0).toLocaleString()} · ${(s.hits || 0).toLocaleString()} hit${s.hits === 1 ? "" : "s"}</span>` +
+      pdnaBadge(s.photodna) +
       `<span class="x" title="Remove this set and clear its flags">✕</span></div>`).join("")
       || `<span class="muted">No hash set imported yet.</span>`;
     el.querySelectorAll(".cs .x").forEach(x => x.onclick = async () => {
@@ -2123,7 +2135,11 @@ $("#hiGo").onclick = async () => {
   $("#hiGo").disabled = false;
   if (r.error) return toast(r.message || "Import failed");
   $("#hashImportDlg").style.display = "none";
-  toast(`Imported ${r.entries.toLocaleString()} hashes as “${r.name}” — flagging files…`);
+  toast(`Imported ${r.entries.toLocaleString()} hashes as “${r.name}” — flagging files…`
+    + (r.photodna_note ? `. ${r.photodna_note}` : ""),
+    r.photodna_note ? 9000 : 0);
+  // a toast goes away, so the same fact also sits on the set's own row
+  // (pdnaBadge), in the case audit log, and in the LAVA export's Known Hash Sets
   trackJob("#rehashInfo", "#taskProg", "Flagging files", async (ok, j) => {
     if (!ok) return;
     const hits = j.stats?.hashset_hits ?? 0;
@@ -2152,6 +2168,7 @@ function renderRefStore(sets, total) {
         `<div class="cs" data-id="${s.id}">` +
         `<span style="flex:1" title="${esc(s.source || "")}">${esc(s.name)}</span>` +
         `<span class="muted">${(s.count || 0).toLocaleString()}</span>` +
+        pdnaBadge(s.photodna) +
         `<span class="x" title="Remove from the shared store">✕</span></div>`).join("")
     : `<span class="muted">Nothing imported yet.</span>`;
   list.querySelectorAll(".cs .x").forEach(x => x.onclick = async () => {
