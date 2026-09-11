@@ -2890,8 +2890,11 @@ async function openMapView() {
   const feats = (d.files || []).filter(x => x.gps_lat != null).map(x => ({
     type: "Feature", geometry: { type: "Point", coordinates: [x.gps_lon, x.gps_lat] },
     properties: { id: x.id, thumb: x.thumb || "", name: x.orig_name || x.rel_path || "" } }));
+  // The points open a thumbnail and a Details button, and the only cue on the map
+  // itself was the cursor changing over one, so the header says so.
   $("#mapViewInfo").textContent = `${feats.length.toLocaleString()} geolocated file(s) in the current filter`
-    + (d.total > feats.length ? ` (showing the first ${feats.length.toLocaleString()} of ${d.total.toLocaleString()})` : "");
+    + (d.total > feats.length ? ` (showing the first ${feats.length.toLocaleString()} of ${d.total.toLocaleString()})` : "")
+    + (feats.length ? " · click a point for its thumbnail and details" : "");
   $("#mapsDlg").style.display = "none";
   $("#mapView").style.display = "block";
   if (viewMap) { viewMap.remove(); viewMap = null; }
