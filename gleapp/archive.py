@@ -1541,19 +1541,27 @@ def stage_source(case, name: str, *, progress=None) -> int:
 
 
 def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
-    """Recover deleted files from an acquisition's NTFS volumes, from the MFT.
+    """Recover deleted files from an acquisition's NTFS, FAT32 and exFAT volumes.
 
     A walk lists what a filesystem still holds; a carve reads bytes no file
     claims; this reads the records of files that were deleted while the record
-    still names them. It reaches a file whose data was **resident**, small
-    enough to live inside the MFT record, which a carve cannot see because it
-    never occupied a cluster. A non-resident file is recovered by its real name
-    and dates while its clusters are still free, and refused once a later file
-    has taken one, so overwritten bytes are never presented as the file.
+    still named them. On NTFS it reaches a file whose data was **resident**,
+    small enough to live inside the MFT record, which a carve cannot see because
+    it never occupied a cluster. On FAT32 and exFAT it reads the deleted
+    directory entry, which keeps the name, the first cluster and the size, so a
+    file whose clusters are still free is recovered by its real name.
 
-    Only NTFS carries this today. Returns (rows added, the set of image byte
-    offsets recovered), the second so a carve run alongside can skip the
-    nameless twin of a non-resident file recovered here with its name.
+    A file is refused once a later file has taken a cluster it needs, so
+    overwritten bytes are never presented as the file. FAT32 zeroes the cluster
+    chain on delete and exFAT keeps one only for a fragmented file, so a
+    multi-cluster recovery there assumes the file lay in one contiguous run,
+    which qnxprobe checks is still free before reading. NTFS times are real
+    instants (FILETIME is UTC based); FAT and exFAT store a wall clock with no
+    zone, carried as text and never turned into an instant here.
+
+    Returns (rows added, the set of image byte offsets recovered), the second so
+    a carve run alongside can skip the nameless twin of a file recovered here
+    with its name.
 
     Recovered files are always copied into the case: a deleted file is not one
     contiguous run the way a carved hit is (a resident one is not on the disk at
@@ -1573,8 +1581,8 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     img = ewfprobe.open_ewf(Path(rec["path"]))
     try:
         for base, size, fskind, _label in _volumes(img):
-            if fskind != "ntfs":
-                continue                             # only NTFS records deleted files this way
+            if fskind not in ("ntfs", "fat32", "exfat"):
+                continue                             # only these record deleted files by name
             walker = qnxprobe.walker_for(fskind, img, base, size)
             if walker is None:
                 continue
@@ -1607,7 +1615,10 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                 if max_bytes and e.size > max_bytes:
                     tally.skipped_size += 1
                     continue
-                dest = _staged_path(staged_dir, slug, f"{e.record}_{e.name}")
+                # NTFS records deleted files by MFT record number; FAT and exFAT
+                # by the first cluster of the deleted directory entry.
+                ident = e.record if fskind == "ntfs" else e.first_cluster
+                dest = _staged_path(staged_dir, slug, f"{ident}_{e.name}")
                 try:
                     _write_stream(_DeletedReader(walker, e), dest)
                 except (qnxprobe.NtfsUnreadable, OSError):
@@ -1615,20 +1626,31 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                         dest.unlink()
                     tally.failed += 1
                     continue
-                if e.modified:
-                    with contextlib.suppress(OSError):
-                        os.utime(dest, (e.accessed or e.modified, e.modified))
+                # NTFS times are real instants; FAT and exFAT store a zone-less
+                # wall clock, so those are kept as text and no instant is set.
+                if fskind == "ntfs":
+                    if e.modified:
+                        with contextlib.suppress(OSError):
+                            os.utime(dest, (e.accessed or e.modified, e.modified))
+                    mtime, ctime, recorded = e.modified or None, e.created or None, None
+                else:
+                    mtime = ctime = None
+                    recorded = json.dumps(e.times) if e.times else None
                 # the first data cluster's image offset, so a carve alongside can
-                # skip the nameless twin of this file. _data is the deleted entry's
-                # own $DATA attribute, the field read_deleted() reads it from.
-                data_attr = e._data                  # pylint: disable=protected-access
-                if not e.resident and data_attr and data_attr.runs:
-                    first = next((lcn for lcn, _c in data_attr.runs if lcn is not None), None)
-                    if first is not None:
-                        recovered_offsets.add(base + first * walker.cluster)
+                # skip the nameless twin of this file. An NTFS resident file has
+                # no cluster; every FAT and exFAT file is non-resident.
+                if fskind == "ntfs":
+                    data_attr = e._data              # pylint: disable=protected-access
+                    if not e.resident and data_attr and data_attr.runs:
+                        first = next((lcn for lcn, _c in data_attr.runs if lcn is not None), None)
+                        if first is not None:
+                            recovered_offsets.add(base + first * walker.cluster)
+                elif e.first_cluster and e.first_cluster >= 2:
+                    recovered_offsets.add(walker._cluster_off(e.first_cluster))  # pylint: disable=protected-access
                 _register(case, src_obj, dest, e.name, e.name, kind, ext, e.size,
-                          e.modified or None, e.created or None, None, None,
-                          origin="deleted", volume_base=int(base))
+                          mtime, ctime, None, None,
+                          origin="deleted", volume_base=int(base),
+                          recorded_times=recorded)
                 tally.registered += 1
                 n += 1
                 if n % 100 == 0:
@@ -1639,8 +1661,8 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
         img.close()
     case.db.commit()
     case.db.audit_log(case.examiner, "recover-deleted",
-                      f"{name}: {tally.registered} deleted file(s) recovered from the MFT "
-                      f"({tally.failed} unreadable, {tally.skipped_size} over the size limit)")
+                      f"{name}: {tally.registered} deleted file(s) recovered from deleted "
+                      f"records ({tally.failed} unreadable, {tally.skipped_size} over the size limit)")
     if progress:
         progress(n)
     return tally.registered, recovered_offsets
@@ -1698,8 +1720,8 @@ def carve_source(case, name: str, *, unallocated_only: bool = False,
     already = {int(r["member_offset"]) for r in case.db.iter_files(
         "source = ? AND member_offset IS NOT NULL", (name,))}
     if extra_skip:
-        # offsets already recovered by name from the MFT, so the carve does not
-        # add a nameless twin of a deleted file we recovered with its real name
+        # offsets already recovered by name from a deleted record, so the carve
+        # does not add a nameless twin of a deleted file we recovered by name
         already |= {int(o) for o in extra_skip}
     before_rows = len(case.db.iter_files("source = ?", (name,)))
     n = _ingest_ewf(case, src_obj, Path(rec["path"]), count=before_rows,

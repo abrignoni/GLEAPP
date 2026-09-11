@@ -110,18 +110,6 @@ def test_extra_skip_drops_a_hit_the_carver_would_otherwise_report(tmp_path):
     assert after == before
 
 
-def test_recover_deleted_is_quiet_on_a_source_with_no_ntfs(tmp_path):
-    """A FAT acquisition has no MFT, so recovery finds nothing and does not raise."""
-    files = [("A", "JPG", b"\xff\xd8\xff\xe0" + b"\x00" * 400, (2023, 1, 1, 0, 0, 0))]
-    (tmp_path / "ev3").mkdir(exist_ok=True)
-    image = Path(write_ewf(tmp_path / "ev3", "fat", build_fat32(files))[0])
-    case = open_case(tmp_path / "c3", create=True, examiner="t")
-    src, _ = parse_source_spec(image)
-    ingest_sources(case, src)
-    added, offsets = archive.recover_deleted(case, src[0].name)
-    assert added == 0 and offsets == set()
-
-
 def test_source_status_counts_recovered_rows(tmp_path):
     case, name = _case(tmp_path, _ntfs_e01(tmp_path), stage=True)
     archive.recover_deleted(case, name)

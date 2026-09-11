@@ -234,9 +234,9 @@ def cmd_source(args: argparse.Namespace) -> int:
                                      unallocated_only=args.unallocated_only,
                                      extra_skip=offsets, progress=carve_progress)
             print()
-            _p(f"Recovered {recovered:,} deleted file(s) from the MFT (with their name "
-               f"and dates, resident files included) and {n:,} by signature carving "
-               f"(no name or date) from {args.name}; run 'process' to hash and "
+            _p(f"Recovered {recovered:,} deleted file(s) from deleted records (with their "
+               f"name, NTFS/FAT32/exFAT, resident NTFS files included) and {n:,} by signature "
+               f"carving (no name or date) from {args.name}; run 'process' to hash and "
                f"thumbnail them.")
             return 0
         n = archive.unstage_source(case, args.name)

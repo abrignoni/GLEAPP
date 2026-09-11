@@ -2693,10 +2693,11 @@ function renderSourcePanel(list) {
       + ` no file claims. A carved file has no name, path or timestamp of its own;`
       + ` the name is the offset it was found at, and the date columns are empty.">`
       + `· ${cut.toLocaleString()} carved</span>`);
-    if (rec) how.push(`<span class="muted" title="Recovered from an NTFS MFT record`
-      + ` that was deleted but still named the file, so it keeps its name and the`
-      + ` dates the filesystem recorded. Reaches a file whose data was resident,`
-      + ` which carving cannot.">· ${rec.toLocaleString()} recovered</span>`);
+    if (rec) how.push(`<span class="muted" title="Recovered from a deleted record that`
+      + ` still named the file (NTFS MFT, or a FAT32 or exFAT directory entry), so it`
+      + ` keeps its name. NTFS keeps the dates as recorded; FAT and exFAT store a`
+      + ` zone-less wall clock, kept as text. Reaches a resident NTFS file, which`
+      + ` carving cannot.">· ${rec.toLocaleString()} recovered</span>`);
     const origin = how.length ? " " + how.join(" ") : "";
     // Which volumes the acquisition held and what each was read as, and above
     // all the ones that could not be read: an examiner has to be able to see

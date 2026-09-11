@@ -1424,10 +1424,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         def _job() -> None:
             j = state["job"]
             try:
-                # First recover deleted files from the MFT, by name and date and
-                # reaching resident files a carve cannot, then carve the free
-                # space by signature for whatever no surviving record names,
-                # skipping the offsets already recovered here.
+                # First recover deleted files from deleted records (NTFS MFT,
+                # FAT32 and exFAT directory entries), by name and reaching
+                # resident NTFS files a carve cannot, then carve the free space
+                # by signature for whatever no surviving record names, skipping
+                # the offsets already recovered here.
                 recovered, offsets = archive.recover_deleted(
                     case, name,
                     progress=lambda k: j.update(done=k, message=f"Recovering deleted files… {k:,}"))
@@ -1443,7 +1444,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                             stage_cb=lambda m: j.update(message=m))
                 parts = []
                 if recovered:
-                    parts.append(f"{recovered:,} recovered from the MFT")
+                    parts.append(f"{recovered:,} recovered from deleted records")
                 if added:
                     parts.append(f"{added:,} carved")
                 j.update(running=False, stage="done",
