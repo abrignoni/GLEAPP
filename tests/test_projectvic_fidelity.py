@@ -9,6 +9,10 @@ paths arrives as several Media entries pointing at one file: 34,731 entries over
 
 from __future__ import annotations
 
+# a pytest fixture and the test argument that receives it share a name, the same
+# way tests/test_lava.py does
+# pylint: disable=redefined-outer-name
+
 import json
 from pathlib import Path
 
@@ -45,6 +49,11 @@ def _entry(media_id: int, stored: str, *, device_path: str, name: str | None = N
     }
     e.update(over)
     return e
+
+
+def _process(case):
+    from gleapp.pipeline import process
+    process(case, workers=2, keyframes=0, screen=False)
 
 
 @pytest.fixture()
@@ -192,3 +201,114 @@ def test_isprecategorized_does_not_decide_the_category(tmp_path, case):
     by_id = {r["media_id"]: r for r in case.db.iter_files()}
     assert not by_id[1]["category"], "true with no Category stays uncategorised"
     assert by_id[2]["category"] == 4, "false with a Category keeps the verdict"
+
+
+# --------------------------------------------------------------------------
+# A. the Exif rows a VIC entry carries
+
+def _exif(**rows) -> list[dict]:
+    return [{"PropertyName": k.replace("_", " "), "PropertyValue": v}
+            for k, v in rows.items()]
+
+
+def test_a_signed_decimal_pair_is_preferred_and_keeps_its_signs(tmp_path, case):
+    """One exporter writes both a signed ``Lat/Lon`` pair and a DMS pair, and the
+    decimal one needs no reference and covered more entries."""
+    media = [_entry(1, "a.png", device_path="/DCIM/a.png", Exifs=_exif(
+        **{"Lat/Lon": "41.883394 / -87.628990",
+           "Latitude": "41, 53, 0.21", "Latitude Reference": "N",
+           "Longitude": "87, 37, 44.36", "Longitude Reference": "W"}))]
+    vic = _write_vic(tmp_path, media, files={"a.png": b"a"})
+    projectvic.import_vic(case, vic)
+    row = list(case.db.iter_files())[0]
+    assert round(row["gps_lat"], 6) == 41.883394
+    assert round(row["gps_lon"], 6) == -87.628990
+
+
+@pytest.mark.parametrize("lat_ref, lon_ref", [("N", "W"), ("North", "West")])
+def test_degrees_minutes_seconds_with_either_reference_spelling(
+        tmp_path, case, lat_ref, lon_ref):
+    """One exporter spells the reference in full, the other as a single letter."""
+    media = [_entry(1, "a.png", device_path="/DCIM/a.png", Exifs=_exif(
+        **{"Latitude": '41 deg 53\'0.00"', "Latitude Reference": lat_ref,
+           "Longitude": '87 deg 37\'44.00"', "Longitude Reference": lon_ref}))]
+    vic = _write_vic(tmp_path, media, files={"a.png": b"a"})
+    projectvic.import_vic(case, vic)
+    row = list(case.db.iter_files())[0]
+    assert 41.88 < row["gps_lat"] < 41.89, "north is positive"
+    assert -87.63 < row["gps_lon"] < -87.62, "west is negative"
+
+
+@pytest.mark.parametrize("bad_ref", ["0", "", "9", "up"])
+def test_an_unrecognised_reference_yields_no_coordinates(tmp_path, case, bad_ref):
+    """Fail closed. 8 of the 44 reference rows in one measured export were not a
+    compass direction, and defaulting those to north and east would put the entry
+    in the wrong hemisphere while looking right on a map."""
+    media = [_entry(1, "a.png", device_path="/DCIM/a.png", Exifs=_exif(
+        **{"Latitude": "41, 53, 0.21", "Latitude Reference": bad_ref,
+           "Longitude": "87, 37, 44.36", "Longitude Reference": bad_ref}))]
+    vic = _write_vic(tmp_path, media, files={"a.png": b"a"})
+    projectvic.import_vic(case, vic)
+    row = list(case.db.iter_files())[0]
+    assert row["gps_lat"] is None and row["gps_lon"] is None
+
+
+def test_capture_time_keeps_a_recorded_offset_and_invents_none(tmp_path, case):
+    """The same exporter writes both spellings. Dropping the offset would turn a
+    known instant into a bare wall clock; adding one where there is none would
+    invent an instant."""
+    media = [
+        _entry(1, "a.png", device_path="/DCIM/a.png",
+               Exifs=_exif(**{"Capture Time": "3/9/2024 9:07:05 PM(UTC-5)"})),
+        _entry(2, "b.png", device_path="/DCIM/b.png", md5="1" * 32,
+               Exifs=_exif(**{"Capture Time": "3/9/2024 9:07:05 PM"})),
+    ]
+    vic = _write_vic(tmp_path, media, files={"a.png": b"a", "b.png": b"b"})
+    projectvic.import_vic(case, vic)
+    by_id = {r["media_id"]: r for r in case.db.iter_files()}
+    assert by_id[1]["created_dt"] == "2024-03-09T21:07:05-05:00"
+    assert by_id[2]["created_dt"] == "2024-03-09T21:07:05"
+
+
+def test_make_model_and_pixel_dimensions_are_carried(tmp_path, case):
+    media = [_entry(1, "a.png", device_path="/DCIM/a.png", Exifs=_exif(
+        Make="Google", Model="Pixel 6 Pro",
+        PixelXDimension="480", PixelYDimension="640"))]
+    vic = _write_vic(tmp_path, media, files={"a.png": b"a"})
+    projectvic.import_vic(case, vic)
+    row = list(case.db.iter_files())[0]
+    assert row["camera"] == "Google Pixel 6 Pro"
+    assert (row["width"], row["height"]) == (480, 640)
+
+
+def test_an_entry_with_no_exif_rows_gains_nothing(tmp_path, case):
+    """The control: an empty array must not produce a row full of guesses."""
+    media = [_entry(1, "a.png", device_path="/DCIM/a.png", Exifs=[])]
+    vic = _write_vic(tmp_path, media, files={"a.png": b"a"})
+    projectvic.import_vic(case, vic)
+    row = list(case.db.iter_files())[0]
+    assert row["gps_lat"] is None and row["camera"] is None
+    assert row["created_dt"] is None and row["width"] is None
+
+
+def test_processing_a_file_without_exif_keeps_the_imported_reading(tmp_path, case):
+    """The file is the primary source, so it must win where it has a value and must
+    not wipe the import where it has none.  Measured on one export: of 23 rows whose
+    coordinates came from the VIC entry, 5 are files that cannot be opened at all,
+    so the import is their only source."""
+    from PIL import Image
+
+    fdir = tmp_path / "VIC_Files"
+    fdir.mkdir()
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(fdir / "a.png")   # no EXIF at all
+    media = [_entry(1, "a.png", device_path="/DCIM/a.png", Exifs=_exif(
+        **{"Lat/Lon": "41.883394 / -87.628990", "Make": "Google",
+           "Capture Time": "3/9/2024 9:07:05 PM"}))]
+    vic = _write_vic(tmp_path, media, files={})
+    projectvic.import_vic(case, vic)
+    _process(case)
+    row = list(case.db.iter_files())[0]
+    assert round(row["gps_lat"], 6) == 41.883394
+    assert row["camera"] == "Google"
+    assert row["created_dt"] == "2024-03-09T21:07:05"
+    assert (row["width"], row["height"]) == (8, 8), "the file's own size wins"

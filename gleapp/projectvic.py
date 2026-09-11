@@ -77,6 +77,129 @@ def _parse_ts(v) -> float | None:
     return None
 
 
+# --------------------------------------------------------------------------
+# A VIC entry can carry the source tool's own Exif reading as an ``Exifs`` array of
+# {PropertyName, PropertyValue} rows. The vocabulary is the exporter's, not the
+# model's, and the two measured exports do not spell it the same way:
+#
+#   one wrote Latitude / Longitude as ``12 deg 34'56.78"`` with references spelled
+#   out in full ("North", "West"), plus Make, Model and Software;
+#   the other wrote a signed decimal pair in a single ``Lat/Lon`` row, *and* a
+#   comma-separated ``41, 53, 2.44`` Latitude with single-letter references, plus
+#   Capture Time and PixelXDimension / PixelYDimension.
+#
+# The file itself stays the primary source: the pipeline reads its EXIF next and
+# only writes values it actually found, so whatever is imported here fills gaps
+# rather than competing. The gaps that matter are the files the pipeline cannot
+# decode at all, which on one export was 593 of 14,656.
+_EXIF_REF_SIGN = {
+    "n": 1, "north": 1, "e": 1, "east": 1,
+    "s": -1, "south": -1, "w": -1, "west": -1,
+}
+_DMS = re.compile(r"(-?\d+(?:\.\d+)?)")
+_UTC_SUFFIX = re.compile(r"\(\s*UTC\s*([+-]?\d{1,2})(?::(\d{2}))?\s*\)\s*$", re.I)
+_CAPTURE_FORMATS = ("%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S", "%Y:%m:%d %H:%M:%S")
+
+
+def _dms_to_deg(value, ref) -> float | None:
+    """A degrees/minutes/seconds Exif row plus its reference, as signed degrees.
+
+    Returns None when the reference is not a compass direction. That matters: 8 of
+    the 44 reference rows in one measured export carried a value that is not a
+    compass letter at all, and defaulting those to north and east would place the
+    entry in the wrong hemisphere while looking perfectly plausible on a map.
+    """
+    sign = _EXIF_REF_SIGN.get(str(ref).strip().lower()) if ref is not None else None
+    if sign is None:
+        return None
+    parts = [float(x) for x in _DMS.findall(str(value))][:3]
+    if not parts:
+        return None
+    deg = parts[0] + (parts[1] / 60 if len(parts) > 1 else 0) + \
+          (parts[2] / 3600 if len(parts) > 2 else 0)
+    return sign * abs(deg)
+
+
+def _parse_capture_time(value) -> str | None:
+    """An Exif ``Capture Time`` row as an ISO 8601 string, or None.
+
+    Measured spellings: ``9/9/2024 9:99:99 PM`` and the same with a trailing
+    ``(UTC-5)``.  The offset is kept where the export gave one, because
+    ``created_dt`` is shown exactly as stored (see ``timeutil``) and discarding a
+    recorded offset would turn a known instant into a bare wall clock.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return None
+    tz = None
+    m = _UTC_SUFFIX.search(s)
+    if m:
+        hours, minutes = int(m.group(1)), int(m.group(2) or 0)
+        sign = -1 if hours < 0 else 1
+        tz = _dt.timezone(sign * _dt.timedelta(hours=abs(hours), minutes=minutes))
+        s = s[: m.start()].strip()
+    for fmt in _CAPTURE_FORMATS:
+        try:
+            d = _dt.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+        return (d.replace(tzinfo=tz) if tz else d).isoformat()
+    return None
+
+
+def _exif_fields(exifs) -> dict:
+    """The columns a VIC entry's ``Exifs`` rows can fill, omitting what they cannot.
+
+    Only the first row for a given property name is read; nothing is guessed.
+    """
+    if not exifs:
+        return {}
+    seen: dict[str, str] = {}
+    for e in exifs:
+        if not isinstance(e, dict):
+            continue
+        name = (e.get("PropertyName") or "").strip()
+        if name and name not in seen and e.get("PropertyValue") not in (None, ""):
+            seen[name] = str(e["PropertyValue"]).strip()
+
+    out: dict = {}
+    # A signed decimal pair in one row needs no reference and covered more entries
+    # than the degrees/minutes/seconds rows did, so it is preferred where present.
+    pair = seen.get("Lat/Lon")
+    if pair and "/" in pair:
+        try:
+            lat, lon = (float(x) for x in pair.split("/", 1))
+            out["gps_lat"], out["gps_lon"] = lat, lon
+        except ValueError:
+            pass
+    if "gps_lat" not in out and seen.get("Latitude") and seen.get("Longitude"):
+        lat = _dms_to_deg(seen["Latitude"], seen.get("Latitude Reference"))
+        lon = _dms_to_deg(seen["Longitude"], seen.get("Longitude Reference"))
+        if lat is not None and lon is not None:
+            out["gps_lat"], out["gps_lon"] = lat, lon
+
+    make, model = seen.get("Make"), seen.get("Model")
+    if make or model:
+        # the same join ``metadata.extract_image`` uses for a file's own EXIF
+        camera = " ".join(x for x in (make, model) if x).strip()
+        if camera:
+            out["camera"] = camera
+
+    captured = _parse_capture_time(seen.get("Capture Time"))
+    if captured:
+        out["created_dt"] = captured
+
+    for prop, col in (("PixelXDimension", "width"), ("PixelYDimension", "height")):
+        raw = seen.get(prop)
+        if raw:
+            try:
+                out[col] = int(float(raw))
+            except ValueError:
+                pass
+    return out
+
+
 @dataclass
 class VicRecord:
     media_id: int | None
@@ -97,6 +220,7 @@ class VicRecord:
     tags: object = None
     series: object = None
     comments: object = None
+    exif: dict = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------
@@ -172,6 +296,7 @@ def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None
                 tags=m.get("Tags"),
                 series=m.get("Series"),
                 comments=m.get("Comments"),
+                exif=_exif_fields(m.get("Exifs")),
             )
             # Deliberately not read: IsPrecategorized, TotalPrecategorized and
             # PrecategorizationSource. They do not agree with the entries beneath
@@ -287,6 +412,15 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
                 others.append(where)
         if others:
             fields["alt_paths"] = json.dumps(others)
+
+        # The source tool's own Exif reading, taking each value from the first entry
+        # of the group that carries it. These are the only fields here the pipeline
+        # can also derive from the file, and it wins where it can: it writes back
+        # only the values it actually found, and keeps an imported capture date when
+        # the file has none.
+        for rec in recs:
+            for col, value in rec.exif.items():
+                fields.setdefault(col, value)
 
         # A category recorded on any entry of the group is the group's category.
         # Reading it only off the first entry would drop a recorded verdict that
