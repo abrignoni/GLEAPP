@@ -33,7 +33,7 @@ FIELDS = (
     "phash, width, height, duration, gps_lat, gps_lon, camera, faces, "
     "skin_ratio, category, triage, reviewed, reviewed_by, reviewed_at, notes, "
     "hashset_hit, hashset_cat, hashset_kind, stack_id, vstack_id, cluster_id, thumb, error, "
-    "media_id, orig_name, orig_path, mime, vic_flags, alt_paths"
+    "media_id, orig_name, orig_path, mime, vic_flags, alt_paths, recorded_times"
 )
 
 # columns the details list-view may sort and filter on (must all be in FIELDS)
@@ -43,7 +43,7 @@ LIST_COLS = {
     "sha256", "phash", "width", "height", "duration", "camera", "gps_lat",
     "gps_lon", "faces", "skin_ratio", "category", "triage", "notes",
     "hashset_hit", "hashset_kind", "hashset_cat", "stack_id", "vstack_id",
-    "cluster_id", "media_id", "error", "reviewed",
+    "cluster_id", "media_id", "error", "reviewed", "recorded_times",
 }
 
 
