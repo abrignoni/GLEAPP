@@ -32,9 +32,9 @@
       "version": "0.1.0",
       "upstream": "https://github.com/abrignoni/mediacarve",
       "upstream_file": "mediacarve.py",
-      "commit": "8a18f3b6d8a2d546a4c951715b96f97fadb94c37",
-      "commit_date": "2026-09-08T18:27:35-04:00",
-      "sha256": "c03db2a0846e638daa8437e056cbae025307a8b4c68bdfbeac9944fd7fed057c",
+      "commit": "806894b9f09ca0403c2c35d317ac9b840ae425b6",
+      "commit_date": "2026-09-11T08:29:55-04:00",
+      "sha256": "70f5dd2f1d0359291eb5b972ac12023409c283d18f1c01db744ac6bd12b39507",
       "licence": "MIT",
       "licence_file": "gleapp/vendor/LICENSE-mediacarve",
       "note": "Copied verbatim. Fix upstream and re-vendor; edits here are reverted by the next sync."
