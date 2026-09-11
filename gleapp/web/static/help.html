@@ -328,12 +328,12 @@ export; code 0 exports as <code>null</code>.</p>
 <h2 id="filters">8. Filtering — every option</h2>
 <p>Filters combine with AND and apply as you change them. The top of the sidebar
 is always visible &mdash; <strong>Search</strong>, <strong>Category</strong>,
-<strong>Type</strong>, <strong>Source</strong>, <strong>How recovered</strong>
-&mdash; and below it is one
+<strong>Type</strong>, <strong>Source</strong> &mdash; and below it is one
 collapsible section per feature (Known hashes, Faces &amp; skin, Duplicates,
-Errors, Location); each section holds its filter controls <em>and</em> its
-buttons (import, re-check, screen, retry, re-scan). A section with an active
-filter shows a <strong>dot</strong> on its header &mdash; so you see what's
+Errors, Location, and &mdash; when they apply to the case &mdash; Carving and
+Archives); each section holds its filter controls <em>and</em> its buttons
+(import, re-check, screen, retry, re-scan, carve, expand). A section with an
+active filter shows a <strong>dot</strong> on its header &mdash; so you see what's
 applied even when it's collapsed &mdash; and each section remembers whether you
 left it open. The top also shows a <strong>filter count</strong> with
 <strong>Clear</strong>; the header stat line shows how many files match.</p>
@@ -346,7 +346,7 @@ known-hash name, error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work)
 and tags. So <code>dcim 2024-07</code> finds files whose path mentions DCIM and
 whose date is in July 2024.</p>
 
-<h3>Category / Type / Source / How recovered</h3>
+<h3>Category / Type / Source</h3>
 <ul>
   <li><strong>Category</strong> — <strong>Any</strong>, a specific category
   (presets and your own, hidden ones marked), or <strong>Uncategorized</strong>,
@@ -359,10 +359,24 @@ whose date is in July 2024.</p>
   image and video members found inside them are shown.</li>
   <li><strong>Source</strong> — restrict to one ingest source (folder name, or the
   Project VIC source).</li>
+</ul>
+
+<h3>Carving <em>(E01 acquisitions only)</em></h3>
+<ul>
   <li><strong>How recovered</strong> — <em>All</em>, <em>Walked</em> (files read
   out of a filesystem, with names and dates) or <em>Carved</em> (recovered by
-  signature from unallocated space, no name or date). Only shown when the case
-  holds an E01 acquisition &mdash; see &sect;16.</li>
+  signature from unallocated space, no name or date).</li>
+  <li>Below it, each E01 with its <em>walked</em> / <em>carved</em> counts and a
+  <strong>Carve for deleted media</strong> / <strong>Carve again</strong> button
+  &mdash; see &sect;16.</li>
+</ul>
+
+<h3>Archives <em>(when the case holds any <code>.zip</code> / <code>.7z</code> / <code>.tar</code> / <code>.gz</code>)</em></h3>
+<ul>
+  <li><strong>Extracted from an archive</strong> — only files that came out of a
+  container.</li>
+  <li>Below it, the archive count and the <strong>Expand archives</strong> /
+  <strong>Re-check archives</strong> button &mdash; see &sect;16.</li>
 </ul>
 
 <h3>Known hashes</h3>

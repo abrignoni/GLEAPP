@@ -72,6 +72,7 @@ function filterParams() {
   if ($("#fcat").value !== "any") p.set("category", $("#fcat").value);
   if ($("#fsrc").value) p.set("source", $("#fsrc").value);
   if ($("#forigin").value) p.set("origin", $("#forigin").value);
+  if ($("#finarch").checked) p.set("in_archive", "1");
   if ($("#fdup").value) p.set("hasdup", $("#fdup").value);
   if ($("#ffaces").checked) p.set("faces", "1");
   if ($("#fgps").checked) p.set("has_gps", "1");
@@ -1499,7 +1500,7 @@ document.addEventListener("keydown", e => {
 
 /* ---------- filter wiring ---------- */
 // #fsort has its own handler (it maps to state.sortCol/Dir), so it's not here
-["#fq", "#fkind", "#fcat", "#fsrc", "#forigin", "#fdup", "#ffaces", "#fgps",
+["#fq", "#fkind", "#fcat", "#fsrc", "#forigin", "#finarch", "#fdup", "#ffaces", "#fgps",
  "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
@@ -1512,6 +1513,8 @@ const SEC_ACTIVE = {
   dup:    () => !!$("#fdup").value,
   err:    () => $("#ferr").checked,
   loc:    () => $("#fgps").checked,
+  carve:  () => !!$("#forigin").value,
+  arch:   () => $("#finarch").checked,
 };
 function countActiveFilters() {
   let n = 0;
@@ -1520,7 +1523,7 @@ function countActiveFilters() {
     const v = $(s).value;
     if (v && v !== "any") n++;
   });
-  ["#fhit", "#fhidegood", "#ffaces", "#ferr", "#fgps"].forEach(s => { if ($(s).checked) n++; });
+  ["#fhit", "#fhidegood", "#ffaces", "#ferr", "#fgps", "#finarch"].forEach(s => { if ($(s).checked) n++; });
   if (+$("#fskin").value > 0) n++;
   if (state.vstack) n++;
   if (state.stack) n++;
@@ -1692,6 +1695,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fcat").value = "any";
   $("#fsrc").value = "";
   $("#forigin").value = "";
+  $("#finarch").checked = false;
   $("#fdup").value = "";
   $("#fhashset").value = "";
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
@@ -1913,10 +1917,11 @@ function updateKnownHash(kh) {
 
 /* ---------- nested archives (.zip / .tar / .gz inside a source) ---------- */
 function updateArchInfo(a) {
+  const sec = document.querySelector('.fsec[data-sec="arch"]');
   const el = $("#archInfo");
   if (!el) return;
-  if (!a || !a.total) { el.hidden = true; el.innerHTML = ""; return; }
-  el.hidden = false;
+  if (sec) sec.hidden = !(a && a.total);
+  if (!a || !a.total) { el.innerHTML = ""; return; }
   const pending = a.total - a.expanded;
   const label = pending > 0 ? "Expand archives" : "Re-check archives";
   el.innerHTML = `${a.total.toLocaleString()} archive${a.total === 1 ? "" : "s"}`
@@ -2668,10 +2673,6 @@ function renderSourcePanel(list) {
   const el = $("#srcInfo");
   if (!el) return;
   list = list || [];
-  // the "How recovered" filter only means something when an acquisition is in
-  // play, since only an E01 yields both walked and carved rows
-  const ow = $("#foriginWrap");
-  if (ow) ow.hidden = !list.some(s => s.format === "ewf");
   if (!list.length) { el.innerHTML = ""; return; }
   el.innerHTML = list.map(s => {
     const ok = s.status === "ok";
@@ -2720,14 +2721,9 @@ function renderSourcePanel(list) {
              : "Delete the copies and read from the archive on demand again. Refused unless the archive still holds every registered file."}">Drop copies</button>`
       : `<button class="btn sm" data-stage="${esc(s.name)}"${ok ? "" : " disabled"}
            title="Copy every registered file out of the archive into the case, so the case no longer needs it.">Copy into case</button>`;
-    // an E01 can be carved for deleted media after the walk — once, or again
-    const carveBtn = ewf
-      ? `<button class="btn sm" data-carve="${esc(s.name)}"${ok ? "" : " disabled"}
-           title="Scan the space no volume claims for deleted images and video. A carved file has no name, path or date of its own. Runs the whole free area${cut ? "; offsets already carved are skipped" : ""}.">${cut ? "Carve again" : "Carve for deleted media"}</button>`
-      : "";
     return `<div style="margin:3px 0"><b title="${esc(s.path)}">${esc(s.name)}</b>
       <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${origin}${state}
-      ${vols}<div style="margin-top:2px;display:flex;gap:6px;flex-wrap:wrap">${btn}${carveBtn}</div></div>`;
+      ${vols}<div style="margin-top:2px">${btn}</div></div>`;
   }).join("");
   const post = (url, body) => api(url, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -2749,13 +2745,35 @@ function renderSourcePanel(list) {
     toast(`${(r.removed || 0).toLocaleString()} copies removed; ${name} is read from the archive again`);
     try { showSourceStatus((await api("/api/context")).archive_sources); } catch (e) {}
   });
+}
+
+/* ---------- Carving section (E01 acquisitions only) ---------- */
+function renderCarveSection(list) {
+  const sec = document.querySelector('.fsec[data-sec="carve"]');
+  const ewf = (list || []).filter(s => s.format === "ewf");
+  if (sec) sec.hidden = !ewf.length;
+  const el = $("#carveList");
+  if (!el) return;
+  el.innerHTML = ewf.map(s => {
+    const ok = s.status === "ok";
+    const walked = s.walked || 0, cut = s.carved || 0;
+    return `<div style="margin:5px 0">
+      <b title="${esc(s.path)}">${esc(s.name)}</b>
+      <span class="muted">· ${walked.toLocaleString()} walked${cut ? ` · ${cut.toLocaleString()} carved` : ""}</span>
+      <div style="margin-top:2px"><button class="btn sm" data-carve="${esc(s.name)}"${ok ? "" : " disabled"}
+        title="Scan the space no volume claims for deleted images and video. A carved file has no name, path or date of its own. Runs the whole free area${cut ? "; offsets already carved are skipped" : ""}.">${cut ? "Carve again" : "Carve for deleted media"}</button></div>
+    </div>`;
+  }).join("");
   el.querySelectorAll("[data-carve]").forEach(b => b.onclick = async () => {
     const name = b.dataset.carve;
     if (!confirm(`Carve ${name} for deleted media?\n\n`
       + "This scans the whole of the space no volume claims for image and video "
       + "signatures, then processes what it finds. It can take a while on a large "
       + "acquisition. Carved files have no name, path or date of their own.")) return;
-    const r = await post("/api/source/carve", { name });
+    const r = await api("/api/source/carve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).catch(() => ({ error: true, message: "request failed" }));
     if (r.error) { toast(r.message || "Could not start carving"); return; }
     toast(`Carving ${name} — the bar at the bottom follows it`);
     liveTick = 0; liveJob();
@@ -2764,6 +2782,7 @@ function renderSourcePanel(list) {
 
 function showSourceStatus(list) {
   renderSourcePanel(list);
+  renderCarveSection(list);
   const bad = (list || []).filter(s => s.status !== "ok");
   let el = $("#srcBanner");
   if (!bad.length) { if (el) el.remove(); return; }

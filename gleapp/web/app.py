@@ -855,6 +855,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 eq("source", q["source"])
             if q.get("origin") in ("walk", "carve"):
                 eq("origin", q["origin"])
+            if q.get("in_archive") == "1":
+                where.append("container_id IS NOT NULL")
             if q.get("category") not in (None, "", "any"):
                 eq("category", int(q["category"]))
             if q.get("cluster"):

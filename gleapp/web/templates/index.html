@@ -360,14 +360,7 @@
         <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option><option value="archive">archive (container)</option></select></label>
       <label class="flabel">Source
         <select id="fsrc"><option value="">All</option></select></label>
-      <label class="flabel" id="foriginWrap" hidden title="An E01 acquisition holds both: files walked out of its filesystems (with names and dates) and files carved by signature from the space no volume claims (no name, path or date).">How recovered
-        <select id="forigin">
-          <option value="">All</option>
-          <option value="walk">Walked — named files</option>
-          <option value="carve">Carved — deleted / unallocated</option>
-        </select></label>
       <div id="srcInfo" class="fnote"></div>
-      <div id="archInfo" class="fnote" hidden></div>
     </div>
 
     <details class="fsec" data-sec="hash">
@@ -433,6 +426,27 @@
       <summary>Location <span class="fdot"></span></summary>
       <div class="fbody">
         <label class="fck"><input type="checkbox" id="fgps"> Has GPS</label>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="carve" hidden>
+      <summary>Carving <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="flabel" title="An E01 acquisition holds both: files walked out of its filesystems (with names and dates) and files carved by signature from the space no volume claims (no name, path or date).">How recovered
+          <select id="forigin">
+            <option value="">All</option>
+            <option value="walk">Walked — named files</option>
+            <option value="carve">Carved — deleted / unallocated</option>
+          </select></label>
+        <div id="carveList" class="fnote"></div>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="arch" hidden>
+      <summary>Archives <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="fck" title="Files pulled out of a .zip / .7z / .tar / .gz found in a source. The Type filter's 'archive (container)' shows the archive files themselves."><input type="checkbox" id="finarch"> Extracted from an archive</label>
+        <div id="archInfo" class="fnote"></div>
       </div>
     </details>
 
