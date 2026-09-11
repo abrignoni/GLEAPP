@@ -1471,6 +1471,35 @@ class _NtfsAttr:
         return bool(self.flags & NTFS_ATTR_ENCRYPTED)
 
 
+class NtfsDeletedFile:
+    """One file whose MFT record is free but still describes it.
+
+    ``recoverable`` says whether the content can still be read: a resident file
+    always (its bytes are in the record), a non-resident one only while every
+    cluster it used is still free. ``reason`` names why not, when it is False.
+    """
+
+    __slots__ = ("record", "name", "parent", "is_dir", "size", "resident",
+                 "recoverable", "reason", "created", "modified", "accessed",
+                 "has_attribute_list", "_data")
+
+    def __init__(self, record, name, parent, is_dir, size, resident,
+                 recoverable, reason, created, modified, accessed,
+                 has_attribute_list, data):
+        self.record, self.name, self.parent = record, name, parent
+        self.is_dir, self.size = is_dir, size
+        self.resident, self.recoverable, self.reason = resident, recoverable, reason
+        self.created, self.modified, self.accessed = created, modified, accessed
+        self.has_attribute_list = has_attribute_list
+        self._data = data
+
+    def __repr__(self):
+        state = "recoverable" if self.recoverable else f"not recoverable ({self.reason})"
+        return (f"NtfsDeletedFile(rec={self.record}, name={self.name!r}, "
+                f"size={self.size}, {'resident' if self.resident else 'non-resident'}, "
+                f"{state})")
+
+
 class NtfsWalker:
     """List and read files from an NTFS volume, same interface as the walkers
     above. A node is the MFT record number, which is what a directory index
@@ -1508,6 +1537,7 @@ class NtfsWalker:
         self.serial = struct.unpack_from("<Q", boot, 72)[0]
         self.volume_size = self.total_sectors * self.bps
         self._records = {}                       # record number -> attributes
+        self._alloc_bitmap = None                # $Bitmap bytes, read on first need
         self._mft_runs = None
         self._mft_runs = self._read_mft_runs()
 
@@ -1680,6 +1710,169 @@ class NtfsWalker:
         for a in parts:
             joined.runs.extend(a.runs)
         return joined
+
+    def _cluster_in_use(self, lcn):
+        """True when this cluster is marked allocated in $Bitmap. The bitmap is
+        read once and kept: a deleted-file sweep asks about many clusters."""
+        bits = self._alloc_bitmap
+        if bits is None:
+            attr = self._data_attr(NTFS_BITMAP)
+            size = (len(attr.value) if attr.resident else attr.data_size) if attr else 0
+            bits = b"".join(self.read_file(NTFS_BITMAP, size)) if size else b""
+            self._alloc_bitmap = bits
+        byte = lcn >> 3
+        if byte >= len(bits):
+            return True                              # off the end of the bitmap: treat as used
+        return bool(bits[byte] & (1 << (lcn & 7)))
+
+    def _parse_deleted(self, raw):
+        """Attributes of one record, ignoring the in-use flag and NOT following
+        its $ATTRIBUTE_LIST.
+
+        The live parser stops at a record not in use; a deleted file is exactly
+        such a record, so that guard is dropped here. The list is not followed
+        on purpose: for a deleted record it points at other records that may
+        since have been reused, so following it would splice a live file's
+        attributes into this one.
+        """
+        if not raw or len(raw) < 0x30:
+            return None
+        first, flags = struct.unpack_from("<HH", raw, 0x14)
+        used = struct.unpack_from("<I", raw, 0x18)[0]
+        out, pos, limit = [], first, min(used or len(raw), len(raw))
+        while pos + 16 <= limit:
+            type_ = struct.unpack_from("<I", raw, pos)[0]
+            if type_ == NTFS_END:
+                break
+            length = struct.unpack_from("<I", raw, pos + 4)[0]
+            if length < 16 or pos + length > limit:
+                break
+            attr = self._parse_one(raw, pos, length)
+            if attr:
+                out.append(attr)
+            pos += length
+        return flags, out
+
+    def _record_raw(self, num):
+        off = num * self.rec_size
+        raw = self._read_runs(self._mft_runs, self.rec_size, off) if self._mft_runs \
+            else read_at(self.fh, self.base + self.mft_lcn * self.cluster + off,
+                         self.rec_size)
+        return _ntfs_fixup(raw, self.bps, NTFS_FILE)
+
+    def deleted_files(self, *, include_system=False, min_size=0):
+        """Yield the files whose MFT record is free but still names them.
+
+        A deleted file whose record has not yet been handed to another file can
+        be recovered from the record: its name, size, dates, and, when the data
+        has not been overwritten, its content. This is the only route to a file
+        whose data was **resident**, small enough to live inside the record and
+        so never occupying a cluster a carver could find.
+
+        Each result carries ``recoverable``: True when the bytes are still there
+        (resident always; non-resident only while every cluster it used is still
+        free), False when they have been reused, in which case the record is
+        reported as evidence the file existed rather than its content offered.
+        ``$ATTRIBUTE_LIST`` is not followed (see ``_parse_deleted``), so a file
+        whose attributes overflowed its record is reported not recoverable rather
+        than reconstructed from records that may now belong elsewhere.
+
+        ``include_system`` keeps the ``$``-named metadata files; by default only
+        ordinary files are yielded. ``min_size`` drops anything smaller.
+        """
+        data_attr = self._data_attr(0)              # $MFT's own $DATA
+        if data_attr is None:
+            return
+        count = data_attr.data_size // self.rec_size
+        for num in range(count):
+            if num < 16 and not include_system:
+                continue                            # 0-15 are the reserved metafiles
+            raw = self._record_raw(num)
+            if not raw or raw[:4] != NTFS_FILE:
+                continue
+            parsed = self._parse_deleted(raw)
+            if parsed is None:
+                continue
+            flags, attrs = parsed
+            if flags & NTFS_MFT_IN_USE:
+                continue                            # a live file; the walk lists it
+            names = []
+            for a in attrs:
+                if a.type == NTFS_FILE_NAME and a.resident and len(a.value) > 0x42:
+                    nlen, ns = a.value[0x40], a.value[0x41]
+                    parent = struct.unpack_from("<Q", a.value, 0)[0] & 0xFFFFFFFFFFFF
+                    nm = a.value[0x42:0x42 + nlen * 2].decode("utf-16-le", "replace")
+                    names.append((ns, nm, parent))
+            if not names:
+                continue                            # nothing names it
+            names.sort(key=lambda n: n[0] == 2)     # prefer a long name over the 8.3 alias
+            _ns, name, parent = names[0]
+            if not include_system and name.startswith("$"):
+                continue
+            is_dir = bool(flags & NTFS_MFT_IS_DIR)
+            has_list = any(a.type == NTFS_ATTRIBUTE_LIST for a in attrs)
+            created = modified = accessed = 0
+            for a in attrs:
+                if a.type == NTFS_STANDARD_INFORMATION and a.resident and len(a.value) >= 32:
+                    created = ntfs_time(struct.unpack_from("<Q", a.value, 0)[0])
+                    modified = ntfs_time(struct.unpack_from("<Q", a.value, 8)[0])
+                    accessed = ntfs_time(struct.unpack_from("<Q", a.value, 24)[0])
+                    break
+            data = next((a for a in attrs if a.type == NTFS_DATA and a.name == ""), None)
+            if is_dir or data is None:
+                yield NtfsDeletedFile(num, name, parent, is_dir, 0, True, False,
+                                      "directory" if is_dir else "no data attribute",
+                                      created, modified, accessed, has_list, None)
+                continue
+            size = len(data.value) if data.resident else data.data_size
+            if size < min_size:
+                continue
+            if data.resident:
+                yield NtfsDeletedFile(num, name, parent, is_dir, size, True, True, "",
+                                      created, modified, accessed, has_list, data)
+                continue
+            reason, ok = "", True
+            if data.encrypted:
+                reason, ok = "encrypted", False
+            elif has_list:
+                reason, ok = "attributes overflowed the record", False
+            else:
+                for lcn, run in data.runs:
+                    if lcn is None:
+                        continue                    # a sparse run holds no data to lose
+                    if any(self._cluster_in_use(lcn + i) for i in range(run)):
+                        reason, ok = "clusters reused by a later file", False
+                        break
+            yield NtfsDeletedFile(num, name, parent, is_dir, size, False, ok, reason,
+                                  created, modified, accessed, has_list, data)
+
+    def read_deleted(self, entry, size=None):
+        """Yield the content of a recoverable deleted file. Refuses one whose
+        clusters have been reused, so overwritten data is never presented as the
+        file. Reading is otherwise the same as for a live file."""
+        if not entry.recoverable or entry._data is None:
+            raise NtfsUnreadable(
+                f"deleted file {entry.name!r} is not recoverable: {entry.reason}")
+        data = entry._data
+        want = entry.size if size is None else min(size, entry.size)
+        if data.resident:
+            yield data.value[:want]
+            return
+        if data.compressed:
+            yield from self._read_compressed(data, want)
+            return
+        real = min(want, data.init_size) if data.init_size else 0
+        done = 0
+        while done < real:
+            chunk = self._read_runs(data.runs, min(1 << 20, real - done), done)
+            if not chunk:
+                break
+            yield chunk
+            done += len(chunk)
+        while done < want:
+            take = min(1 << 20, want - done)
+            yield b"\x00" * take
+            done += take
 
     def volume_label(self):
         """The volume label, from the $VOLUME_NAME attribute of record 3, or None
@@ -5669,6 +5862,43 @@ def _hfs_fixture_check(image_gz, listing):
     return matched, len(want), missing, different
 
 
+def _ntfs_deleted_check(image_gz, listing):
+    """Recover the deleted files the fixture builder created and then removed,
+    and compare each against the sha256 recorded from its bytes before deletion.
+
+    The expected hashes come from what was written, not from this reader, and
+    the same files were confirmed recoverable by The Sleuth Kit's icat at build
+    time. Returns (matched, expected, missing, different).
+    """
+    import gzip, hashlib, io
+    with gzip.open(image_gz, "rb") as gz:
+        img = io.BytesIO(gz.read())
+    want = {}
+    with open(listing, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            digest, name = line.split("  ", 1)
+            want[name] = digest
+    w = NtfsWalker(img, 0)
+    have = {e.name: e for e in w.deleted_files() if e.recoverable and not e.is_dir}
+    matched = missing = different = 0
+    for name, digest in want.items():
+        e = have.get(name)
+        if e is None:
+            missing += 1
+            continue
+        h = hashlib.sha256()
+        for chunk in w.read_deleted(e):
+            h.update(chunk)
+        if h.hexdigest() == digest:
+            matched += 1
+        else:
+            different += 1
+    return matched, len(want), missing, different
+
+
 def _ntfs_fixture_check(image_gz, listing):
     """Walk the committed NTFS fixture and compare every file against the
     hashes an independent reader recorded from the same image.
@@ -7408,6 +7638,26 @@ def self_test():
             # a check that passed. The frozen executable carries no fixtures.
             print("  [SKIP] the NTFS fixture is not beside this script, so the "
                   "walk was not compared against it")
+
+        ntfs_del = ntfs_fix[:-len(".img.gz")] + ".deleted.sha256"
+        if os.path.isfile(ntfs_fix) and os.path.isfile(ntfs_del):
+            try:
+                dgot, dwant, dmiss, ddiff = _ntfs_deleted_check(ntfs_fix, ntfs_del)
+                dbroke = ""
+            except Exception as exc:                 # pylint: disable=broad-except
+                dgot = dwant = dmiss = ddiff = 0
+                dbroke = f"; the sweep raised {type(exc).__name__}: {exc}"
+            dcond = dgot and dgot == dwant and not dmiss and not ddiff and not dbroke
+            if not dcond:
+                ok = False
+            print(f"  [{'PASS' if dcond else 'FAIL'}] deleted files recovered "
+                  f"from the MFT match the bytes written before deletion "
+                  f"({dgot} of {dwant}"
+                  + (f", {dmiss} missing" if dmiss else "")
+                  + (f", {ddiff} different" if ddiff else "") + ")" + dbroke)
+        elif os.path.isfile(ntfs_fix):
+            print("  [SKIP] the NTFS deleted-files listing is not beside this "
+                  "script, so recovery was not compared against it")
 
         print()
         print("  SELF-TEST PASSED. The detector reports positives and negatives"
