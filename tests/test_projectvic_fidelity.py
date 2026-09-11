@@ -160,3 +160,35 @@ def test_the_row_carries_the_first_entry_of_the_group(tmp_path, case):
     assert row["orig_name"] == "first.png"
     assert row["orig_path"] == "/DCIM/first.png"
     assert json.loads(row["alt_paths"]) == ["/Download/second.png", "/tmp/third.png"]
+
+
+# --------------------------------------------------------------------------
+# C. the case header does not describe the entries beneath it
+
+def test_the_media_count_comes_from_the_array_not_the_header(tmp_path):
+    """``TotalMediaFiles`` counts a different noun per exporter, so it is not used.
+
+    One measured export set it to its Media entry count and another to its distinct
+    MD5 count, 4,893 below the entries it wrote.
+    """
+    media = [_entry(i, f"{i}.png", device_path=f"/DCIM/{i}.png") for i in (1, 2, 3)]
+    vic = _write_vic(tmp_path, media, files={})
+    doc = projectvic.load(vic)
+    doc["value"][0]["TotalMediaFiles"] = 1          # the header disagrees
+    assert projectvic.case_summary(doc)["media_count"] == 3
+
+
+def test_isprecategorized_does_not_decide_the_category(tmp_path, case):
+    """An export set this true on all 19,209 of its entries with every Category
+    null, so it says nothing about whether a verdict is present."""
+    media = [
+        _entry(1, "a.png", device_path="/DCIM/a.png",
+               IsPrecategorized=True, Category=None),
+        _entry(2, "b.png", device_path="/DCIM/b.png",
+               IsPrecategorized=False, Category=4, md5="1" * 32),
+    ]
+    vic = _write_vic(tmp_path, media, files={"a.png": b"a", "b.png": b"b"})
+    projectvic.import_vic(case, vic)
+    by_id = {r["media_id"]: r for r in case.db.iter_files()}
+    assert not by_id[1]["category"], "true with no Category stays uncategorised"
+    assert by_id[2]["category"] == 4, "false with a Category keeps the verdict"

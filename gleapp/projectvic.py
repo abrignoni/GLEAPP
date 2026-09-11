@@ -173,9 +173,25 @@ def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None
                 series=m.get("Series"),
                 comments=m.get("Comments"),
             )
+            # Deliberately not read: IsPrecategorized, TotalPrecategorized and
+            # PrecategorizationSource. They do not agree with the entries beneath
+            # them. One measured export set IsPrecategorized true on every one of
+            # its 19,209 entries while Category was null on every entry and its own
+            # case header said none were pre-categorised. Category itself is the
+            # only field that says whether an entry carries a verdict.
 
 
 def case_summary(doc: dict) -> dict:
+    """Case-level facts, with the media count taken from the array rather than the
+    header.
+
+    ``Case.TotalMediaFiles`` is sitting right there and must not be used: it counts
+    a different noun per exporter. One measured export set it to its number of Media
+    entries (34,731) and another to its number of distinct MD5 values (14,316, which
+    is 4,893 fewer than the entries it wrote), because exporters store one copy per
+    distinct hash. Counting the array is the only reading that matches what was
+    imported.
+    """
     cases = doc.get("value") or []
     c = cases[0] if cases else {}
     n = sum(len(x.get("Media", []) or []) for x in cases)
