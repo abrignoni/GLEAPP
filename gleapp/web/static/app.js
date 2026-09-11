@@ -277,6 +277,20 @@ function renderFiles(files) {
 /* an epoch (UTC) rendered in the chosen display timezone, with DST — never
    applied to Captured/EXIF, which is camera-local wall time shown as-is */
 let _tzFmt = null, _tzFmtFor = null;
+// The times a filesystem stored with no zone on them, exactly as stored. FAT and
+// exFAT keep a wall-clock reading and no zone at all, so no instant can be built
+// from one and the FS written / created / accessed columns stay empty for those
+// volumes. Shown as plain text on purpose: a date here would be given a zone by
+// whatever renders it, and that zone would be invented. exFAT's per-time UTC
+// offset is shown as stored rather than applied, for the same reason.
+function fmtRecorded(f) {
+  if (!f || !f.recorded_times) return "";
+  let got;
+  try { got = JSON.parse(f.recorded_times); } catch (e) { return ""; }
+  if (!got || typeof got !== "object" || Array.isArray(got)) return "";
+  return Object.entries(got).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join("; ");
+}
+
 function fmtEpoch(e) {
   if (!e) return "";
   const d = new Date(e * 1000);
@@ -342,6 +356,8 @@ const LIST_DEFS = [
   { key: "ctime", label: "FS created", type: "epoch", get: f => fmtEpoch(f.ctime) },
   { key: "mtime", label: "FS written", type: "epoch", get: f => fmtEpoch(f.mtime) },
   { key: "atime", label: "FS accessed", type: "epoch", get: f => fmtEpoch(f.atime) },
+  { key: "recorded_times", label: "Recorded (as stored)", type: "text",
+    get: f => fmtRecorded(f), filterPh: "2024-06" },
   { key: "ingested_at", label: "Ingested", type: "epoch", get: f => fmtEpoch(f.ingested_at) },
   { key: "md5", label: "MD5", type: "text", mono: true, get: f => f.md5 || "" },
   { key: "sha1", label: "SHA-1", type: "text", mono: true, get: f => shortHash(f.sha1) },
@@ -1059,6 +1075,7 @@ async function showMeta(id) {
     ["FS created", fmtEpoch(f.ctime)],
     ["FS written", fmtEpoch(f.mtime)],
     ["FS accessed", fmtEpoch(f.atime)],
+    ["Recorded (as stored, no zone)", fmtRecorded(f)],
     ["Camera", f.camera || ""],
     ["Faces", f.faces || 0], ["Skin ratio", f.skin_ratio ?? ""],
     ["Known hash", f.hashset_hit
