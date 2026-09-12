@@ -1156,13 +1156,11 @@ def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
 
     None means scan everything, and a volume that cannot answer must not be
     quietly skipped: leaving part of a disk unscanned while reporting a carve as
-    done is worse than scanning all of it. A disk on which nothing is free
-    returns None by the same route, so it is scanned whole rather than skipped.
-    NTFS answers through $Bitmap, FAT32 through its allocation table, exFAT
-    through its allocation bitmap, HFS+ through its allocation file and APFS
-    through the container's space manager, so none of the six acquisitions
-    measured falls back: they scope to between 60% and 92% of themselves, each
-    in under a second.
+    done is worse than scanning all of it. NTFS answers through $Bitmap, FAT32
+    through its allocation table, exFAT through its allocation bitmap, HFS+
+    through its allocation file and APFS through the container's space manager,
+    so none of the six acquisitions measured falls back: they scope to between
+    60% and 92% of themselves, each in under a second.
     """
     out = []
     for base, size, fskind, _label in vols:
