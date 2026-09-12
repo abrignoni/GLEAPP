@@ -1548,6 +1548,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                               for k, v in report._FIELD_DEFS.items()],
             "full_images": case.db.get_meta("report_full_images") != "0",
             "full_videos": case.db.get_meta("report_full_videos") != "0",
+            "maps": case.db.get_meta("report_maps") != "0",
         })
 
     @app.post("/api/report")
@@ -1577,6 +1578,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                                          if f in report._FIELD_DEFS]))
         case.db.set_meta("report_full_images", "1" if full_images else "0")
         case.db.set_meta("report_full_videos", "1" if full_videos else "0")
+        case.db.set_meta("report_maps", "1" if want_maps else "0")
 
         tz = case.db.get_meta("display_tz") or appconfig.get_timezone()
 

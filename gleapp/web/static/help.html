@@ -789,9 +789,10 @@ basemap (&sect;19), if one is imported and any files are geolocated: a
 <strong>Locations</strong> overview of every geolocated file near the top, and a
 small locator map on each geolocated card, both baked into the report file so it
 stays self-contained; the summary names the basemap and its hash so a reader can
-obtain the same file and see the same map years later. Pass
-<code>--no-maps</code> to <code>gleapp report</code> to leave the report maps
-out; there is no equivalent toggle in the Export dialog yet.</p>
+obtain the same file and see the same map years later. The maps carry the place,
+water and street names the basemap holds, where Pillow can supply a scalable font.
+Untick <strong>Draw location maps</strong> in the Export dialog, or pass
+<code>--no-maps</code> to <code>gleapp report</code>, to leave them out.</p>
 <p><strong>Media</strong> (dialog checkboxes, on by default, saved with the case):</p>
 <ul>
   <li><strong>Embed full-size images</strong>: each image goes in downscaled to
@@ -947,9 +948,10 @@ geolocated file matching your filters; click a marker for its thumbnail and a
 basemap and embeds them: a <strong>Locations</strong> overview of every geolocated file
 near the top, and a small locator map on each geolocated file. Those images are baked
 into the report file, so it stays self-contained and offline; the summary names the
-basemap and its hash so a reader can obtain the same file and see the same map. Pass
-<code>--no-maps</code> to <code>gleapp report</code> to leave the report maps out;
-there is no equivalent toggle in the Export dialog yet.</p>
+basemap and its hash so a reader can obtain the same file and see the same map. The
+maps carry the place, water and street names the basemap holds, where Pillow can supply
+a scalable font. Untick <strong>Draw location maps</strong> in the Export dialog, or
+pass <code>--no-maps</code> to <code>gleapp report</code>, to leave them out.</p>
 <p>Two file types are accepted. A <strong>.pmtiles</strong> region is the recommended
 one: install the <code>pmtiles</code> tool from
 <code>github.com/protomaps/go-pmtiles/releases</code>, pick a recent Protomaps planet

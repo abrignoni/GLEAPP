@@ -746,9 +746,10 @@ The report also draws its own **location maps** from the active basemap
 overview of every geolocated file near the top, and a small locator map on
 each geolocated card. Those images are baked into the report file, so it stays
 self-contained; the summary names the basemap and its hash so a reader can
-obtain the same file and see the same map. Pass `--no-maps` to `gleapp report`
-to leave the report maps out; there is no equivalent toggle in the Export
-dialog yet.
+obtain the same file and see the same map. The maps carry the place, water and
+street names the basemap holds, where Pillow can supply a scalable font. Untick
+**Draw location maps** in the Export dialog, or pass `--no-maps` to `gleapp
+report`, to leave them out.
 
 **Media** (dialog checkboxes, on by default, saved with the case):
 

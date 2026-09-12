@@ -8,8 +8,10 @@ offline, on every platform, with Pillow as the only dependency.
 A raster basemap (.mbtiles, or a raster .pmtiles) is drawn by compositing its
 image tiles. A vector basemap (.pmtiles, the recommended kind) is drawn by
 decoding its Mapbox Vector Tiles and filling land, water, land use and buildings
-and stroking roads and boundaries in a flat, print-friendly palette. Labels are
-not drawn: the image is a locator, not a substitute for the interactive map.
+and stroking roads and boundaries in a flat, print-friendly palette, with the place,
+water and street names its tiles carry drawn over that so a locator says where it is.
+Labels need a scalable font from Pillow; a build without one draws the map with no
+labels rather than failing.
 """
 
 from __future__ import annotations
