@@ -1022,13 +1022,14 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
 
     An acquisition of a computer holds filesystems, so its files have names,
     paths and dates of their own. Carving the same disk answers a different
-    question, and answers it worse for files that are still there: measured on a
-    238.5 GiB Windows acquisition, a walk found 44,884 media files with paths and
-    timestamps in 11 seconds, while a carve of the same image took about 40
-    minutes to return 384,386 hits with no names, of which 90.2% were resources
-    embedded inside live non-media files and 2.1% lay in space no file claimed.
-    Carving still reaches what a walk cannot, which is that 2.1%, and it runs as
-    its own pass rather than as the way an image is read.
+    question, and answers it worse for files that are still there: measured
+    on PC-MUS-001, a Windows acquisition, a walk found 44,884 media files
+    with paths and timestamps in 11 seconds, while a carve of the same image
+    took about 40 minutes to return 384,386 hits with no names, of which
+    90.2% were resources embedded inside live non-media files and 2.1% lay
+    in space no file claimed. Carving still reaches what a walk cannot,
+    which is that 2.1%, and it runs as its own pass rather than as the way
+    an image is read.
 
     A volume the reader cannot open is recorded and the rest still register: one
     unreadable filesystem must not cost the others.
@@ -1149,18 +1150,17 @@ def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
 
     A signature found inside an allocated run belongs to a file the directory
     tree already names, so scanning only what a volume reports free is both far
-    less work and far better material: of the 384,386 hits a carve of a 238.5 GiB
-    Windows acquisition returned, 90.2% sat inside a live file and 2.1% in space
-    no file claimed.
+    less work and far better material: of the 384,386 hits a carve of the
+    PC-MUS-001 Windows acquisition returned, 90.2% sat inside a live file and
+    2.1% in space no file claimed.
 
     None means scan everything, and a volume that cannot answer must not be
     quietly skipped: leaving part of a disk unscanned while reporting a carve as
     done is worse than scanning all of it. NTFS answers through $Bitmap, FAT32
     through its allocation table, exFAT through its allocation bitmap, HFS+
     through its allocation file and APFS through the container's space manager,
-    so none of the acquisitions measured here falls back: a Windows disk scopes
-    to between 63% and 76% of itself and a Mac one to 72%, each in under a
-    second.
+    so none of the six acquisitions measured falls back: they scope to between
+    60% and 92% of themselves, each in under a second.
     """
     out = []
     for base, size, fskind, _label in vols:
@@ -1698,21 +1698,27 @@ def carve_source(case, name: str, *, unallocated_only: bool = False,
 
     A walk reports the files a filesystem still lists. Carving reads the disk
     itself, so it also reaches what was deleted, and that is the whole reason to
-    run it: measured on a 238.5 GiB Windows acquisition, 2.1% of the carver's
+    run it: measured on PC-MUS-001, a Windows acquisition, 2.1% of the carver's
     hits lay in space no file claimed, while 90.2% were resources embedded
     inside live non-media files the walk had already registered by name.
 
-    Two things this does NOT do yet, stated because the counts are large enough
-    to matter. It scans the whole disk, not just the space no file claims, so on
-    a used drive most of what it returns is resources embedded inside live files:
-    on that same acquisition, 384,386 hits of which 8,154 were in unclaimed
-    space. Scoping the scan needs a volume's free space, which the reader cannot
-    report yet. And a hit is only skipped when this source was already carved at
-    that same offset, so re-running adds nothing; a hit whose bytes are also a
-    walked file IS added, because a walked row records a node and not an offset
-    and the two cannot be compared directly. Those pairs share a sha256, so the
-    case grades them as the exact duplicates they are, and ``origin`` says which
-    row came from where.
+    By default the scan covers the whole disk, so on a used drive most of what it
+    returns is that embedded material rather than deleted files: on PC-MUS-001,
+    384,386 hits of which 8,154 lay in unclaimed space. Pass
+    ``unallocated_only`` and the scan is scoped to the runs each volume reports
+    free, which is the part a walk cannot reach; the bytes covered are recorded
+    in the case meta so a report can say what was read. The scope is all or
+    nothing on purpose: ``_unclaimed_space`` returns None as soon as one volume
+    cannot report its free space, and None means scan everything, because
+    reading part of a disk while reporting the carve finished is worse than
+    reading all of it.
+
+    A hit is only skipped when this source was already carved at that same
+    offset, so re-running adds nothing; a hit whose bytes are also a walked file
+    IS added, because a walked row records a node and not an offset and the two
+    cannot be compared directly. Those pairs share a sha256, so the case grades
+    them as the exact duplicates they are, and ``origin`` says which row came
+    from where.
     """
     rec = _require(case, name)
     if rec["format"] != FORMAT_EWF:
