@@ -2386,6 +2386,7 @@ function openRefDlg() {
   $("#refDlg").style.display = "block";
 }
 $("#refInfo").onclick = openRefDlg;
+$("#btnRefStore").onclick = openRefDlg;
 document.querySelectorAll('input[name=refMode]').forEach(r => r.onchange = syncRefDlg);
 $("#refBrowse").onclick = () => browseRef("#refPath");
 $("#refBaseBrowse").onclick = () => browseRef("#refBase");
