@@ -16,10 +16,20 @@ So these tests cover the two halves that failed independently:
 * each origin is separable through the API, and each report surface says which
   one a row is, since a reader who cannot tell a carved row from a walked one
   cannot tell what a missing name and a blank date column mean.
+
+The same shape turned up one field over, so it is covered here too. A FAT or
+exFAT volume stores a wall clock with no zone, which GLEAPP correctly refuses to
+render as an instant: the Modified, Created and Accessed columns stay empty and
+the readings are kept in ``files.recorded_times``. The gallery and the HTML
+report show them; the CSV export and the LAVA artifacts did not, so on a FAT or
+exFAT acquisition both of those reported the file as having no filesystem times
+at all, when the filesystem had recorded them. They are file metadata and they
+have to reach every surface, as text, exactly as stored.
 """
 
 import gzip
 import io
+import csv
 import json
 import re
 import sqlite3
@@ -37,7 +47,8 @@ from fatwriter import build_fat32                       # pylint: disable=import
 from gleapp import archive, lava, report
 from gleapp.case import open_case, parse_source_spec
 from gleapp.db import ORIGINS
-from gleapp.pipeline import ingest_sources
+from gleapp.lava import _sanitize as _sanitize_label
+from gleapp.pipeline import ingest_sources, process
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -105,6 +116,34 @@ def _jpeg(colour) -> bytes:
     return buf.getvalue()
 
 
+def _geo_jpeg(colour, lat=10.5, lon=20.25) -> bytes:
+    """A JPEG carrying GPS, so the Media Locations artifact gets a row.
+
+    It has to sit on the FAT volume rather than in a folder source: the point is
+    a geotagged file whose Modified Timestamp column is empty because its
+    filesystem stored a wall clock, which is the ordinary shape of camera media.
+    """
+    import piexif                                       # pylint: disable=import-outside-toplevel
+    from fractions import Fraction                      # pylint: disable=import-outside-toplevel
+    from PIL import Image                               # pylint: disable=import-outside-toplevel
+
+    def dms(value):
+        value = abs(value)
+        deg = int(value)
+        minutes = int((value - deg) * 60)
+        sec = Fraction((((value - deg) * 60) - minutes) * 60).limit_denominator(10000)
+        return ((deg, 1), (minutes, 1), (sec.numerator, sec.denominator))
+
+    exif = {"0th": {}, "Exif": {}, "1st": {}, "thumbnail": None,
+            "GPS": {piexif.GPSIFD.GPSLatitudeRef: b"N",
+                    piexif.GPSIFD.GPSLatitude: dms(lat),
+                    piexif.GPSIFD.GPSLongitudeRef: b"E",
+                    piexif.GPSIFD.GPSLongitude: dms(lon)}}
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 24), colour).save(buf, "JPEG", exif=piexif.dump(exif))
+    return buf.getvalue()
+
+
 @pytest.fixture(scope="module")
 def three_origins(tmp_path_factory):
     """A case whose rows cover all three origins.
@@ -125,6 +164,7 @@ def three_origins(tmp_path_factory):
     live_src = Path(write_ewf(tmp / "ev", "live", build_fat32([
         ("LIVE1", "JPG", _jpeg((200, 40, 40)), (2023, 6, 1, 12, 0, 0)),
         ("LIVE2", "JPG", _jpeg((40, 160, 60)), (2022, 1, 2, 3, 4, 6)),
+        ("GEO", "JPG", _geo_jpeg((90, 90, 200)), (2021, 3, 4, 5, 6, 8)),
     ]))[0])
 
     case = open_case(tmp / "case", create=True, examiner="t")
@@ -137,6 +177,7 @@ def three_origins(tmp_path_factory):
             acq = sources[0].name
     _added, offsets = archive.recover_deleted(case, acq)
     archive.carve_source(case, acq, unallocated_only=True, extra_skip=offsets)
+    process(case)                       # EXIF and GPS, so the locations artifact fills
 
     counts = {r["origin"]: r["n"] for r in case.db.conn.execute(
         "SELECT origin, COUNT(*) n FROM files WHERE kind != 'archive' GROUP BY origin")}
@@ -228,3 +269,64 @@ def test_every_report_surface_says_how_a_row_was_recovered(three_origins, tmp_pa
     for phrase in report._ORIGIN_LABELS.values():       # pylint: disable=protected-access
         assert phrase.capitalize() in meta["notes"] or phrase in meta["notes"], \
             f"the notes never explain {phrase!r}"
+
+
+# ---- the readings a zone-less filesystem stored -------------------------
+
+def test_a_fat_volumes_readings_reach_the_csv_and_the_lava_artifacts(three_origins, tmp_path):
+    """FAT and exFAT store a wall clock with no zone, so the datetime columns are
+    empty and these readings are the only filesystem times the file has. They
+    were reaching the gallery and the HTML report and no other surface.
+    """
+    case, _case_dir, _counts = three_origins
+    out = tmp_path / "rec"
+    out.mkdir()
+
+    rows = list(csv.DictReader(
+        report.export_csv(case, out / "r.csv").open(encoding="utf-8")))
+    assert "recorded_times" in rows[0], "the CSV export carries no recorded readings"
+    # the premise: every datetime column really is empty on this acquisition, so
+    # the recorded column is not merely a duplicate of one that already works
+    assert all(not r["mtime"] and not r["ctime"] and not r["atime"] for r in rows)
+    by_origin = {}
+    for r in rows:
+        by_origin.setdefault(r["origin"], []).append(r["recorded_times"])
+    for origin in ("walk", "deleted"):
+        assert all("modified " in v for v in by_origin[origin]), \
+            f"{origin} rows reached the CSV with no reading: {by_origin[origin]}"
+    assert by_origin["carve"] == [""], \
+        "a carved file has no timestamp of any kind, so it must carry no reading"
+
+    lava.export_lava(case, out / "lava")
+    conn = sqlite3.connect(out / "lava/_lava_artifacts.db")
+    try:
+        col = _sanitize_label(report.RECORDED_LABEL)
+        media = [d[1] for d in conn.execute('PRAGMA table_info("media_files")')]
+        assert col in media, f"LAVA Media Files columns: {media}"
+        got = dict(conn.execute(
+            f'SELECT how_recovered, "{col}" FROM media_files'))
+        for phrase, reading in got.items():
+            if "carved" in phrase:
+                assert not reading
+            else:
+                assert "modified " in reading, f"{phrase} carried {reading!r}"
+
+        # Media Locations shows a Modified Timestamp too, and camera media is
+        # exactly where a zone-less volume turns up, so it needs them as well.
+        locs = [d[1] for d in conn.execute('PRAGMA table_info("media_locations")')]
+        assert col in locs, f"LAVA Media Locations columns: {locs}"
+        row = conn.execute(
+            f'SELECT modified_timestamp, "{col}" FROM media_locations').fetchone()
+        assert row is not None, "the geotagged fixture file produced no location row"
+        assert row[0] is None and "modified " in row[1], \
+            "the location row should show an empty instant and a stored reading"
+    finally:
+        conn.close()
+
+
+def test_one_label_for_the_readings_across_both_report_surfaces():
+    """The HTML field and the LAVA column are the same field, so same wording."""
+    assert report._FIELD_DEFS["recorded_times"][0] == report.RECORDED_LABEL  # pylint: disable=protected-access
+    src = (REPO / "gleapp/lava.py").read_text(encoding="utf-8")
+    assert src.count("RECORDED_LABEL") >= 3, \
+        "the LAVA artifacts should use the shared label, not a typed copy of it"
