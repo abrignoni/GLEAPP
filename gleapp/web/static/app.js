@@ -1776,6 +1776,8 @@ async function openReportDlg() {
   setRptLogo(h.logo || null);
   $("#rhFull").checked = p.full_images !== false;
   $("#rhVideo").checked = p.full_videos !== false;
+  $("#rhMaps").checked = p.maps !== false;
+  $("#rhMapsRow").style.display = state.basemap ? "" : "none";
   const chosen = new Set(p.fields || ["name", "created_dt", "md5"]);
   $("#rptFields").innerHTML = (p.field_options || []).map(o =>
     `<label><input type="checkbox" class="rfld" value="${esc(o.key)}"${
@@ -1846,6 +1848,7 @@ $("#reportGo").onclick = async () => {
   body.fields = [...document.querySelectorAll(".rfld:checked")].map(c => c.value);
   body.full_images = $("#rhFull").checked;
   body.full_videos = $("#rhVideo").checked;
+  body.maps = $("#rhMaps").checked;
   closeReportDlg();
   const r = await api("/api/report", {
     method: "POST", headers: { "Content-Type": "application/json" },

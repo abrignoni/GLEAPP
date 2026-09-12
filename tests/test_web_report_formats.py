@@ -17,6 +17,7 @@ from PIL import Image
 EXPECTED_FORMATS = {"html", "csv", "json", "kml", "md5", "vic", "lava"}
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "gleapp/web/templates/index.html"
+APP_JS = Path(__file__).resolve().parents[1] / "gleapp/web/static/app.js"
 
 
 def _dialog_formats() -> set[str]:
@@ -25,6 +26,13 @@ def _dialog_formats() -> set[str]:
     dlg = html[html.index('<div id="reportDlg">'):]
     dlg = dlg[:dlg.index("</div></div>")]
     return set(re.findall(r'class="rfmt"\s+value="([a-z0-9]+)"', dlg))
+
+
+def _dialog() -> str:
+    """The export dialog's own markup."""
+    html = TEMPLATE.read_text(encoding="utf-8")
+    dlg = html[html.index('<div id="reportDlg">'):]
+    return dlg[:dlg.index("</div></div>")]
 
 
 def test_the_dialog_offers_every_format_the_route_writes():
@@ -81,3 +89,63 @@ def test_the_other_formats_still_come_back_in_the_response(tmp_path):
     body = cl.post("/api/report", json={"format": ["csv"], "scope": "all"}).get_json()
     assert "job" not in body
     assert len(body["written"]) == 1 and body["written"][0].endswith(".csv")
+
+
+def test_the_dialog_offers_the_maps_toggle_the_route_reads():
+    """The same drift as the LAVA format, in an option rather than a format.
+
+    ``/api/report`` read ``maps`` from the request body from the day the report
+    drew maps, and the dialog never sent it, so the maps could only be left out
+    from the command line while the README and the manual said otherwise.
+    """
+    dlg = _dialog()
+    assert 'id="rhMaps"' in dlg, "the export dialog has no maps control"
+    js = APP_JS.read_text(encoding="utf-8")
+    assert 'body.maps = $("#rhMaps").checked;' in js, "the dialog does not send maps"
+    assert '$("#rhMaps").checked = p.maps !== false;' in js, "the choice is not restored"
+
+
+def test_unticking_maps_reaches_the_writer_and_is_remembered(tmp_path, monkeypatch):
+    """Sending ``maps: false`` has to arrive at the report writer, not just be
+    accepted, and come back to the dialog the way the Media checkboxes do."""
+    from gleapp import report                          # pylint: disable=import-outside-toplevel
+    from gleapp.web.app import create_app              # pylint: disable=import-outside-toplevel
+    path = _case_with_one_image(tmp_path)
+    cl = create_app(None).test_client()
+    cl.post("/api/case/open", json={"path": str(path)})
+
+    seen = {}
+    real = report.export_html
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(report, "export_html", spy)
+    assert cl.post("/api/report",
+                   json={"format": ["html"], "scope": "all",
+                         "maps": False}).status_code == 200
+    assert seen.get("maps") is False, seen
+    assert cl.get("/api/report/prefs").get_json()["maps"] is False
+
+    seen.clear()
+    cl.post("/api/report", json={"format": ["html"], "scope": "all", "maps": True})
+    assert seen.get("maps") is True, seen
+    assert cl.get("/api/report/prefs").get_json()["maps"] is True
+
+
+def test_maps_are_drawn_when_the_request_says_nothing(tmp_path, monkeypatch):
+    """A request with no ``maps`` key still gets maps, so the CLI default and the
+    dialog default cannot drift apart."""
+    from gleapp import report                          # pylint: disable=import-outside-toplevel
+    from gleapp.web.app import create_app              # pylint: disable=import-outside-toplevel
+    path = _case_with_one_image(tmp_path)
+    cl = create_app(None).test_client()
+    cl.post("/api/case/open", json={"path": str(path)})
+
+    seen = {}
+    real = report.export_html
+    monkeypatch.setattr(report, "export_html",
+                        lambda *a, **kw: (seen.update(kw), real(*a, **kw))[1])
+    cl.post("/api/report", json={"format": ["html"], "scope": "all"})
+    assert seen.get("maps") is True, seen
