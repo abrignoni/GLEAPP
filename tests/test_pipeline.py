@@ -186,6 +186,29 @@ def test_cgbi_png_pipeline_thumbnail(tmp_path):
     assert r.status_code == 200 and r.mimetype == "image/png"
 
 
+def test_open_folder_endpoint(tmp_path, monkeypatch):
+    """Clicking the export-finished toast asks the OS to open that folder."""
+    from gleapp.web import app as appmod
+
+    calls = []
+    monkeypatch.setattr(appmod.subprocess, "Popen", lambda args: calls.append(tuple(args)))
+    monkeypatch.setattr(appmod.os, "startfile",
+                        lambda p: calls.append(("startfile", p)), raising=False)
+
+    app = appmod.create_app(None)
+    cl = app.test_client()
+
+    gone = tmp_path / "does-not-exist"
+    r = cl.post("/api/open-folder", json={"path": str(gone)})
+    assert r.status_code == 404 and not calls
+
+    real = tmp_path / "reports"
+    real.mkdir()
+    r = cl.post("/api/open-folder", json={"path": str(real)})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert len(calls) == 1
+
+
 def test_thumbnail_encoder_is_deterministic(tmp_path):
     """The JPEG encoder must write the same bytes for the same pixels every time, and
     a flat white tile must decode white. Pillow 10.0.x and 10.1.0 wheels for macOS

@@ -41,6 +41,16 @@ def test_the_dialog_offers_every_format_the_route_writes():
     assert set(REPORT_FORMATS) == EXPECTED_FORMATS
 
 
+def test_only_html_is_checked_by_default():
+    """CSV used to be pre-checked alongside HTML; an examiner who only wanted
+    the report and clicked Export got a second file they did not ask for."""
+    html = TEMPLATE.read_text(encoding="utf-8")
+    dlg = html[html.index('<div id="reportDlg">'):]
+    dlg = dlg[:dlg.index("</div></div>")]
+    checked = set(re.findall(r'class="rfmt"\s+value="([a-z0-9]+)"\s+checked', dlg))
+    assert checked == {"html"}
+
+
 def _case_with_one_image(tmp_path):
     from gleapp.case import Source, open_case          # pylint: disable=import-outside-toplevel
     from gleapp.pipeline import ingest_sources, process  # pylint: disable=import-outside-toplevel

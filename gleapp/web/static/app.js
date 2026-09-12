@@ -24,12 +24,79 @@ const state = {
   tz: "UTC",                      // display timezone for epoch timestamps (not EXIF)
 };
 
-function toast(msg, ms) {
+function toast(msg, ms, onClick) {
   const t = $("#toast");
   t.textContent = msg; t.style.display = "block";
+  t.classList.toggle("clickable", !!onClick);
+  t.onclick = onClick || null;
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.style.display = "none", ms || 1800);
 }
+
+/* Ask the desktop/OS to open a folder in its file manager (best-effort - a
+   plain browser tab with no native window has nowhere to send this). */
+async function openFolder(path) {
+  const r = await api("/api/open-folder", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path })
+  });
+  if (r.error) toast(r.message || "Could not open that folder");
+}
+
+/* Report exports also land in a 🔔 dropdown that stays until dismissed, since
+   the toast confirming one is gone in a few seconds. */
+let reportNotifications = [];
+function addReportNotification(dir, label) {
+  reportNotifications.unshift({
+    id: Date.now() + Math.random(), dir, label, ts: new Date(),
+  });
+  reportNotifications = reportNotifications.slice(0, 8);
+  renderNotifyMenu();
+  $("#notifyDot").hidden = false;
+}
+function renderNotifyMenu() {
+  const m = $("#notifyMenu");
+  if (!reportNotifications.length) {
+    m.innerHTML = "<div class='empty'>No report exports yet</div>";
+    return;
+  }
+  m.innerHTML = reportNotifications.map(n => `
+    <button type="button" class="nitem" data-id="${n.id}">
+      <div class="nlbl"><span>${esc(n.label)}</span><span class="nts">${
+        n.ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      }</span></div>
+      <div class="ndir">${esc(n.dir)}</div>
+    </button>`).join("")
+    + `<div class="nfoot"><button type="button" id="notifyClear">Clear</button></div>`;
+}
+function toggleNotifyMenu() {
+  const m = $("#notifyMenu");
+  if (m.style.display === "block") { m.style.display = "none"; return; }
+  renderNotifyMenu();
+  const b = $("#btnNotify").getBoundingClientRect();
+  m.style.display = "block";
+  m.style.top = (b.bottom + 4) + "px";
+  m.style.left = Math.max(4, b.right - m.offsetWidth) + "px";
+  $("#notifyDot").hidden = true;
+}
+$("#btnNotify").onclick = toggleNotifyMenu;
+$("#notifyMenu").addEventListener("click", e => {
+  if (e.target.id === "notifyClear") {
+    reportNotifications = [];
+    renderNotifyMenu();
+    return;
+  }
+  const item = e.target.closest(".nitem");
+  if (!item) return;
+  const n = reportNotifications.find(x => x.id == item.dataset.id);
+  if (n) openFolder(n.dir);
+  $("#notifyMenu").style.display = "none";
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#notifyMenu") && !e.target.closest("#btnNotify"))
+    $("#notifyMenu").style.display = "none";
+});
+
 const fmtDur = s => {
   if (!s && s !== 0) return "";
   s = Math.round(s); const m = Math.floor(s / 60);
@@ -1652,6 +1719,7 @@ $("#helpDlg").addEventListener("click", e => {
 
 /* ---------- live processing bar + auto-refresh ---------- */
 let liveTimer = null, liveTick = 0;
+let lastReportScope = "";   // scope label for the LAVA job currently in flight, if any
 function stopLive() {
   if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
 }
@@ -1688,9 +1756,16 @@ async function liveJob() {
     await load({ keepScroll: true }).catch(() => {});
     setTimeout(() => { $("#procBar").style.display = "none"; }, 4000);
     toast(exported
-      ? `Export complete → ${j.stats.report_dir}`
+      ? `Export complete → ${j.stats.report_dir} — click to open`
       : "Processing complete" + (j.stats && j.stats.processed
-        ? ` — ${j.stats.processed.toLocaleString()} files` : ""));
+        ? ` — ${j.stats.processed.toLocaleString()} files` : ""),
+      exported ? 5000 : 1800,
+      exported ? () => openFolder(j.stats.report_dir) : null);
+    if (exported) {
+      addReportNotification(j.stats.report_dir,
+        `LAVA export (${lastReportScope || "all files"})`);
+      lastReportScope = "";
+    }
     return;
   }
 
@@ -1882,11 +1957,13 @@ $("#reportGo").onclick = async () => {
   if (r.job) {
     // a LAVA project stages the media and draws a map per geolocated file, so
     // it runs as a job and the bottom bar follows it to the end
+    lastReportScope = r.scope || "";
     toast(`Building the report (${r.scope}) — the bar at the bottom follows it`);
     liveTick = 0; liveJob();
     return;
   }
-  toast(`Exported (${r.scope}) → ${r.dir}`);
+  toast(`Exported (${r.scope}) → ${r.dir} — click to open`, 5000, () => openFolder(r.dir));
+  addReportNotification(r.dir, `Export (${r.scope})`);
 };
 
 async function exportMd5(ids) {
