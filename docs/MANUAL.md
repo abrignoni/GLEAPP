@@ -162,9 +162,14 @@ resolved the file on your machine; add it from **Columns ▾** if you need it.
 | Column | Meaning |
 |---|---|
 | **Captured (EXIF)** | the time the media itself records it was taken: EXIF `DateTimeOriginal` / embedded metadata **only**. Blank when the file carries none. |
-| **FS created** | filesystem creation time. From `os.stat` on a folder scan; from `MediaFiles.Created` on a Project VIC import. |
-| **FS written** | filesystem last-modified time. `os.stat` mtime, or VIC `MediaFiles.Written`. |
-| **FS accessed** | filesystem last-access time. `os.stat` atime, or VIC `MediaFiles.Accessed`. |
+| **FS created** | filesystem creation time. From `os.stat` on a folder scan; from `MediaFiles.Created` on a Project VIC import; from the NTFS record for a file walked or recovered out of an E01. |
+| **FS written** | filesystem last-modified time. `os.stat` mtime, VIC `MediaFiles.Written`, or the NTFS record for an E01 file. |
+| **FS accessed** | filesystem last-access time. `os.stat` atime, VIC `MediaFiles.Accessed`, or the NTFS record for an E01 file. |
+
+A FAT32 or exFAT volume inside an E01 stores a wall clock with no zone, so for
+its files all three stay blank and the readings appear as **Recorded (as
+stored, no zone)** instead: in the list view, in the HTML report, in the CSV as
+`recorded_times` and in the LAVA tables. See §16.
 
 **A Project VIC export decides which of these it carries.** Measured on two
 exports: one wrote created, written and accessed on about 25,500 of its 34,731
@@ -334,13 +339,16 @@ error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
 - **Source**: restrict to one ingest source.
 
 ### Carving *(E01 acquisitions only)*
-- **How recovered**: *All*, *Walked* (files read out of a filesystem, with
-  names and dates), *Recovered* (a deleted file rebuilt from the record that
-  still named it, an NTFS MFT record or a FAT32 or exFAT directory entry, with
-  its real name) or *Carved* (recovered by signature from unallocated space, no
-  name or date).
-- Below it, each E01 in the case with its *walked* / *carved* counts and a
-  **Carve for deleted media** / **Carve again** button; see §16.
+- **How recovered**: *All*, *Walked, still listed* (files a filesystem still
+  lists, with names and dates), *Recovered from a deleted record* (a deleted
+  file rebuilt from the record that still named it, an NTFS MFT record or a
+  FAT32 or exFAT directory entry, with its real name), or
+  *Carved from unclaimed space* (found by signature in space no volume claims,
+  no name or date). The list view offers the same as a **How recovered**
+  column, off by default.
+- Below it, each E01 in the case with its *walked* / *recovered from deleted
+  records* / *carved* counts and a **Carve for deleted media** / **Carve
+  again** button; see §16.
 
 ### Archives *(when the case holds any `.zip` / `.7z` / `.tar` / `.gz`)*
 - **Extracted from an archive**: only files that came out of a container.
@@ -821,7 +829,7 @@ walk cannot reach, in two steps that produce different kinds of row.
 
 | Origin | Recovered by | Name | Dates |
 |---|---|---|---|
-| walked | reading a live filesystem | real name and path | as the filesystem recorded them |
+| walked | reading a live filesystem | real name and path | NTFS created, modified and accessed; FAT32 and exFAT as recorded text |
 | recovered | a deleted record that still named the file | **real name** | NTFS created, modified and accessed; FAT32 and exFAT as recorded text |
 | carved | a signature scan of raw bytes | none; filed under its byte offset | none, blank |
 
@@ -922,8 +930,8 @@ garbage. And the carver knows internally whether a length came from the file's
 own header, from walking its structure, or from a cap, but the case does not
 currently carry that distinction onto the row.
 
-The Source panel shows the split per acquisition: *N walked · M carved · K
-recovered*. The sidebar's **How recovered** filter (§8) narrows the gallery to
+The Source panel shows the split per acquisition: *N walked · K recovered from
+deleted records · M carved*. The sidebar's **How recovered** filter (§8) narrows the gallery to
 any one of the three: *Walked, still listed*, *Recovered from a deleted record*
 or *Carved from unclaimed space*.
 
