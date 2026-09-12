@@ -805,16 +805,31 @@ from the command line: `gleapp process --force`.
 
 ### Carving an E01 for deleted media
 
-An E01 acquisition is **walked**: its filesystems are read file by file, so
-every file keeps the name, path and dates the filesystem recorded. The
-**deleted-media** pass then recovers what was deleted, in two steps:
+Only an **E01 acquisition** can be carved. A mobile extraction is an archive
+with a list of members in it, so there is nothing to recover that enumerating
+it does not already give you. The E01 is recognised by its own signature, so
+the extension does not matter and the first segment of a set is all you point
+at. Raw `dd` images, split `.001` sets, VHD and VMDK are not accepted.
+
+An E01 is **walked** at ingest: its filesystems are read file by file, so every
+file keeps the name, path and dates the filesystem recorded. The
+**deleted-media** pass is a separate thing you ask for, and it adds what the
+walk cannot reach, in two steps that produce different kinds of row.
+
+**Three origins, and the difference matters in a report:**
+
+| Origin | Recovered by | Name | Dates |
+|---|---|---|---|
+| walked | reading a live filesystem | real name and path | as the filesystem recorded them |
+| recovered | a deleted record that still named the file | **real name** | NTFS yes; FAT32 and exFAT as text only |
+| carved | a signature scan of raw bytes | none; filed under its byte offset | none, blank |
 
 - **From deleted records** (NTFS, FAT32 and exFAT): a deleted file whose
   record still names it is recovered with its **real name**.
 
   | Filesystem | Record used | What comes back |
   |---|---|---|
-  | NTFS | the MFT entry | real name **and** dates. The only way to recover a *resident* file: one small enough to live inside the record, which a carve can never reach because it never occupied a cluster. |
+  | NTFS | the MFT entry | real name **and** dates. The only way to recover a *resident* file: one small enough to live inside the record, which a carve of free space can never reach because it never occupied a cluster. |
   | FAT32 | the deleted directory entry | real name (the delete overwrites the first character of a short 8.3 name, shown as `_`; a long name is rebuilt in full). Read on the assumption it lay in one cluster run, since delete zeroes the chain. No dates: FAT32 stores a wall-clock time with no zone, so the date columns stay blank. |
   | exFAT | the deleted directory entry | real name. A single-run file is read exactly as recorded; a fragmented file is followed along the chain it kept; one whose chain was cleared is refused rather than read on a guess. No dates, for the same reason as FAT32. |
 
@@ -822,34 +837,89 @@ every file keeps the name, path and dates the filesystem recorded. The
   shows them when *Recorded (as stored, no zone)* is ticked in the Export
   dialog. On all three filesystems, a file is recovered only while its
   clusters are still free, and refused once a later file has taken one, so
-  overwritten bytes are never presented as the file.
+  overwritten bytes are never presented as the file. Recovered files are
+  always copied into the case, because a deleted file is not one contiguous
+  run the way a carved hit is, and a resident one is not on the disk as a run
+  at all.
 - **By carving**: the space no volume claims is scanned for image and video
   signatures, recovering files no surviving record names. A carved file has
   **no name, path or date of its own**: it is filed under the byte offset it
-  was found at, and its date columns are blank.
+  was found at, in sixteen hex digits (`0000000000404400.jpg` is offset
+  4,211,712), and its date columns are blank. Carved files are read back on
+  demand by seeking to that offset, so the acquisition has to stay where the
+  case recorded it.
 
 The deleted-record pass runs first, so a deleted file comes back with its name
-rather than as a nameless carved twin.
+rather than as a nameless carved twin, and the offsets it recovered are handed
+to the carver to skip. Measured on the repository's own NTFS fixture, which
+holds two deleted JPEGs and no live ones: carving alone recovers one nameless
+file, and the resident one only ever comes back through the deleted-record
+pass, with its name.
+
+**What the carver looks for.** Seven signatures and nothing else: JPEG, PNG,
+GIF, WebP and HEIC/AVIF as images, AVI and MP4/MOV as video. No documents, no
+archives, no databases. Each kind has a size ceiling so a false header cannot
+claim the rest of the disk (64 MB for the stills, 32 MB for GIF, 4 GB for
+video) and a floor so a header with nothing behind it is not reported as a
+file: a stray `ff d8 ff d9` in ordinary data parses as a complete four-byte
+JPEG without one.
+
+**Which filesystems can do what.** The walk reads thirteen kinds, but the other
+two passes need more of a filesystem than the walk does:
+
+| Filesystem | Walked | Deleted records | Free space, for scoping |
+|---|---|---|---|
+| NTFS, FAT32, exFAT | yes | **yes** | yes |
+| HFS+, HFSX, APFS | yes | no | yes |
+| ext2 / ext3 / ext4 | yes | no | **no** |
+| QNX4, EFS, ETFS, IFS | yes | no | **no** |
+
+So on a Mac or Linux acquisition nothing comes back with its name, and on a
+disk holding any volume that cannot report its free space the scan falls back
+to the whole image rather than leaving part of the disk unread. One ext4
+partition on a dual-boot disk is enough to do that.
+
+**Scoping.** A signature inside an allocated run belongs to a file the
+directory tree already names and the walk already registered, so scanning only
+the space no volume claims is both far less work and far better material. The
+case records what was scanned, per source, as `archive:<source>:carve_scope`,
+so you can say afterwards how much of the disk was read and in how many runs.
+The **gallery always scopes**; the command line does not unless you ask. A
+whole-image carve is not a mistake, it is a different question: it is the only
+way to reach a resident NTFS file as a carved hit, and on a used disk most of
+what it adds is resources embedded inside live files.
 
 To carve:
 
 - **At ingest**: tick *Recover deleted media from an E01 (deleted records and
   carving)* on the launcher. The walk runs first, then the recovery, then
   everything is processed together.
-- **Later**: open the sidebar's **Source** section and click **Carve for
+- **Later**: open the sidebar's **Carving** section and click **Carve for
   deleted media** (it becomes **Carve again** once a source has been carved;
   re-running skips offsets already recovered). The bar at the bottom follows
-  it, and the new files are hashed, thumbnailed and grouped when the carve
-  finishes.
-- **Command line**: `gleapp source carve <name>` (`--unallocated-only` to
-  scope it, which the GUI always does).
+  it, and the new files are hashed, thumbnailed and grouped when it finishes.
+- **Command line**: `gleapp source carve <name>` for the whole image, or
+  `--unallocated-only` to scope it, which the GUI always does. Follow it with
+  `gleapp process` to hash and thumbnail what came back.
 
-Carving reads the whole free area, so on a large drive it takes a while and
-most of what it returns on a used disk is application assets rather than user
-media. The Source panel shows the split: *N walked · M carved · K recovered*
-(recovered being the files brought back from deleted records), and the
-sidebar's **How recovered** filter (§8) narrows the gallery to just the walked
-or just the carved rows.
+**What you can and cannot say about a carved file.** It reads no filesystem, so
+it cannot tell you whether the bytes were a live file or a deleted one; with a
+scoped carve you know they sat in space no volume claimed at acquisition, which
+is a real statement and not the same as "the user deleted this". It finds
+contiguous files, so a fragmented file recovers only as far as its first
+fragment, which is why a carved image can render half way down and then turn to
+garbage. And the carver knows internally whether a length came from the file's
+own header, from walking its structure, or from a cap, but the case does not
+currently carry that distinction onto the row.
+
+The Source panel shows the split per acquisition: *N walked · M carved · K
+recovered*. The sidebar's **How recovered** filter (§8) narrows the gallery to
+the walked or the carved rows; it has no entry for the files recovered from
+deleted records, and the carved option does not include them, so find those by
+name or from the Source panel count. No report carries the origin: it is not a
+CSV column, not an HTML report field and not a LAVA column, so a carved file is
+identifiable there only by its hex name and empty dates. Where the distinction
+matters, put it in your notes.
 
 ## 17. Keyboard shortcuts
 
