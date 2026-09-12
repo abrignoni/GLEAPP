@@ -360,9 +360,10 @@ def source_status(case) -> list[dict]:
             status = "ok" if same else "changed"
         # Split the count by how each row was actually recovered, rather than
         # inferring it from the format: an acquisition whose filesystems could
-        # be read is walked, and carving it is a separate thing to ask for, so
-        # one source can hold both kinds of row and usually holds only walked
-        # ones. 'walk' and 'carve' are the values _register writes.
+        # be read is walked, and recovering its deleted records and carving its
+        # unclaimed space are each a separate thing to ask for, so one source can
+        # hold all three kinds of row and usually holds only walked ones. The
+        # values _register writes are db.ORIGINS.
         by_origin = {r["origin"] or "": r["n"] for r in case.db.conn.execute(
             "SELECT origin, COUNT(*) n FROM files WHERE source=? GROUP BY origin",
             (name,))}

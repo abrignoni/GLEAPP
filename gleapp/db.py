@@ -35,6 +35,25 @@ PHOTODNA_ALGO = "photodna"
 # so those are stored exactly as the list wrote them.
 _CASE_SENSITIVE_ALGOS = (PHOTODNA_ALGO,)
 
+# How a row's file was recovered, the vocabulary of ``files.origin``. Three ways,
+# not two: the middle one is a file the filesystem no longer lists but still
+# named, and it is neither of the others.
+#
+#   walk     read from a filesystem that still lists it, with its name, path and
+#            whatever dates the filesystem holds.
+#   deleted  read from a deleted directory or MFT record that still named it, so
+#            it comes back with its real name, and with the times that record
+#            kept. Refused once a later file has taken a cluster it needs, so
+#            overwritten bytes are never presented as the file.
+#   carve    found by signature in space no volume claims. No name, path or date
+#            of its own: it is filed under the byte offset it was found at.
+#
+# ``archive.py`` writes all three. Anything that filters, labels or reports on
+# the column reads this, so a fourth kind cannot reach the database without the
+# readers being told: ``test_origin_surfaces.py`` asserts the writers, this
+# vocabulary and the gallery's own filter still agree.
+ORIGINS = ("walk", "deleted", "carve")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -91,7 +110,9 @@ CREATE TABLE IF NOT EXISTS files (
     vic_flags     TEXT,                   -- JSON: victim/offender/distributed etc.
     vic_series    TEXT,                   -- VIC Series: the known series a media entry belongs to
     vic_tags      TEXT,                   -- JSON: the Tags the VIC entry carried, not the examiner's
-    origin        TEXT,                   -- 'walk' read from a filesystem, 'carve' recovered by signature
+    origin        TEXT,                   -- how the file was recovered: 'walk' listed by a filesystem,
+                                          -- 'deleted' read from a deleted record that still named it,
+                                          -- 'carve' found by signature in unclaimed space. See ORIGINS.
     member_node   TEXT,                   -- JSON: the walker's node for a walked file. Not always a
                                           -- number: an MFT record and an APFS object id are, a FAT
                                           -- directory entry is (cluster, size, is_dir).

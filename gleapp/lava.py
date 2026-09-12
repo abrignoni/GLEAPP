@@ -49,7 +49,7 @@ from . import (__version__, archive, basemaps, categories, hashstore, stash,
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
-from .report import _disp_name, _disp_path
+from .report import _disp_name, _disp_path, _origin_label
 
 __all__ = ["export_lava"]
 
@@ -568,7 +568,7 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
     headers = [
         ("Modified Timestamp", "datetime"), ("Created Timestamp", "datetime"),
         ("Accessed Timestamp", "datetime"), "Capture Time",
-        "File Name", "Path", "Also Under", "Source", ("Media", "media"),
+        "File Name", "Path", "Also Under", "Source", "How Recovered", ("Media", "media"),
         "Kind", "Category", "Tags", "Reviewed By", "Examiner Notes",
         ("Size", "integer"), "Dimensions", "Duration", "Camera",
         "MD5", "SHA1", "SHA256", "Perceptual Hash",
@@ -585,6 +585,7 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
             row.get("disp_name") or "", row.get("disp_path") or "",
             "\n".join(row.get("alt_list") or []),
             row.get("source") or "",
+            _origin_label(row),
             writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
             row.get("kind") or "", row.get("category_label") or "", row.get("tags") or "",
             row.get("reviewed_by") or "", row.get("notes") or "",
@@ -1253,7 +1254,20 @@ _MEDIA_NOTES = (
     "which is its extended timestamp field where it has one and otherwise the DOS "
     "date, local to whichever machine wrote the archive and at two-second "
     "resolution; a file carved from an acquisition has no timestamp of its own and "
-    "its date columns are empty. Capture Time is the camera's own clock as recorded "
+    "its date columns are empty. How Recovered says which of three ways a row's "
+    "file reached the case, and is empty where the question has no answer: a "
+    "folder, an extraction archive and a Project VIC import are not disks. "
+    "'Walked, still listed' is a file a filesystem still lists, so it arrived "
+    "with its name, path and whatever dates that filesystem holds. 'Recovered "
+    "from a deleted record' is a file the filesystem no longer lists, whose "
+    "deleted directory or MFT record still named it, so it comes back under its "
+    "real name; it is refused outright once a later file has taken a cluster it "
+    "needs, so overwritten bytes are never presented as the file. 'Carved from "
+    "unclaimed space' is a signature match in space no volume claims, with no "
+    "name, path or date of its own, filed under the byte offset it was found at, "
+    "which is why such a row's File Name is an offset and its date columns are "
+    "empty. A file extracted from an archive found inside a source carries the "
+    "same value as the archive it came out of. Capture Time is the camera's own clock as recorded "
     "in the file, carries no timezone, and is reported as text rather than as an "
     "instant so nothing downstream can shift it. Faces is a count from an optional "
     "screening pass and Skin Ratio the fraction of pixels that pass found in a broad "

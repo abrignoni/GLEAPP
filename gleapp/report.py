@@ -23,7 +23,7 @@ _CSV_FIELDS = [
     "category", "category_label", "triage",
     "hashset_hit", "hashset_cat", "hashset_kind",
     "stack_id", "vstack_id", "cluster_id", "notes",
-    "media_id", "orig_name", "orig_path", "mime",
+    "media_id", "orig_name", "orig_path", "mime", "origin",
 ]
 
 
@@ -245,6 +245,30 @@ def _recorded(d) -> str:
     return "; ".join(f"{k} {v}" for k, v in got.items() if v)
 
 
+# files.origin (db.ORIGINS) as a phrase, for the surfaces a person reads. The
+# stored value goes out unchanged in the CSV and JSON exports, which are read by
+# a machine; the HTML report and the LAVA artifact show these instead, and both
+# take them from here so the wording cannot drift between them.
+_ORIGIN_LABELS = {
+    "walk": "walked, still listed",
+    "deleted": "recovered from a deleted record",
+    "carve": "carved from unclaimed space",
+}
+
+
+def _origin_label(d) -> str:
+    """How this row's file was recovered, in words.
+
+    Empty for a row with no origin recorded, which is every row of a case built
+    before the column existed and every row from a folder or archive source: the
+    question only has an answer for an acquisition. An unrecognised value is
+    passed through as stored rather than dropped, so a value this version does
+    not know about is still visible to whoever reads the report.
+    """
+    got = d.get("origin") or ""
+    return _ORIGIN_LABELS.get(got, got)
+
+
 # key -> (label, value fn, is_monospace).  The report dialog offers exactly
 # these; the examiner picks which appear under each image.
 _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
@@ -275,6 +299,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "faces":      ("Faces",         lambda d: str(d["faces"]) if d.get("faces") else "", False),
     "skin_ratio": ("Skin ratio",    lambda d: f"{d['skin_ratio']:.2f}" if d.get("skin_ratio") else "", False),
     "source":     ("Source",        lambda d: d.get("source") or "", False),
+    "origin":     ("How recovered", _origin_label, False),
     "mime":       ("MIME type",     lambda d: d.get("mime") or "", False),
     "media_id":   ("VIC MediaID",   lambda d: str(d["media_id"]) if d.get("media_id") is not None else "", False),
     "hashset":    ("Known hash",    lambda d: d.get("hashset_hit") or "", False),
