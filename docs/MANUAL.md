@@ -888,20 +888,30 @@ machine unless you explicitly **Export** it or point it at a shared location.
 
 GLEAPP ships no map data and fetches none, so a subject's coordinates never
 reach a server somebody else runs. Import a basemap file once, with the
-**Maps** button in the header, and the gallery draws maps from it, entirely
-offline: GLEAPP copies the file under its own data folder and records its
-SHA-256.
+**Maps** button in the header, and the gallery and the reports draw maps from
+it, entirely offline: GLEAPP copies the file under its own data folder and
+records its SHA-256.
 
-The details pane then shows a map for any file with GPS, and **Show current
-filter on the map** plots every geolocated file matching your filters, with a
-popup thumbnail that opens the file. The HTML report (§14) also draws its own
-maps from the basemap and embeds them: a **Locations** overview near the top
-and a small locator map on each geolocated card the basemap covers, both baked
-into the report file so it stays self-contained; the summary names the basemap
-and its hash so a reader can obtain the same file and see the same map years
-later.
+### Where the coordinates come from
 
-**Getting a basemap.** Two formats are accepted:
+A file appears on a map only when it already carried coordinates, and there are
+two ways they reach the case:
+
+- **EXIF GPS tags on an image**: `GPSLatitude` / `GPSLongitude` with their
+  reference letters, converted from the degrees, minutes and seconds the tag
+  holds and stored rounded to seven decimal places.
+- **A Project VIC import** (§7): the `Lat/Lon` pair where the entry has one,
+  otherwise the separate `Latitude` / `Longitude` rows with their references.
+
+Location is not read out of video containers, so every mapped file is an image
+with a GPS tag or a row a VIC file gave coordinates to. A file with no GPS tag
+is absent from the map and from the KMZ, which is an absent tag rather than an
+absent location. And the coordinates are where the recording device wrote that
+it was, which is not the same claim as where the device was.
+
+### Getting a basemap
+
+Two formats are accepted:
 
 - **`.pmtiles`** (recommended): a region cut from a Protomaps planet build.
   Install the `pmtiles` tool from
@@ -913,28 +923,106 @@ later.
   pmtiles extract https://build.protomaps.com/20260902.pmtiles dc.pmtiles --bbox=-77.12,38.79,-76.90,38.99
   ```
 
-  That reads only the tiles inside the box, at every zoom level from 0 to 15.
-  A metro area comes out at tens of megabytes and a small country under a
-  hundred, at street-level detail. Add `--maxzoom=13` for a smaller file when
-  street-level detail is not needed. `gleapp maps extract --bbox=W,S,E,N --out
-  area.pmtiles --build URL` runs the same command when the tool is on your
-  PATH, and prints it otherwise.
+  Write the box with the `=`, because a western longitude starts with a minus
+  sign and the shell would otherwise read it as another flag. That reads only
+  the tiles inside the box, at every zoom level from 0 to 15. Measured on
+  2026-09-04 against the 137.7 GB planet build: the box above came out at 28 MB
+  in 8 s, and all of Puerto Rico (`--bbox=-67.30,17.85,-65.20,18.55`) at 70 MB
+  in 11 s. Add `--maxzoom=13` for a smaller file when street-level detail is
+  not needed. `gleapp maps extract --bbox=W,S,E,N --out area.pmtiles --build
+  URL` runs the same command when the tool is on your PATH; without `--build`
+  it prints the command for you to run and changes nothing.
 - **`.mbtiles`** (raster): a fallback for a map you already have, made with
   QGIS, MapTiler Desktop or a GIS shop's own tooling. Vector MBTiles are not
-  accepted.
+  accepted, since they would need a second style, second fonts and second
+  sprites for a format `.pmtiles` already covers.
 
-**Importing.** The **Maps** button in the header, or `gleapp maps import
-area.pmtiles`. The first basemap imported becomes the active one; import
-another and switch between them from the same panel. The same actions exist on
-the command line as `gleapp maps list | import | remove | use | extract`.
+Cut the box wide enough to hold the coordinates in the case. A file outside it
+gets no map, and the reports say so rather than drawing an empty square.
 
-**Licenses.** The Protomaps builds are OpenStreetMap data under the ODbL, and
-the map shows "© OpenStreetMap contributors" as that licence asks, as plain
-text rather than a link (a link would be the one outbound address on the
-page). MapLibre GL JS and PMTiles are BSD-3-Clause; the PMTiles specification
-is public domain; the Noto Sans glyphs are under the SIL Open Font License.
-All of it is vendored under `gleapp/web/static/maps/` with its license texts,
-and the page loads nothing else.
+### Importing and switching
+
+The **Maps** button in the header, then **Import basemap file…**, or `gleapp
+maps import area.pmtiles`. GLEAPP copies the file under its data folder and
+hashes it in the same pass; your original is not moved or modified. The first
+basemap imported becomes the active one, and the panel lists every basemap with
+its format, zoom range, size, SHA-256 and attribution, with a radio button to
+pick the active one and **Remove** to delete GLEAPP's copy.
+
+Basemaps live at `%LOCALAPPDATA%\GLEAPP\basemaps\` (macOS
+`~/Library/Application Support/GLEAPP/basemaps/`, Linux
+`~/.config/GLEAPP/basemaps/`),
+each as the copied file plus a small `.json` sidecar holding what the panel
+shows. They belong to the machine rather than to a case, so one import serves
+every case, and none of the `maps` commands need `-c`.
+
+| Command | Does |
+|---|---|
+| `gleapp maps list` | every basemap with format, size, zoom range and SHA-256; `*` marks the active one |
+| `gleapp maps import FILE` | copy it in and hash it; `--name NAME` files it under your own name |
+| `gleapp maps use NAME` | make that one active |
+| `gleapp maps remove NAME` | delete GLEAPP's copy; your original file is untouched |
+| `gleapp maps extract` | cut a region, or print the command that would |
+
+### Using the map in the gallery
+
+Tick **Has GPS** under **Location** in the filter panel (§8) to work with the
+geolocated files alone. **Maps** → **Show current filter on the map** then
+plots every geolocated file matching your current filters on one full-screen
+map, framed to fit them, up to 5,000 points; the header says how many, and says
+so when there were more than it drew. Clicking a point opens a popup with the
+file's thumbnail and a **Details** button, either of which takes you to that
+file. The details pane (§6) carries the same map for one file, with a **⤢ Full
+size** button, above the GPS row and its **Copy** button.
+
+### Coverage: a file outside the box gets no map
+
+Before drawing a locator, GLEAPP asks the basemap whether it holds a tile at
+that point, and skips the file when it does not. An uncovered point renders as
+the background colour with a marker on it, which reads as a real place with
+nothing around it: measured on a regional basemap, a point outside its coverage
+drew an image that was 98.3% a single colour against 11% for a point inside it.
+
+The HTML report and the LAVA project both skip those files and both count them,
+so two reports built from one case agree. A card with no locator map therefore
+means the basemap does not cover it, no basemap is imported, the 400-file cap
+was reached, or the draw failed, and the report names which. It never means the
+location is unknown: the coordinates are still on the row, in the CSV and JSON
+exports, and in the KMZ.
+
+### What the reports carry
+
+§14 has the detail. In short: the HTML report embeds a **Locations** overview
+and a locator on each covered geolocated file, with a note counting the files
+that got none and why; the LAVA project carries a **Media Locations** artifact
+with a Map column, a **Location Overview** artifact, the basemap name and hash
+on Device Info, and the same tally on its Screen Output page; and both name the
+basemap and its SHA-256 so a reader can obtain the same file and see the same
+map. Untick **Draw location maps** in the Export dialog, or pass `--no-maps` to
+`gleapp report`, to leave them out.
+
+The KMZ is the exception: it holds placemarks and bundled thumbnails and no map
+of its own, so it needs no basemap, is not limited by one's coverage, and is
+the export that shows every geolocated file wherever it sits.
+
+### What the mapping does not do
+
+No geocoding, so no addresses and no place-name lookups in either direction. No
+tracks or paths, only points. No marker clustering, so a thousand files in one
+city are a thousand overlapping markers until you zoom in. No location from
+video. And nothing is fetched: no tile server, no CDN, no font server, and the
+OpenStreetMap credit is plain text rather than a link, because a link would be
+the one outbound address on the page.
+
+### Licenses
+
+The Protomaps builds are OpenStreetMap data under the ODbL, and the map shows
+"© OpenStreetMap contributors" as that licence asks. A basemap whose metadata
+names no source is credited "Basemap supplied by the examiner" rather than
+guessed at. MapLibre GL JS and PMTiles are BSD-3-Clause; the PMTiles
+specification is public domain; the Noto Sans glyphs are under the SIL Open
+Font License. All of it is vendored under `gleapp/web/static/maps/` with its
+license texts, and the page loads nothing else.
 
 ## 20. Credits & acknowledgements
 
