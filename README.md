@@ -391,9 +391,11 @@ them in the file, so a saved report is self-contained and still fetches nothing.
 "Locations" overview near the top plots every geolocated file on one map, and each
 geolocated file carries a small locator map with a marker. A raster basemap is drawn by
 compositing its tiles; a vector `.pmtiles` is drawn by decoding its tiles and filling
-land, water and land use and stroking roads, in a flat print-friendly palette (no labels:
-it is a locator, not the interactive map). Pass `--no-maps` to `gleapp report`, or turn
-off maps in the Export dialog, to leave them out.
+land, water and land use and stroking roads, in a flat print-friendly palette. The
+place, water and street names the tiles carry are drawn over that, where Pillow can
+supply a scalable font; without one the map is drawn with no labels rather than failing.
+A raster basemap carries its labels in its tiles already. Untick **Draw location maps**
+in the Export dialog, or pass `--no-maps` to `gleapp report`, to leave them out.
 
 **Raster MBTiles also work**, as a fallback for a map you already have: a `.mbtiles`
 of image tiles made with QGIS, MapTiler Desktop or a GIS shop's own tooling. GLEAPP
