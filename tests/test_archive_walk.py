@@ -428,6 +428,55 @@ def test_one_volume_that_cannot_say_drops_the_scope_for_the_whole_image(monkeypa
     case.close()
 
 
+def test_a_disk_with_nothing_free_scopes_to_nothing_rather_than_to_everything(
+        monkeypatch, tmp_path):
+    """A volume that CAN answer and says nothing is free must not read as silence.
+
+    The two None cases above are volumes that could not answer, and scanning the
+    whole image is the safe reply to those. A volume that answers "no free runs"
+    has answered, and the answer is that there is nothing for an unallocated-only
+    carve to read. Returning None there would hand back the largest possible scan
+    in reply to a request for the smallest, and every hit in it would sit inside a
+    live file the walk already named.
+    """
+    image = _image(tmp_path)
+    case, _ = _ingest(tmp_path, image, name="nofree")
+    rec = list(archive.source_records(case).values())[0]
+    img = archive.ewfprobe.open_ewf(rec["path"])
+    vols = archive._volumes(img)                     # pylint: disable=protected-access
+
+    class _Full:
+        def free_extents(self, min_bytes=0):         # pylint: disable=unused-argument
+            return []
+
+    monkeypatch.setattr(archive.qnxprobe, "walker_for", lambda *a, **k: _Full())
+    got = archive._unclaimed_space(img, vols)        # pylint: disable=protected-access
+    assert got == [], (
+        "every volume answered, and answered that nothing is free, so the scope is "
+        f"empty rather than absent; got {got!r}")
+    assert got is not None, "an empty scope must not be confused with 'cannot say'"
+    img.close()
+    case.close()
+
+
+def test_a_carve_of_a_disk_with_nothing_free_adds_no_rows(monkeypatch, tmp_path):
+    """The end to end version: the scope is honoured, so the carve reads nothing."""
+    case, _ = _ingest(tmp_path, _image(tmp_path), name="nofreecarve")
+
+    class _Full:
+        def free_extents(self, min_bytes=0):         # pylint: disable=unused-argument
+            return []
+
+    monkeypatch.setattr(archive.qnxprobe, "walker_for", lambda *a, **k: _Full())
+    added = archive.carve_source(case, "acq.E01", unallocated_only=True)
+    scope = case.db.get_meta(f"{archive._meta_key('acq.E01')}:carve_scope")  # pylint: disable=protected-access
+    case.close()
+    assert added == 0, (
+        f"nothing is free, so an unallocated-only carve must add no rows; added {added}")
+    assert scope == "0 runs of space no volume claims, 0 bytes", (
+        f"the case must record that the scope was empty, not stay silent; got {scope!r}")
+
+
 def test_a_volume_that_raises_does_not_silently_narrow_the_scan(monkeypatch, tmp_path):
     image = _image(tmp_path)
     case, _ = _ingest(tmp_path, image, name="raises")
