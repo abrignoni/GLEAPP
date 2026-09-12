@@ -711,7 +711,7 @@ want, or current selection) and one or more **formats**:
 | KMZ | geolocated media for Google Earth / mapping tools: a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location |
 | MD5 list | one hash per row (also from the selection bar / right-click) |
 | Project VIC JSON | the original VIC file with Category / Comments / Tags written back, keyed by MediaID and MD5 (VIC cases) |
-| LAVA report | a project folder LAVA opens: the media, a location map for each geolocated file and an overview map drawn offline from the basemap you imported (§19), the video key frames, and the artifact tables. Takes minutes rather than seconds, so it runs as a job and the bar at the bottom follows it |
+| LAVA report | a project folder LAVA opens: the media, a location map for each geolocated file the basemap covers and an overview map drawn offline from the basemap you imported (§19), the video key frames, and the artifact tables. Takes minutes rather than seconds, so it runs as a job and the bar at the bottom follows it |
 
 Filesystem / ingest times in the HTML and CSV are rendered in the case's
 **timezone** (section 3), with the abbreviation shown (e.g. `2024-07-01 11:00
@@ -743,8 +743,11 @@ images, light mode.
 
 The report also draws its own **location maps** from the active basemap
 (§19), if one is imported and any files are geolocated: a **Locations**
-overview of every geolocated file near the top, and a small locator map on
-each geolocated card. Those images are baked into the report file, so it stays
+overview near the top, and a small locator map on each geolocated card the
+basemap covers. A file whose coordinates fall outside the basemap gets no map,
+because one would render as an empty background with a marker on it; the note
+under the overview counts those files, and the overview frames only the files
+it drew. Those images are baked into the report file, so it stays
 self-contained; the summary names the basemap and its hash so a reader can
 obtain the same file and see the same map. Pass `--no-maps` to `gleapp report`
 to leave the report maps out; there is no equivalent toggle in the Export
@@ -892,9 +895,10 @@ The details pane then shows a map for any file with GPS, and **Show current
 filter on the map** plots every geolocated file matching your filters, with a
 popup thumbnail that opens the file. The HTML report (§14) also draws its own
 maps from the basemap and embeds them: a **Locations** overview near the top
-and a small locator map on each geolocated card, both baked into the report
-file so it stays self-contained; the summary names the basemap and its hash so
-a reader can obtain the same file and see the same map years later.
+and a small locator map on each geolocated card the basemap covers, both baked
+into the report file so it stays self-contained; the summary names the basemap
+and its hash so a reader can obtain the same file and see the same map years
+later.
 
 **Getting a basemap.** Two formats are accepted:
 
