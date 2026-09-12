@@ -1148,6 +1148,10 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
 def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
     """[(offset, length)] of the space no volume claims, or None if it cannot say.
 
+    An empty list is an answer and not a silence: every volume reported, and
+    between them they claim the whole disk, so an unallocated-only carve has
+    nothing to read. Only None means scan everything.
+
     A signature found inside an allocated run belongs to a file the directory
     tree already names, so scanning only what a volume reports free is both far
     less work and far better material: of the 384,386 hits a carve of the
@@ -1172,7 +1176,7 @@ def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
         except Exception:                            # pylint: disable=broad-except
             return None                              # nor can it be read at all
         out.extend(runs)
-    return sorted(out) or None
+    return sorted(out)
 
 
 def _ingest_ewf(case, src, image_path: Path, *, count: int, progress,
