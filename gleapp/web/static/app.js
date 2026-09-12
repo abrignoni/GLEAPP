@@ -2101,7 +2101,25 @@ function updateKnownHash(kh) {
   $("#stashInfo").textContent = st && st.total
     ? `🔒 Hash stash: ${st.total.toLocaleString()} MD5(s) — click to manage`
     : "🔒 Hash stash: empty — click to add your category 1–3 hashes";
+  $("#fusestash").checked = kh.use_stash !== false;
 }
+$("#fusestash").addEventListener("change", async () => {
+  const on = $("#fusestash").checked;
+  const r = await api("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ use_stash: on })
+  });
+  if (r.error) { $("#fusestash").checked = !on; return toast(r.message || "Could not change this"); }
+  if (on) {
+    toast("Hash stash matching on — click Re-check to check files already in this case");
+  } else {
+    toast(r.cleared
+      ? `Hash stash matching off — ${r.cleared.toLocaleString()} stash hit(s) cleared`
+      : "Hash stash matching off for this case");
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+    load();
+  }
+});
 
 /* ---------- nested archives (.zip / .tar / .gz inside a source) ---------- */
 function updateArchInfo(a) {
@@ -2263,6 +2281,8 @@ function renderCaseSets(sets) {
   if (sel) {
     const cur = sel.value;
     sel.innerHTML = `<option value="">— all files —</option>` +
+      `<option value="*good">Only: NSRL / known-good hits</option>` +
+      `<option value="Local Hash Stash">Only: Hash stash hits</option>` +
       (sets.length ? `<option value="*">Any imported hash set</option>` : "") +
       sets.map(s => `<option value="${esc(s.name)}">Only: ${esc(s.name)}</option>`).join("");
     sel.value = [...sel.options].some(o => o.value === cur) ? cur : "";
@@ -2854,7 +2874,8 @@ $("#createGo").onclick = async () => {
   const cr = await api("/api/case/create", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      path, name: $("#newName").value.trim(), examiner: $("#newExaminer").value.trim()
+      path, name: $("#newName").value.trim(), examiner: $("#newExaminer").value.trim(),
+      use_stash: $("#optStash").checked
     })
   }).catch(() => ({ error: true, message: "request failed" }));
   if (cr.error) return fail(cr.message || "Could not create case");

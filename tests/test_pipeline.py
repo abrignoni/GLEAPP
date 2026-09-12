@@ -452,6 +452,9 @@ def test_local_hash_stash(tmp_path):
             hit = hashdb.match_file(c2.db, c2.db.get_file(fid))
             assert hit and hit["name"] == stash.STASH_NAME
             assert hit["kind"] == "known" and hit["category"] == 1
+
+            # use_stash=False - a non-CSAM case - skips the stash entirely
+            assert hashdb.match_file(c2.db, c2.db.get_file(fid), use_stash=False) is None
         finally:
             c2.close()
 
@@ -461,6 +464,33 @@ def test_local_hash_stash(tmp_path):
         assert stash.clear() == 2 and stash.summary()["total"] == 0
         stash.merge(dump)
         assert stash.summary()["by_category"] == {1: 1, 2: 1}
+    finally:
+        c.close()
+
+
+def test_rematch_hashes_respects_the_use_stash_case_flag(tmp_path):
+    from gleapp import stash
+    from gleapp.pipeline import rematch_hashes
+
+    stash.add([("a" * 32, 1)])
+    c = open_case(tmp_path / "case", create=True, examiner="t")
+    try:
+        fid = c.db.upsert_file("/x/a.jpg", kind="image", md5="a" * 32)
+        c.db.commit()
+
+        # the default (no meta set) is on, same as before this flag existed
+        assert rematch_hashes(c) == 1
+        assert c.db.get_file(fid)["hashset_hit"] == stash.STASH_NAME
+
+        # a non-CSAM case turns it off - the stash hit is dropped, not just ignored
+        c.db.set_meta("use_stash", "0")
+        assert rematch_hashes(c) == 0
+        assert c.db.get_file(fid)["hashset_hit"] is None
+
+        # switching it back on picks the stash hit back up
+        c.db.set_meta("use_stash", "1")
+        assert rematch_hashes(c) == 1
+        assert c.db.get_file(fid)["hashset_hit"] == stash.STASH_NAME
     finally:
         c.close()
 
@@ -507,6 +537,98 @@ def test_stash_endpoints(tmp_path):
     assert st["stash"]["by_category"] == {"1": 1, "2": 1}
 
     assert cl.post("/api/stash/clear").get_json()["removed"] == 2
+
+
+def test_stash_merge_and_clear_work_with_no_case_open(tmp_path):
+    from gleapp.web.app import create_app
+
+    app = create_app(None)
+    cl = app.test_client()
+    assert cl.get("/api/context").get_json()["needs_case"] is True
+
+    dump = tmp_path / "colleague.csv"
+    dump.write_text("md5,category,source\n" + "a" * 32 + ",1,colleague\n", encoding="utf-8")
+    r = cl.post("/api/stash/merge", json={"path": str(dump)}).get_json()
+    assert r["ok"] and r["added"] == 1
+
+    r = cl.post("/api/stash/clear").get_json()
+    assert r["ok"] and r["removed"] == 1
+
+
+def test_use_stash_flag_set_at_creation_and_toggled_via_settings(tmp_path):
+    from gleapp.web.app import create_app
+
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create",
+           json={"path": str(tmp_path / "c"), "name": "S", "use_stash": False})
+    assert cl.get("/api/context").get_json()["known_hash"]["use_stash"] is False
+
+    r = cl.post("/api/settings", json={"use_stash": True}).get_json()
+    assert r["ok"] and r["use_stash"] is True
+    assert cl.get("/api/context").get_json()["known_hash"]["use_stash"] is True
+
+    r = cl.post("/api/settings", json={"use_stash": False}).get_json()
+    assert r["ok"] and r["use_stash"] is False
+    assert cl.get("/api/context").get_json()["known_hash"]["use_stash"] is False
+
+
+def test_turning_off_use_stash_clears_existing_stash_hits_but_not_others(tmp_path):
+    from gleapp import stash
+    from gleapp.web.app import create_app
+
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "c"), "name": "S"})
+    c = app.config["STATE"]["case"]
+    stashed = c.db.upsert_file("/x/a.jpg", kind="image", md5="a" * 32, rel_path="a.jpg")
+    other = c.db.upsert_file("/x/b.jpg", kind="image", md5="b" * 32, rel_path="b.jpg")
+    c.db.update_file(stashed, hashset_hit=stash.STASH_NAME, hashset_kind="known",
+                     hashset_cat=1, category=1)
+    c.db.update_file(other, hashset_hit="CyberTip 9999", hashset_kind="known",
+                     hashset_cat=2, category=2)
+    c.db.commit()
+
+    r = cl.post("/api/settings", json={"use_stash": False}).get_json()
+    assert r["ok"] and r["use_stash"] is False and r["cleared"] == 1
+
+    a = c.db.get_file(stashed)
+    assert a["hashset_hit"] is None and a["hashset_kind"] is None and a["hashset_cat"] is None
+    assert a["category"] == 1                       # the category itself is left alone
+    b = c.db.get_file(other)
+    assert b["hashset_hit"] == "CyberTip 9999"       # an unrelated hit is untouched
+    assert b["category"] == 2
+
+
+def test_use_stash_setting_requires_a_case():
+    from gleapp.web.app import create_app
+
+    app = create_app(None)
+    cl = app.test_client()
+    assert cl.post("/api/settings", json={"use_stash": True}).status_code == 409
+
+
+def test_files_filter_by_known_good_and_stash_hashset_name(tmp_path):
+    """The sidebar's "Show" dropdown filters to NSRL/known-good hits (*good)
+    or the local hash stash's own hits, by exact hashset_hit / hashset_kind -
+    no case-imported set required for either."""
+    from gleapp.web.app import create_app
+
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "kg"), "name": "KG"})
+    c = app.config["STATE"]["case"]
+    nsrl_id = c.db.upsert_file("/e/nsrl.jpg", kind="image", md5="a" * 32, rel_path="nsrl.jpg")
+    stash_id = c.db.upsert_file("/e/stash.jpg", kind="image", md5="b" * 32, rel_path="stash.jpg")
+    c.db.upsert_file("/e/plain.jpg", kind="image", md5="c" * 32, rel_path="plain.jpg")
+    c.db.update_file(nsrl_id, hashset_hit="NSRL Modern 2026.03.1", hashset_kind="known-good")
+    c.db.update_file(stash_id, hashset_hit="Local Hash Stash", hashset_kind="known")
+    c.db.commit()
+
+    assert [f["rel_path"] for f in
+            cl.get("/api/files?hashset_name=*good").get_json()["files"]] == ["nsrl.jpg"]
+    assert [f["rel_path"] for f in
+            cl.get("/api/files?hashset_name=Local Hash Stash").get_json()["files"]] == ["stash.jpg"]
 
 
 def test_video_keyframes(case):
