@@ -292,12 +292,17 @@ def rematch_hashes(case: Case, *, progress=None) -> int:
     reprocess.  Clears stale hits first, re-adopts an asserted category only
     when the file is still uncategorized and the set is 'known'.  Returns the
     number of current hits.
+
+    Skips the examiner's hash stash for this run when the case's own
+    ``use_stash`` meta flag is turned off (a non-CSAM case, say) - see
+    ``hashdb.match_file``.
     """
     from .db import NONPERTINENT_CATEGORY
+    use_stash = case.db.get_meta("use_stash") != "0"
     rows = list(case.db.iter_files("md5 IS NOT NULL OR sha256 IS NOT NULL"))
     total, hits = len(rows), 0
     for i, r in enumerate(rows, 1):
-        hit = hashdb.match_file(case.db, r)
+        hit = hashdb.match_file(case.db, r, use_stash=use_stash)
         if hit:
             hits += 1
             case.db.update_file(r["id"], hashset_hit=hit["name"],

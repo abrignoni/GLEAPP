@@ -162,11 +162,16 @@ def import_hashset(
     return hs_id, added
 
 
-def match_file(db: CaseDB, row, *, phash_threshold: int = 6) -> dict | None:
+def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
+               use_stash: bool = True) -> dict | None:
     """Return {'name','kind','category','via'} for the first hit, else None.
 
     Checks the case's own hash sets first, then the shared global store
     (``gleapp.hashstore`` - where big reference sets like the NSRL RDS live).
+
+    ``use_stash=False`` skips the examiner's own hash stash for this file -
+    for a case that isn't CSAM/Project VIC related, where a stashed cat 1-3
+    hash re-flagging unrelated media would be noise, not a hit.
     """
     from . import hashstore, stash
 
@@ -178,7 +183,7 @@ def match_file(db: CaseDB, row, *, phash_threshold: int = 6) -> dict | None:
         if hit:
             return {"name": hit["name"], "kind": hit["kind"],
                     "category": hit["category"], "via": algo}
-        if algo == "md5":
+        if algo == "md5" and use_stash:
             # the examiner's own stash takes precedence over reference sets
             st = stash.lookup(val)
             if st:

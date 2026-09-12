@@ -325,6 +325,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         state["case"] = open_case(path, create=True, examiner=examiner)
         if data.get("name"):
             state["case"].db.set_meta("case_name", str(data["name"]))
+        if data.get("use_stash") is False:
+            # default is on (matches an existing case with no meta set yet);
+            # only write the flag when the examiner turned it off at creation
+            state["case"].db.set_meta("use_stash", "0")
         # Deliberately NOT pushed to "recent" yet - only cases that get files
         # ingested land there (see _run_job), so abandoned shells don't show.
         return jsonify({"ok": True, "case": state["case"].db.get_meta("case_name")})
@@ -919,7 +923,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             _hn = q.get("hashset_name", "")
             if _hn == "*":                       # any set imported into this case
                 where.append("hashset_hit IN (SELECT name FROM hashsets)")
-            elif _hn:                            # one named set
+            elif _hn == "*good":                 # any NSRL / known-good reference hit
+                where.append("hashset_kind = 'known-good'")
+            elif _hn:                            # one named set (or the hash stash)
                 where.append("hashset_hit = ?")
                 params.append(_hn)
             if q.get("hidegood") == "1":
@@ -1289,6 +1295,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 "global_entries": hstore["entries"],
                 "case_sets": [dict(r) for r in case.db.list_hashsets()],
                 "stash": stash_sum,
+                "use_stash": case.db.get_meta("use_stash") != "0",
             },
             "screening": {
                 # screened_at is set by a screening pass or by an ingest with
@@ -1551,6 +1558,29 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             appconfig.set_timezone(tz)
             return jsonify({"ok": True, "timezone": tz,
                             "label": timeutil.label(tz)})
+        if "use_stash" in body:
+            # per-case: skip the examiner's hash stash for a case that isn't
+            # CSAM/Project VIC related, where a stashed hit would be noise
+            case = state["case"]
+            if case is None:
+                abort(409, description="no case open")
+            on = bool(body.get("use_stash"))
+            case.db.set_meta("use_stash", "1" if on else "0")
+            cleared = 0
+            if not on:
+                # turning it off should not leave stale stash badges/flags
+                # behind - clear them immediately rather than waiting on a
+                # manual Re-check. The category it may have set is left
+                # alone, same as any other hash-set hit that stops matching.
+                from .. import stash
+                cur = case.db.conn.execute(
+                    "UPDATE files SET hashset_hit=NULL, hashset_cat=NULL, "
+                    "hashset_kind=NULL WHERE hashset_hit = ?", (stash.STASH_NAME,))
+                cleared = cur.rowcount
+                case.db.commit()
+            case.db.audit_log(case.examiner, "set_use_stash",
+                              "on" if on else f"off, {cleared} stash hit(s) cleared")
+            return jsonify({"ok": True, "use_stash": on, "cleared": cleared})
         return jsonify({"ok": True})
 
     def _scope_where(body: dict) -> tuple[str, str]:
