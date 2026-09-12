@@ -84,8 +84,16 @@ def test_origin_is_selectable_and_filterable_from_the_details_list():
     assert "origin" in webapp.FIELDS                    # LIST_COLS must all be in FIELDS
     js = (REPO / "gleapp/web/static/app.js").read_text(encoding="utf-8")
     assert 'key: "origin"' in js
-    for value in ORIGINS:                               # the picker's labels come from one map
-        assert re.search(rf'^\s*{value}: "', js, re.M), f"app.js ORIGIN_LABEL lacks {value}"
+    # two wordings, and both have to cover every origin: the sidebar filter can
+    # explain itself, a 130px column cannot, so the cells carry a short form.
+    for const in ("ORIGIN_LABEL", "ORIGIN_SHORT"):
+        block = js.split(f"const {const} = {{", 1)[1].split("};", 1)[0]
+        covered = set(re.findall(r"^\s*([a-z]+):", block, re.M))
+        assert covered == set(ORIGINS), f"app.js {const} covers {sorted(covered)}"
+    # the short form has to fit the column it renders in, or every row is elided
+    short = js.split("const ORIGIN_SHORT = {", 1)[1].split("};", 1)[0]
+    longest = max(len(m) for m in re.findall(r'"([^"]+)"', short))
+    assert longest <= 16, f"the longest short label is {longest} characters, too wide for the column"
 
 
 # ---- a real case holding all three --------------------------------------

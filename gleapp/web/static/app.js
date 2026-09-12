@@ -322,12 +322,24 @@ const shortHash = h => !h ? "" : h.length > 12 ? h.slice(0, 12) + "…" : h;
 // get(f):   display string
 // mono:     render in monospace
 // options:  for enum filters — array or () => array of {value,label}
-// The three ways a file reaches a case, as the filter dropdown words them. The
-// keys are the stored files.origin values (gleapp/db.py ORIGINS).
+// The three ways a file reaches a case. The keys are the stored files.origin
+// values (gleapp/db.py ORIGINS).
+//
+// Two wordings, because the two places this appears have very different room.
+// The "How recovered" filter is a sidebar select that can explain itself. A
+// list-view column defaults to 130px for an enum, and the long phrases measure
+// 185px and 202px, so every row of a case of deleted recoveries would render as
+// "Recovered from a ..." and have to be hovered to be read. The column is headed
+// "How recovered", which supplies the context the short form drops.
 const ORIGIN_LABEL = {
   walk: "Walked, still listed",
   deleted: "Recovered from a deleted record",
   carve: "Carved from unclaimed space",
+};
+const ORIGIN_SHORT = {
+  walk: "Walked",
+  deleted: "Deleted record",
+  carve: "Carved",
 };
 
 const LIST_DEFS = [
@@ -351,8 +363,8 @@ const LIST_DEFS = [
     options: () => state.sources.map(s => ({ value: s, label: s })) },
   // How the row was recovered. Only an acquisition has more than one answer, so
   // this is off by default and turned on from the column picker.
-  { key: "origin", label: "How recovered", type: "enum", get: f => ORIGIN_LABEL[f.origin] || "",
-    options: () => Object.entries(ORIGIN_LABEL).map(([value, label]) => ({ value, label })) },
+  { key: "origin", label: "How recovered", type: "enum", get: f => ORIGIN_SHORT[f.origin] || "",
+    options: () => Object.entries(ORIGIN_SHORT).map(([value, label]) => ({ value, label })) },
   { key: "kind", label: "Type", type: "enum", get: f => f.kind || "",
     options: [{ value: "image", label: "image" }, { value: "video", label: "video" },
               { value: "other", label: "other" }] },
