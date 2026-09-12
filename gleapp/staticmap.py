@@ -267,7 +267,7 @@ def _paint_vector(draw, layers, ox, oy, pal):
 
 def render(rec: dict, points, *, width: int = 480, height: int = 320,
            zoom: int | None = None, flavor: str = "light", cache: dict | None = None,
-           fmt: str = "png", labels: bool = True) -> bytes:
+           fmt: str = "png", labels: bool = True, return_points: bool = False):
     """A PNG locator image of ``points`` (a list of (lon, lat)) on ``rec``.
 
     A single point is centred; several points are framed to fit them all. Reads
@@ -277,6 +277,11 @@ def render(rec: dict, points, *, width: int = 480, height: int = 320,
     ``labels`` draws the street, water and place names a vector basemap carries, so
     a locator says where it is rather than only showing a shape. A raster basemap
     has its labels baked into its tiles already and is unaffected.
+
+    ``return_points``, off by default, changes the return value to ``(bytes,
+    [(x, y), ...])`` - the marker for each of ``points`` (same order, one-to-one
+    when none of them is ``None``) in the *finished* image's own pixel space, so
+    a caller can lay an HTML image map's clickable areas exactly on the markers.
     """
     from PIL import Image, ImageDraw
 
@@ -339,9 +344,11 @@ def render(rec: dict, points, *, width: int = 480, height: int = 320,
         _draw_labels(draw, label_points, pal, W, H)
 
     r = 7 * _SS
+    marker_px: list[tuple[float, float]] = []
     for lon, lat in pts:
         wx, wy = _world_px(lon, lat, z)
         sx, sy = wx * _SS - left, wy * _SS - top
+        marker_px.append((sx / _SS, sy / _SS))          # position in the FINAL (downscaled) image
         draw.ellipse((sx - r - _SS, sy - r - _SS, sx + r + _SS, sy + r + _SS),
                      fill=pal["marker_edge"])
         draw.ellipse((sx - r, sy - r, sx + r, sy + r), fill=pal["marker"],
@@ -354,4 +361,6 @@ def render(rec: dict, points, *, width: int = 480, height: int = 320,
         out.save(buf, "JPEG", quality=82)
     else:
         out.save(buf, "PNG", optimize=True)
+    if return_points:
+        return buf.getvalue(), marker_px
     return buf.getvalue()
