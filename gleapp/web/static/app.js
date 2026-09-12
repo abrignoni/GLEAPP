@@ -322,6 +322,26 @@ const shortHash = h => !h ? "" : h.length > 12 ? h.slice(0, 12) + "…" : h;
 // get(f):   display string
 // mono:     render in monospace
 // options:  for enum filters — array or () => array of {value,label}
+// The three ways a file reaches a case. The keys are the stored files.origin
+// values (gleapp/db.py ORIGINS).
+//
+// Two wordings, because the two places this appears have very different room.
+// The "How recovered" filter is a sidebar select that can explain itself. A
+// list-view column defaults to 130px for an enum, and the long phrases measure
+// 185px and 202px, so every row of a case of deleted recoveries would render as
+// "Recovered from a ..." and have to be hovered to be read. The column is headed
+// "How recovered", which supplies the context the short form drops.
+const ORIGIN_LABEL = {
+  walk: "Walked, still listed",
+  deleted: "Recovered from a deleted record",
+  carve: "Carved from unclaimed space",
+};
+const ORIGIN_SHORT = {
+  walk: "Walked",
+  deleted: "Deleted record",
+  carve: "Carved",
+};
+
 const LIST_DEFS = [
   { key: "", label: "", type: "", get: () => "", thumb: true },
   { key: "id", label: "ID", type: "num", get: f => f.id },
@@ -341,6 +361,10 @@ const LIST_DEFS = [
   { key: "orig_name", label: "Original name", type: "text", get: f => f.orig_name || "" },
   { key: "source", label: "Source", type: "enum", get: f => f.source || "",
     options: () => state.sources.map(s => ({ value: s, label: s })) },
+  // How the row was recovered. Only an acquisition has more than one answer, so
+  // this is off by default and turned on from the column picker.
+  { key: "origin", label: "How recovered", type: "enum", get: f => ORIGIN_SHORT[f.origin] || "",
+    options: () => Object.entries(ORIGIN_SHORT).map(([value, label]) => ({ value, label })) },
   { key: "kind", label: "Type", type: "enum", get: f => f.kind || "",
     options: [{ value: "image", label: "image" }, { value: "video", label: "video" },
               { value: "other", label: "other" }] },
@@ -2798,10 +2822,13 @@ function renderCarveSection(list) {
   if (!el) return;
   el.innerHTML = ewf.map(s => {
     const ok = s.status === "ok";
-    const walked = s.walked || 0, cut = s.carved || 0;
+    // /api/context already splits this source's rows by origin; report all three
+    // it can carry, so a deleted-record recovery is visible here and not only in
+    // the filter.
+    const walked = s.walked || 0, cut = s.carved || 0, back = s.recovered || 0;
     return `<div style="margin:5px 0">
       <b title="${esc(s.path)}">${esc(s.name)}</b>
-      <span class="muted">· ${walked.toLocaleString()} walked${cut ? ` · ${cut.toLocaleString()} carved` : ""}</span>
+      <span class="muted">· ${walked.toLocaleString()} walked${back ? ` · ${back.toLocaleString()} recovered from deleted records` : ""}${cut ? ` · ${cut.toLocaleString()} carved` : ""}</span>
       <div style="margin-top:2px"><button class="btn sm" data-carve="${esc(s.name)}"${ok ? "" : " disabled"}
         title="Scan the space no volume claims for deleted images and video. A carved file has no name, path or date of its own. Runs the whole free area${cut ? "; offsets already carved are skipped" : ""}.">${cut ? "Carve again" : "Carve for deleted media"}</button></div>
     </div>`;

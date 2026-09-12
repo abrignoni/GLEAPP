@@ -49,7 +49,7 @@ from . import (__version__, archive, basemaps, categories, hashstore, stash,
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
-from .report import _disp_name, _disp_path
+from .report import RECORDED_LABEL, _disp_name, _disp_path, _origin_label, _recorded
 
 __all__ = ["export_lava"]
 
@@ -567,8 +567,8 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
     name = "Media Files"
     headers = [
         ("Modified Timestamp", "datetime"), ("Created Timestamp", "datetime"),
-        ("Accessed Timestamp", "datetime"), "Capture Time",
-        "File Name", "Path", "Also Under", "Source", ("Media", "media"),
+        ("Accessed Timestamp", "datetime"), RECORDED_LABEL, "Capture Time",
+        "File Name", "Path", "Also Under", "Source", "How Recovered", ("Media", "media"),
         "Kind", "Category", "Tags", "Reviewed By", "Examiner Notes",
         ("Size", "integer"), "Dimensions", "Duration", "Camera",
         "MD5", "SHA1", "SHA256", "Perceptual Hash",
@@ -581,10 +581,12 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
     for row in rows:
         data.append([
             _epoch(row.get("mtime")), _epoch(row.get("ctime")), _epoch(row.get("atime")),
+            _recorded(row),
             row.get("created_dt") or "",
             row.get("disp_name") or "", row.get("disp_path") or "",
             "\n".join(row.get("alt_list") or []),
             row.get("source") or "",
+            _origin_label(row),
             writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
             row.get("kind") or "", row.get("category_label") or "", row.get("tags") or "",
             row.get("reviewed_by") or "", row.get("notes") or "",
@@ -647,7 +649,8 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
            and r.get("gps_lon") is not None]
     headers = ["Capture Time", "File Name", ("Media", "media"), ("Map", "media"),
                ("Latitude", "real"), ("Longitude", "real"), "Camera", "Path",
-               "Category", ("Modified Timestamp", "datetime"), "MD5"]
+               "Category", ("Modified Timestamp", "datetime"), RECORDED_LABEL,
+               "MD5"]
     data = [[
         row.get("created_dt") or "", row.get("disp_name") or "",
         writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
@@ -655,7 +658,7 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
                          f'{row.get("disp_name") or ""} location'),
         row.get("gps_lat"), row.get("gps_lon"), row.get("camera") or "",
         row.get("disp_path") or "", row.get("category_label") or "",
-        _epoch(row.get("mtime")), row.get("md5") or "",
+        _epoch(row.get("mtime")), _recorded(row), row.get("md5") or "",
     ] for row in geo]
     writer.add_artifact(
         "GLEAPP Media", name, headers, data, icon="map-pin",
@@ -669,7 +672,10 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
             "the device was. A file with no GPS tag is absent from this artifact; that "
             "is an absent tag, not an absent location. Capture Time is the camera's "
             "own clock as recorded, with no timezone, so it is reported as text and "
-            "not as an instant. " + _MAP_NOTE))
+            "not as an instant. Modified Timestamp is the filesystem's own time, "
+            "which a FAT or exFAT volume records as a wall clock with no zone; that "
+            "column is empty for such a volume and the reading appears under "
+            "Recorded (as stored, no zone) instead. " + _MAP_NOTE))
 
 
 def _stage_keyframes(case: Case, writer: "_Writer",
@@ -1252,8 +1258,32 @@ _MEDIA_NOTES = (
     "extraction archive they are the times the archive recorded for that member, "
     "which is its extended timestamp field where it has one and otherwise the DOS "
     "date, local to whichever machine wrote the archive and at two-second "
-    "resolution; a file carved from an acquisition has no timestamp of its own and "
-    "its date columns are empty. Capture Time is the camera's own clock as recorded "
+    "resolution; for an acquisition they are the filesystem's own times, and what "
+    "that means depends on the filesystem. NTFS records instants, so Modified, "
+    "Created and Accessed are filled from it. FAT and exFAT record a wall clock with "
+    "no zone at all, so all three columns are empty for a FAT or exFAT volume and "
+    "the readings appear instead under Recorded (as stored, no zone), exactly as "
+    "the filesystem holds them and never converted: no instant can be derived from "
+    "a reading whose zone is unknown, and exFAT's own stored UTC offset is shown as "
+    "part of the reading rather than applied to it. FAT keeps only a date for the "
+    "last access, so its reading carries an accessed date and no time of day. A "
+    "file carved from unclaimed space has no timestamp of any kind, so for "
+    "it the date columns and the Recorded column are all empty, which is what "
+    "separates a carved row from a FAT or exFAT row whose date columns are merely "
+    "blank. How Recovered says which of three ways a row's "
+    "file reached the case, and is empty where the question has no answer: a "
+    "folder, an extraction archive and a Project VIC import are not disks. "
+    "'Walked, still listed' is a file a filesystem still lists, so it arrived "
+    "with its name, path and whatever dates that filesystem holds. 'Recovered "
+    "from a deleted record' is a file the filesystem no longer lists, whose "
+    "deleted directory or MFT record still named it, so it comes back under its "
+    "real name; it is refused outright once a later file has taken a cluster it "
+    "needs, so overwritten bytes are never presented as the file. 'Carved from "
+    "unclaimed space' is a signature match in space no volume claims, with no "
+    "name, path or date of its own, filed under the byte offset it was found at, "
+    "which is why such a row's File Name is an offset and its date columns are "
+    "empty. A file extracted from an archive found inside a source carries the "
+    "same value as the archive it came out of. Capture Time is the camera's own clock as recorded "
     "in the file, carries no timezone, and is reported as text rather than as an "
     "instant so nothing downstream can shift it. Faces is a count from an optional "
     "screening pass and Skin Ratio the fraction of pixels that pass found in a broad "

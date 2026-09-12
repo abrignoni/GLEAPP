@@ -24,6 +24,7 @@ from werkzeug.exceptions import HTTPException
 
 from .. import appconfig, archive, backup, basemaps, categories, lava, report
 from ..case import open_case, parse_source_spec
+from ..db import ORIGINS
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
 
@@ -33,7 +34,7 @@ FIELDS = (
     "phash, width, height, duration, gps_lat, gps_lon, camera, faces, "
     "skin_ratio, category, triage, reviewed, reviewed_by, reviewed_at, notes, "
     "hashset_hit, hashset_cat, hashset_kind, stack_id, vstack_id, cluster_id, thumb, error, "
-    "media_id, orig_name, orig_path, mime, vic_flags, alt_paths, recorded_times"
+    "media_id, orig_name, orig_path, mime, vic_flags, alt_paths, recorded_times, origin"
 )
 
 # columns the details list-view may sort and filter on (must all be in FIELDS)
@@ -43,7 +44,7 @@ LIST_COLS = {
     "sha256", "phash", "width", "height", "duration", "camera", "gps_lat",
     "gps_lon", "faces", "skin_ratio", "category", "triage", "notes",
     "hashset_hit", "hashset_kind", "hashset_cat", "stack_id", "vstack_id",
-    "cluster_id", "media_id", "error", "reviewed", "recorded_times",
+    "cluster_id", "media_id", "error", "reviewed", "recorded_times", "origin",
 }
 
 
@@ -862,7 +863,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 where.append("kind != 'archive'")
             if q.get("source"):
                 eq("source", q["source"])
-            if q.get("origin") in ("walk", "carve"):
+            # Every kind the ingest writes, read from one vocabulary: an origin
+            # missing from this tuple is not rejected, it is ignored, so the
+            # filter silently returns the whole case. "deleted" was missing.
+            if q.get("origin") in ORIGINS:
                 eq("origin", q["origin"])
             if q.get("in_archive") == "1":
                 where.append("container_id IS NOT NULL")

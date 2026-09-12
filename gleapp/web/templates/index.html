@@ -432,11 +432,12 @@
     <details class="fsec" data-sec="carve" hidden>
       <summary>Carving <span class="fdot"></span></summary>
       <div class="fbody">
-        <label class="flabel" title="An E01 acquisition holds both: files walked out of its filesystems (with names and dates) and files carved by signature from the space no volume claims (no name, path or date).">How recovered
+        <label class="flabel" title="An E01 acquisition can hold three kinds of row. Walked: listed by a filesystem, with its name, path and dates. Recovered from a deleted record: no longer listed, but the record still named it, so it comes back with its real name. Carved: found by signature in the space no volume claims, with no name, path or date of its own.">How recovered
           <select id="forigin">
             <option value="">All</option>
-            <option value="walk">Walked — named files</option>
-            <option value="carve">Carved — deleted / unallocated</option>
+            <option value="walk">Walked, still listed</option>
+            <option value="deleted">Recovered from a deleted record</option>
+            <option value="carve">Carved from unclaimed space</option>
           </select></label>
         <div id="carveList" class="fnote"></div>
       </div>

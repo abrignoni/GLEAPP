@@ -23,7 +23,7 @@ _CSV_FIELDS = [
     "category", "category_label", "triage",
     "hashset_hit", "hashset_cat", "hashset_kind",
     "stack_id", "vstack_id", "cluster_id", "notes",
-    "media_id", "orig_name", "orig_path", "mime",
+    "media_id", "orig_name", "orig_path", "mime", "origin", "recorded_times",
 ]
 
 
@@ -84,6 +84,11 @@ def export_csv(case: Case, dest: str | Path, where: str = "", *,
             for k in ("ctime", "mtime", "atime"):     # epoch -> readable
                 if d.get(k):
                     d[k] = _fmt_ts(d[k])
+            # A FAT or exFAT volume stores a wall clock and no zone, so the three
+            # columns above are empty for it and these are the only filesystem
+            # times the file has. Rendered as text, the way the report renders
+            # them, because no instant can be derived from them.
+            d["recorded_times"] = _recorded(d)
             w.writerow(d)
     return dest
 
@@ -218,6 +223,12 @@ def _disp_path(d: dict) -> str:
     return d.get("rel_path") or Path(d.get("path") or "").name
 
 
+# The heading for the readings a filesystem stored with no zone. One string,
+# because the HTML report and the LAVA artifacts all show this column and a
+# reader comparing them should not have to work out it is the same field.
+RECORDED_LABEL = "Recorded (as stored, no zone)"
+
+
 def _recorded(d) -> str:
     """The times the filesystem stored for a file, exactly as stored.
 
@@ -245,6 +256,30 @@ def _recorded(d) -> str:
     return "; ".join(f"{k} {v}" for k, v in got.items() if v)
 
 
+# files.origin (db.ORIGINS) as a phrase, for the surfaces a person reads. The
+# stored value goes out unchanged in the CSV and JSON exports, which are read by
+# a machine; the HTML report and the LAVA artifact show these instead, and both
+# take them from here so the wording cannot drift between them.
+_ORIGIN_LABELS = {
+    "walk": "walked, still listed",
+    "deleted": "recovered from a deleted record",
+    "carve": "carved from unclaimed space",
+}
+
+
+def _origin_label(d) -> str:
+    """How this row's file was recovered, in words.
+
+    Empty for a row with no origin recorded, which is every row of a case built
+    before the column existed and every row from a folder or archive source: the
+    question only has an answer for an acquisition. An unrecognised value is
+    passed through as stored rather than dropped, so a value this version does
+    not know about is still visible to whoever reads the report.
+    """
+    got = d.get("origin") or ""
+    return _ORIGIN_LABELS.get(got, got)
+
+
 # key -> (label, value fn, is_monospace).  The report dialog offers exactly
 # these; the examiner picks which appear under each image.
 _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
@@ -257,7 +292,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "ctime":      ("FS created",    lambda d: _fmt_ts(d.get("ctime")), False),
     "mtime":      ("FS written",    lambda d: _fmt_ts(d.get("mtime")), False),
     "atime":      ("FS accessed",   lambda d: _fmt_ts(d.get("atime")), False),
-    "recorded_times": ("Recorded (as stored, no zone)", _recorded, False),
+    "recorded_times": (RECORDED_LABEL, _recorded, False),
     "ingested_at": ("Ingested",     lambda d: _fmt_ts(d.get("ingested_at")), False),
     "md5":        ("MD5",           lambda d: d.get("md5") or "", True),
     "sha1":       ("SHA-1",         lambda d: d.get("sha1") or "", True),
@@ -275,6 +310,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "faces":      ("Faces",         lambda d: str(d["faces"]) if d.get("faces") else "", False),
     "skin_ratio": ("Skin ratio",    lambda d: f"{d['skin_ratio']:.2f}" if d.get("skin_ratio") else "", False),
     "source":     ("Source",        lambda d: d.get("source") or "", False),
+    "origin":     ("How recovered", _origin_label, False),
     "mime":       ("MIME type",     lambda d: d.get("mime") or "", False),
     "media_id":   ("VIC MediaID",   lambda d: str(d["media_id"]) if d.get("media_id") is not None else "", False),
     "hashset":    ("Known hash",    lambda d: d.get("hashset_hit") or "", False),
