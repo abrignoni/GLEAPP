@@ -81,7 +81,8 @@ function toggleHdrMenu(btn, menu) {
   menu.style.left = Math.max(4, b.right - menu.offsetWidth) + "px";
 }
 document.addEventListener("click", e => {
-  if (e.target.closest(".hdrmenu") || e.target.closest("#btnNotify") || e.target.closest("#btnMenu"))
+  if (e.target.closest(".hdrmenu") || e.target.closest("#btnNotify") || e.target.closest("#btnMenu")
+      || e.target.closest("#btnRefMenuLauncher"))
     return;
   document.querySelectorAll(".hdrmenu").forEach(m => m.style.display = "none");
 });
@@ -2352,7 +2353,8 @@ function renderRefStore(sets, total) {
     toast("Reference set removed");
     const after = async () => {
       try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
-      load();
+      // this dialog is also reachable pre-case, from the launcher — nothing to reload then
+      if ($("#launcher").style.display !== "block") load();
     };
     if (r.rematched) trackJob("#rehashInfo", "#taskProg", "Updating flags", after);
     else after();
@@ -2387,6 +2389,13 @@ function openRefDlg() {
 }
 $("#refInfo").onclick = openRefDlg;
 $("#btnRefStore").onclick = openRefDlg;
+$("#btnRefMenuLauncher").onclick = () => toggleHdrMenu($("#btnRefMenuLauncher"), $("#refMenuLauncher"));
+$("#refMenuLauncher").addEventListener("click", e => {
+  if (e.target.tagName === "BUTTON") $("#refMenuLauncher").style.display = "none";
+});
+$("#btnMapsLauncher").onclick = openMapsDlg;
+$("#btnStashLauncher").onclick = openStashDlg;
+$("#btnRefStoreLauncher").onclick = openRefDlg;
 document.querySelectorAll('input[name=refMode]').forEach(r => r.onchange = syncRefDlg);
 $("#refBrowse").onclick = () => browseRef("#refPath");
 $("#refBaseBrowse").onclick = () => browseRef("#refBase");
@@ -2416,7 +2425,8 @@ $("#refGo").onclick = async () => {
     if (!ok) return;
     toast(j.message || "Reference data imported");
     try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
-    load();
+    // this dialog is also reachable pre-case, from the launcher — nothing to reload then
+    if ($("#launcher").style.display !== "block") load();
   });
 };
 
@@ -2611,7 +2621,9 @@ async function refreshStashDlg() {
   $("#stashAdd").disabled = !d.case.eligible;
   $("#stashAdd").textContent = d.case.eligible
     ? `Add this case's ${d.case.eligible.toLocaleString()} hash(es) to the stash`
-    : "No category 1–3 files in this case yet";
+    : ($("#launcher").style.display === "block"
+       ? "Open a case to add its category 1–3 hashes"
+       : "No category 1–3 files in this case yet");
   $("#stashClear").disabled = !d.stash.total;
   $("#stashUpdated").textContent = d.stash.updated
     ? "Stash last updated " + fmtEpoch(d.stash.updated)
@@ -2665,12 +2677,12 @@ async function stashExport(format) {
     body: JSON.stringify({ format })
   });
   if (r.error) return toast(r.message || "Export failed");
-  toast(`Stash written to ${r.written}`);
+  toast(`Stash written to ${r.written} — click to open the folder`, 6000, () => openFolder(r.dir));
 }
 $("#stashExportDb").onclick = () => stashExport("db");
 $("#stashExportCsv").onclick = () => stashExport("csv");
 $("#stashMerge").onclick = async () => {
-  const p = await pick("file", "Path to a colleague's stash file (.gleapp or .csv):");
+  const p = await pick("stashfile", "Path to a colleague's stash file (.gleapp or .csv):");
   if (!p) return;
   const r = await api("/api/stash/merge", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -2690,7 +2702,7 @@ async function stashSetPath(p) {
   stashRefreshAndSidebar();
 }
 $("#stashSetPath").onclick = async () => {
-  const p = await pick("file", "Path to the shared stash file (e.g. on a network drive):");
+  const p = await pick("stashfile", "Path to the shared stash file (e.g. on a network drive):");
   if (p) stashSetPath(p);
 };
 $("#stashResetPath").onclick = () => {
@@ -2759,6 +2771,7 @@ function showLauncher(ctx) {
   Lr.native = !!ctx.native;
   $("#launcher").style.display = "block";
   $("#main").style.display = "none";
+  if (ctx.known_hash) updateKnownHash(ctx.known_hash);
   // named from the server's own list, so the screen cannot drift from the walk
   const fs = ctx.walked_filesystems || [];
   $("#fsList").innerHTML = fs.length
@@ -3146,7 +3159,9 @@ async function refreshMapsList() {
   box.textContent = "Loading…";
   const d = await api("/api/basemaps").catch(() => ({ active: null, basemaps: [] }));
   state.basemap = d.active || null;
-  $("#mapsShow").disabled = !d.active;
+  // "Show on map" needs an open case's geolocated files — Maps is otherwise
+  // reachable pre-case (from the launcher) to import/manage basemaps only
+  $("#mapsShow").disabled = !d.active || $("#launcher").style.display === "block";
   if (!d.basemaps.length) {
     box.innerHTML = `<div class="muted" style="font-size:12px">No basemap imported yet.</div>`;
     return;

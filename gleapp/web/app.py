@@ -231,6 +231,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                     webview.OPEN_DIALOG,
                     file_types=("Basemap (*.pmtiles;*.mbtiles)", "All files (*.*)"),
                 )
+            elif kind == "stashfile":
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=(
+                        "Hash stash (*.gleapp;*.csv)", "All files (*.*)"),
+                )
             else:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
@@ -657,15 +663,19 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
 
     @app.get("/api/stash")
     def stash_status():
+        # the stash itself is global, not case data, so it's also reachable
+        # pre-case (from the launcher) with no case's hashes to add yet
         from .. import stash
-        case = C()
-        cand = _stash_candidates(case)
-        by_cat = {}
-        for r in cand:
-            by_cat[r["category"]] = by_cat.get(r["category"], 0) + 1
+        case = state["case"]
+        eligible, by_cat = 0, {}
+        if case is not None:
+            cand = _stash_candidates(case)
+            eligible = len(cand)
+            for r in cand:
+                by_cat[r["category"]] = by_cat.get(r["category"], 0) + 1
         return jsonify({
             "stash": stash.summary(),
-            "case": {"eligible": len(cand), "by_category": by_cat,
+            "case": {"eligible": eligible, "by_category": by_cat,
                      "categories": list(stash.STASH_CATEGORIES)},
         })
 
@@ -685,7 +695,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def stash_clear():
         from .. import stash
         n = stash.clear()
-        C().db.audit_log(C().examiner, "stash_clear", f"{n} entries removed")
+        # the stash is global and reachable pre-case (from the launcher); only
+        # log to a case's own audit trail when there's a case open to log to
+        case = state["case"]
+        if case is not None:
+            case.db.audit_log(case.examiner, "stash_clear", f"{n} entries removed")
         return jsonify({"ok": True, "removed": n})
 
     @app.post("/api/stash/path")
@@ -711,7 +725,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             stash.export(dest)
         except OSError as exc:
             abort(500, description=str(exc))
-        return jsonify({"ok": True, **stash.summary(), "written": str(dest)})
+        return jsonify({"ok": True, **stash.summary(),
+                        "written": str(dest), "dir": str(out_dir)})
 
     @app.post("/api/stash/merge")
     def stash_merge():
@@ -723,8 +738,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             res = stash.merge(src)
         except (OSError, ValueError, sqlite3.Error) as exc:
             abort(400, description=f"could not read {Path(src).name}: {exc}")
-        C().db.audit_log(C().examiner, "stash_merge",
-                         f"{Path(src).name}: +{res['added']} new, {res['total']} total")
+        # the stash is global and reachable pre-case (from the launcher); only
+        # log to a case's own audit trail when there's a case open to log to
+        case = state["case"]
+        if case is not None:
+            case.db.audit_log(case.examiner, "stash_merge",
+                              f"{Path(src).name}: +{res['added']} new, {res['total']} total")
         return jsonify({"ok": True, **res})
 
     @app.post("/api/redup")
@@ -1169,12 +1188,21 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def context():
         case = state["case"]
         if case is None:
+            from .. import hashstore
+            try:
+                hstore = hashstore.summary()
+            except Exception:  # noqa: BLE001 - never let a bad store break the launcher
+                hstore = {"sets": [], "entries": 0}
             return jsonify({"needs_case": True,
                             "recent": appconfig.recent_cases(limit=3),
                             # the launcher says what an acquisition can be read
                             # as, from the list the walk itself is built on
                             "walked_filesystems": list(archive.WALKED_FILESYSTEMS),
-                            "native": state["native"]})
+                            "native": state["native"],
+                            # the global reference store (NSRL etc.) isn't tied
+                            # to a case, so it's reachable before opening one too
+                            "known_hash": {"global_sets": hstore["sets"],
+                                           "global_entries": hstore["entries"]}})
         try:
             return jsonify(_context_payload(case))
         except Exception:  # noqa: BLE001 - a broken stat query must not blank the UI
