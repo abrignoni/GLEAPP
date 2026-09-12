@@ -852,7 +852,7 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
               member_offset: int | None, alt_paths: list[str] | None = None,
               origin: str | None = None, member_node: int | None = None,
               volume_base: int | None = None,
-              recorded_times: str | None = None) -> None:
+              recorded_times: str | None = None, atime: float | None = None) -> None:
     case.db.upsert_file(
         str(dest),
         rel_path=rel,
@@ -867,7 +867,7 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
         alt_paths=json.dumps(alt_paths) if alt_paths else None,
         mtime=mtime,
         ctime=ctime,
-        atime=None,
+        atime=atime,
         origin=origin,
         member_node=member_node,
         volume_base=volume_base,
@@ -1096,6 +1096,13 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
                     if kind == "other" and not src.include_other:
                         continue
                 dest = _staged_path(staged_dir, slug, name)
+                # collect() carries only the modified time. NTFS holds created and
+                # accessed beside it, as instants, so ask the walker for those two.
+                # A FAT or exFAT walker has no stamps(): its dates are the zone-less
+                # readings above, and no instant can be made from them.
+                created = accessed = 0
+                if hasattr(walker, "stamps"):
+                    created, _modified, accessed = walker.stamps(node)
                 if stage:
                     try:
                         # No head here. _walk_head above read the sniff bytes from
@@ -1111,15 +1118,15 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
                         continue
                     if mtime:
                         with contextlib.suppress(OSError):
-                            os.utime(dest, (mtime, mtime))
+                            os.utime(dest, (accessed or mtime, mtime))
                 # A walked row is read back through its volume's walker, so it
                 # records the node and the volume rather than a byte offset.
                 said = readings.get(path)
                 _register(case, src, dest, name, name, kind, ext, fsize,
-                          mtime or None, None, None, None,
+                          mtime or None, created or None, None, None,
                           recorded_times=json.dumps(said) if said else None,
                           origin="walk", member_node=json.dumps(node),
-                          volume_base=int(base))
+                          volume_base=int(base), atime=accessed or None)
                 tally.registered += 1
                 n += 1
                 if n % 200 == 0:
@@ -1639,9 +1646,10 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                     if e.modified:
                         with contextlib.suppress(OSError):
                             os.utime(dest, (e.accessed or e.modified, e.modified))
-                    mtime, ctime, recorded = e.modified or None, e.created or None, None
+                    mtime, ctime, atime = e.modified or None, e.created or None, e.accessed or None
+                    recorded = None
                 else:
-                    mtime = ctime = None
+                    mtime = ctime = atime = None
                     recorded = json.dumps(e.times) if e.times else None
                 # the first data cluster's image offset, so a carve alongside can
                 # skip the nameless twin of this file. An NTFS resident file has
@@ -1657,7 +1665,7 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                 _register(case, src_obj, dest, e.name, e.name, kind, ext, e.size,
                           mtime, ctime, None, None,
                           origin="deleted", volume_base=int(base),
-                          recorded_times=recorded)
+                          recorded_times=recorded, atime=atime)
                 tally.registered += 1
                 n += 1
                 if n % 100 == 0:

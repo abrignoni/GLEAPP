@@ -42,7 +42,7 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.23"
+QNXPROBE_VERSION = "1.24"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
@@ -1697,6 +1697,30 @@ def ntfs_time(v):
     return sec if -12219292800 < sec < 253402300799 else 0
 
 
+def _ntfs_std_times(attrs):
+    """(created, modified, accessed) from a record's $STANDARD_INFORMATION, as
+    Unix seconds, each 0 where the attribute is absent or too short to hold it.
+
+    The attribute holds four FILETIMEs: created at 0, last written at 8, the
+    record's own last change at 16, last read at 24. $FILE_NAME carries a second
+    set of the same four, and the two are not kept in step: on the committed
+    fixture a file's accessed time here is fifteen seconds later than the one its
+    $FILE_NAME holds, which is what an examiner asking when a file was last read
+    means. Every reader of the attribute goes through this one function so the
+    three offsets cannot drift apart between a listing, a live file and a deleted
+    record. Each field is guarded on its own length, so a short attribute yields
+    the fields it does hold rather than nothing.
+    """
+    for a in attrs:
+        if a.type == NTFS_STANDARD_INFORMATION and a.resident:
+            v = a.value
+            created = ntfs_time(struct.unpack_from("<Q", v, 0)[0]) if len(v) >= 8 else 0
+            modified = ntfs_time(struct.unpack_from("<Q", v, 8)[0]) if len(v) >= 16 else 0
+            accessed = ntfs_time(struct.unpack_from("<Q", v, 24)[0]) if len(v) >= 32 else 0
+            return created, modified, accessed
+    return 0, 0, 0
+
+
 def _ntfs_fixup(buf, per, name):
     """Apply the update sequence array to a multi-sector record.
 
@@ -2118,13 +2142,7 @@ class NtfsWalker:
                 continue
             is_dir = bool(flags & NTFS_MFT_IS_DIR)
             has_list = any(a.type == NTFS_ATTRIBUTE_LIST for a in attrs)
-            created = modified = accessed = 0
-            for a in attrs:
-                if a.type == NTFS_STANDARD_INFORMATION and a.resident and len(a.value) >= 32:
-                    created = ntfs_time(struct.unpack_from("<Q", a.value, 0)[0])
-                    modified = ntfs_time(struct.unpack_from("<Q", a.value, 8)[0])
-                    accessed = ntfs_time(struct.unpack_from("<Q", a.value, 24)[0])
-                    break
+            created, modified, accessed = _ntfs_std_times(attrs)
             data = next((a for a in attrs if a.type == NTFS_DATA and a.name == ""), None)
             if is_dir or data is None:
                 yield NtfsDeletedFile(num, name, parent, is_dir, 0, True, False,
@@ -2214,16 +2232,24 @@ class NtfsWalker:
         if not attrs:
             return None
         is_dir = bool(self._flags(num) & NTFS_MFT_IS_DIR)
-        mtime = 0
-        for a in attrs:
-            if a.type == NTFS_STANDARD_INFORMATION and a.resident and len(a.value) >= 24:
-                mtime = ntfs_time(struct.unpack_from("<Q", a.value, 8)[0])
-                break
+        mtime = _ntfs_std_times(attrs)[1]
         if is_dir:
             return (S_IFDIR | 0o755, 0, mtime)
         data = self._data_attr(num)
         size = 0 if data is None else (len(data.value) if data.resident else data.data_size)
         return (0o100644, size, mtime)
+
+    def stamps(self, num):
+        """The instants a live file's $STANDARD_INFORMATION holds, as
+        (created, modified, accessed) in Unix seconds, 0 where unset.
+
+        ``entry`` returns only the modified time, which is what a listing needs.
+        A caller carrying a file's dates into a record wants all three, and they
+        are instants rather than readings: FILETIME counts from a UTC epoch, so
+        unlike a FAT or exFAT stamp these can be placed on a timeline. The record
+        is cached, so asking after ``entry`` reads nothing more from the image.
+        """
+        return _ntfs_std_times(self._record(num))
 
     def free_extents(self, min_bytes=0):
         """[(byte offset, length)] for the runs of space the volume says are free.
@@ -6291,6 +6317,69 @@ def _ntfs_fixture_check(image_gz, listing):
     return matched, len(want), missing, different
 
 
+def _ntfs_times_check(image_gz):
+    """Compare the instants the walker reads for live and deleted NTFS files
+    against what The Sleuth Kit's istat printed for the same records.
+
+    The pins are istat's $STANDARD_INFORMATION block, not the $FILE_NAME block it
+    prints beneath: on this fixture the two differ, most on the accessed time,
+    so a reader that took the wrong attribute fails on the field that matters.
+    Recorded 2026-09-12 with ``TZ=UTC istat -o 0 ntfs-fixture.img <record>`` on
+    sleuthkit 4.x; the fixture is committed and never rewritten, so these values
+    are fixed. Each is compared within a microsecond, which is below the
+    precision a Unix-seconds float keeps at this epoch and above istat's 100 ns.
+
+    Returns (failures, live files checked).
+    """
+    import gzip, io
+    from datetime import datetime, timezone
+    live = {
+        "dir/mid.txt": ("2026-09-11 04:22:40.133550800", "2026-09-11 04:22:40.133580100",
+                        "2026-09-11 04:22:55.233196100"),
+        "many/file_0001.txt": ("2026-09-11 04:22:40.136710000", "2026-09-11 04:22:40.136739400",
+                               "2026-09-11 04:22:55.279657800"),
+    }
+    deleted = {
+        "h_9.bin": ("2026-09-11 04:22:40.754156700", "2026-09-11 04:22:40.754286000",
+                    "2026-09-11 04:22:40.754156700"),
+        "h_11.bin": ("2026-09-11 04:22:40.766373400", "2026-09-11 04:22:40.766531400",
+                     "2026-09-11 04:22:40.766373400"),
+    }
+
+    def epoch(text):
+        base, frac = text.split(".")
+        dt = datetime.strptime(base, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        return dt.timestamp() + int(frac) / 10 ** len(frac)
+
+    def matches(got, want):
+        return all(abs(g - epoch(w)) < 1e-6 for g, w in zip(got, want))
+
+    with gzip.open(image_gz, "rb") as gz:
+        img = io.BytesIO(gz.read())
+    w = NtfsWalker(img, 0)
+    failures, checked, seen = [], 0, set()
+    for path, ino, size, mtime in collect(w, w.root):
+        if size is None:
+            continue
+        got = w.stamps(ino)
+        checked += 1
+        if got[1] != mtime:
+            failures.append(f"{path}: stamps() modified {got[1]} is not entry()'s {mtime}")
+        if path in live:
+            seen.add(path)
+            if not matches(got, live[path]):
+                failures.append(f"{path}: stamps() {got} is not istat's {live[path]}")
+    for e in w.deleted_files():
+        if e.name in deleted:
+            seen.add(e.name)
+            got = (e.created, e.modified, e.accessed)
+            if not matches(got, deleted[e.name]):
+                failures.append(f"deleted {e.name}: {got} is not istat's {deleted[e.name]}")
+    for name in (set(live) | set(deleted)) - seen:
+        failures.append(f"{name}: not found in the fixture, so nothing was compared")
+    return failures, checked
+
+
 def self_test():
     """Prove the detector reports BOTH ways before you trust a run.
 
@@ -8005,6 +8094,19 @@ def self_test():
         elif os.path.isfile(ntfs_fix):
             print("  [SKIP] the NTFS deleted-files listing is not beside this "
                   "script, so recovery was not compared against it")
+
+        if os.path.isfile(ntfs_fix):
+            try:
+                tfail, tchecked = _ntfs_times_check(ntfs_fix)
+            except Exception as exc:                 # pylint: disable=broad-except
+                tfail, tchecked = [f"the check raised {type(exc).__name__}: {exc}"], 0
+            tcond = tchecked and not tfail
+            if not tcond:
+                ok = False
+            print(f"  [{'PASS' if tcond else 'FAIL'}] created, modified and accessed of "
+                  f"live and deleted NTFS files match what istat recorded "
+                  f"({tchecked} live files checked"
+                  + (f"; {tfail[0]}" if tfail else "") + ")")
 
         for label, stem, wcls in (("FAT32", "fat32-deleted", Fat32Walker),
                                   ("exFAT", "exfat-deleted", ExfatWalker)):
