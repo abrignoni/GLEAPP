@@ -216,8 +216,8 @@ volume.
 across extents, can be compressed, and on NTFS can be resident with its bytes inside its own
 MFT record and no extent at all. None of those is one byte offset. The node is stored as
 JSON because it is not always a number: an MFT record and an APFS object id are, and a FAT
-directory entry is `(cluster, size, is_dir)`. `origin` says which kind a row is, `walk` or
-`carve`, so a report can state it rather than infer it from a name.
+directory entry is `(cluster, size, is_dir)`. `origin` says which kind a row is, `walk`,
+`deleted` or `carve`, so a report can state it rather than infer it from a name.
 
 Three vendored single-file MIT tools do the work, copied verbatim into `gleapp/vendor/`
 with their provenance in `vendored.json` and their hashes asserted by the suite. `ewfprobe`
