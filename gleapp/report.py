@@ -7,6 +7,7 @@ import csv
 import html
 import io
 import json
+import math
 import time
 import zipfile
 from collections import Counter
@@ -14,6 +15,10 @@ from pathlib import Path
 
 from . import basemaps, categories, imaging, staticmap, timeutil  # noqa: F401  (imaging: registers HEIF decoder)
 from .case import Case
+
+# overview map size - shared so the clickable overlay in _overview_html always
+# lines up with what _render_report_maps actually asked staticmap.render for
+_OVERVIEW_SIZE = (900, 540)
 
 _CSV_FIELDS = [
     "id", "file_path", "disk_name", "source", "kind", "ext", "size",
@@ -329,7 +334,8 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .muted{{color:var(--mut)}}
  header.rpt{{display:flex;gap:20px;align-items:flex-start;border-bottom:2px solid var(--ink);
    padding-bottom:14px;margin-bottom:16px}}
- header.rpt img.logo{{max-height:84px;max-width:240px;object-fit:contain}}
+ header.rpt img.logo{{max-height:110px;max-width:320px;width:auto;height:auto;
+   object-fit:contain;display:block}}
  header.rpt .hmeta{{flex:1}}
  header.rpt h1{{margin:0 0 6px;font-size:20px}}
  header.rpt table{{border-collapse:collapse}}
@@ -339,9 +345,13 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .summary{{margin:18px 0 6px}}
  .summary .cap{{font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
    color:var(--mut);margin-bottom:9px}}
- .summary .bar{{display:flex;height:9px;border:1px solid var(--line);border-radius:5px;
-   overflow:hidden;margin-bottom:14px;max-width:620px}}
- .summary .bar i{{display:block;height:100%;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ .summary .sumrow{{display:flex;gap:32px;align-items:center;flex-wrap:wrap}}
+ .summary .chartcol{{flex:0 0 auto}}
+ .summary .donut{{width:148px;height:148px;display:block}}
+ .summary .donut circle.ring{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ .summary .donut .donut-n{{font-size:7.5px;font-weight:700;fill:var(--ink)}}
+ .summary .donut .donut-lbl{{font-size:3.4px;fill:var(--mut);text-transform:uppercase;letter-spacing:.06em}}
+ .summary .datacol{{flex:1;min-width:260px}}
  .summary table{{border-collapse:collapse;font-size:12.5px}}
  .summary td{{padding:3px 0}}
  .summary td.lbl{{padding-right:30px}}
@@ -355,12 +365,54 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .summary tr.tot td{{border-top:2px solid var(--ink);padding-top:7px;font-weight:700}}
  .summary .sw{{display:inline-block;width:9px;height:9px;border-radius:2px;
    margin-right:9px;vertical-align:1px;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
- .overview{{margin:14px 0 4px}}
- .overview .cap{{font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
-   color:var(--mut);margin-bottom:9px}}
- .overview img{{width:100%;max-width:900px;border:1px solid var(--line);border-radius:8px;
-   display:block;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
- .overview .ovnote{{color:var(--mut);font-size:12px;margin-top:6px}}
+ details.overview{{margin:18px 0 4px;border:1px solid var(--line);border-radius:8px;
+   overflow:hidden}}
+ details.overview > summary{{cursor:pointer;font-weight:700;font-size:14px;list-style:none;
+   padding:11px 14px;color:var(--ink);background:#f0f5ff;display:flex;align-items:center;
+   gap:9px;user-select:none;transition:background .12s}}
+ details.overview > summary::-webkit-details-marker{{display:none}}
+ details.overview > summary::before{{content:"\\25B8";color:#2f6fd8;font-size:13px}}
+ details.overview[open] > summary::before{{content:"\\25BE"}}
+ details.overview > summary:hover{{background:#dfe9ff}}
+ details.overview > summary .n{{color:var(--mut);font-weight:400;font-size:13px}}
+ details.overview > summary .hint{{margin-left:auto;font-size:11px;font-weight:600;
+   color:#2f6fd8}}
+ details.overview > .body{{padding:14px}}
+ details.overview img,details.overview svg.ovsvg{{width:100%;max-width:900px;
+   border:1px solid var(--line);border-radius:8px;display:block;
+   -webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ details.overview svg.ovsvg a{{cursor:pointer}}
+ details.overview svg.ovsvg .clusterdot{{fill:#2f6fd8;fill-opacity:.85;stroke:#fff;
+   stroke-width:2;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ details.overview svg.ovsvg .cluster:hover .clusterdot,
+ details.overview svg.ovsvg .cluster:focus-within .clusterdot{{fill-opacity:1}}
+ details.overview svg.ovsvg .clustern{{font:700 13px system-ui,sans-serif;fill:#fff;
+   pointer-events:none;user-select:none}}
+ details.overview svg.ovsvg .petal{{opacity:0;pointer-events:none;transform-box:view-box;
+   transform:scale(0);
+   /* a short delay before collapsing (none going the other way) forgives the
+      pointer briefly overshooting onto empty space on the way to a petal */
+   transition:transform .18s ease .12s,opacity .18s ease .12s}}
+ details.overview svg.ovsvg .cluster:hover .petal,
+ details.overview svg.ovsvg .cluster:focus-within .petal{{
+   transform:scale(1);opacity:1;
+   transition:transform .12s ease,opacity .12s ease}}
+ details.overview svg.ovsvg .petal .spoke{{stroke:#2f6fd8;stroke-width:1.5;pointer-events:none}}
+ details.overview svg.ovsvg .petal .petaldot{{fill:#2f6fd8;stroke:#fff;stroke-width:1.5;
+   pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ details.overview svg.ovsvg .cluster:hover .petal .petaldot,
+ details.overview svg.ovsvg .cluster:focus-within .petal .petaldot{{pointer-events:auto}}
+ details.overview .ovnote{{color:var(--mut);font-size:12px;margin-top:6px}}
+ details.overview .ovlinkscap{{font-weight:700;font-size:11px;letter-spacing:.06em;
+   text-transform:uppercase;color:var(--mut);margin-top:12px;margin-bottom:6px}}
+ details.overview .ovlinks{{max-height:160px;overflow-y:auto;border:1px solid var(--line);
+   border-radius:6px;padding:8px 10px;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px}}
+ details.overview .ovlinks a{{color:#2f6fd8;text-decoration:none}}
+ details.overview .ovlinks a:hover{{text-decoration:underline}}
+ details.overview .ovbasemap{{color:var(--mut);font-size:11px;margin-top:10px;
+   padding-top:8px;border-top:1px solid var(--line)}}
+ html.dark details.overview > summary{{background:#1c2b4a}}
+ html.dark details.overview > summary:hover{{background:#25396b}}
  nav.toc{{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0 4px;align-items:center}}
  nav.toc .lbl{{color:var(--mut);font-size:12px;font-weight:600}}
  nav.toc a{{border:1px solid #2f6fd8;border-radius:6px;padding:3px 12px;text-decoration:none;
@@ -388,8 +440,18 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  h2.catsec .toplink{{margin-left:auto;font-size:11px;font-weight:600;text-decoration:none;
    color:#2f6fd8;border:1px solid var(--line);border-radius:5px;padding:1px 9px}}
  h2.catsec .toplink:hover{{background:#2f6fd8;color:#fff;border-color:#2f6fd8}}
+ details.kindsec{{margin:14px 0}}
+ details.kindsec > summary{{cursor:pointer;font-weight:700;font-size:13px;
+   list-style:none;padding:4px 0;color:var(--ink)}}
+ details.kindsec > summary::-webkit-details-marker{{display:none}}
+ details.kindsec > summary::before{{content:"\\25B8 ";color:var(--mut);display:inline-block;width:14px}}
+ details.kindsec[open] > summary::before{{content:"\\25BE "}}
+ details.kindsec > summary .n{{color:var(--mut);font-weight:400;margin-left:4px}}
+ details.kindsec > .grid{{margin-top:10px}}
  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}}
- .card{{border:1px solid var(--line);border-radius:8px;overflow:hidden;break-inside:avoid}}
+ .card{{border:1px solid var(--line);border-radius:8px;overflow:hidden;break-inside:avoid;
+   scroll-margin-top:12px}}
+ .card:target{{outline:3px solid #2f6fd8;outline-offset:1px}}
  .card .thumbwrap{{position:relative}}
  .card img{{width:100%;height:180px;object-fit:contain;background:#0c0d10;display:block}}
  .card .playicon{{position:absolute;inset:0;margin:auto;width:48px;height:48px;
@@ -397,6 +459,10 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
    line-height:48px;text-align:center;pointer-events:none}}
  .card img.locmap{{height:150px;object-fit:cover;background:#e9e6df;
    border-top:1px solid var(--line);-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+ /* the map is inside the metadata drop and should stay hidden with it - the
+    explicit display:block above (needed while open) outranks the browser's own
+    rule for a closed <details>, so it has to be re-stated here */
+ .card details.meta:not([open]) img.locmap{{display:none}}
  html.blur .card img.locmap{{filter:none}}   /* a locator map carries no evidence imagery */
  .card .catbar{{padding:3px 9px;color:#fff;font-weight:600;font-size:11px}}
  .card details.meta{{font-size:12px}}
@@ -429,6 +495,15 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
    .card{{page-break-inside:avoid}} .card img{{background:#fff;filter:none !important}}
    .rptbar{{display:none}}
    .card details.meta > summary::before{{content:""}}
+   details.kindsec > summary::before{{content:""}}
+   details.overview{{border:none}}
+   details.overview > summary{{background:none !important;padding:4px 0;font-size:12px;
+     text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}}
+   details.overview > summary::before{{content:""}}
+   details.overview > summary .hint{{display:none}}
+   /* no hover on paper - show every clustered file fanned out, permanently */
+   details.overview svg.ovsvg .petal{{opacity:1 !important;transform:none !important;
+     pointer-events:auto}}
    html.dark{{--line:#d5d9e0;--ink:#1a1d24;--mut:#5b6472}}
    html.dark body{{background:#fff;color:#1a1d24}}
    html.dark .card{{background:#fff}}
@@ -453,14 +528,9 @@ def _header_html(case: Case, header: dict | None) -> str:
             ("Times shown in", html.escape(timeutil.label(_TZ)))]
     meta = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in rows if v)
     notes = f"<div class='hnotes'>{g('notes')}</div>" if h.get("notes") else ""
-    tznote = ("<div class='hnotes' style='font-size:11px;color:#888'>"
-              "Filesystem and ingest times are shown in the timezone above "
-              "(daylight saving applied). &ldquo;Captured (EXIF)&rdquo; is the "
-              "camera&rsquo;s own local time, shown exactly as recorded in the file."
-              "</div>")
     return (f"<header class='rpt'>{logo_html}<div class='hmeta'>"
             f"<h1>{case_name or 'Media report'}</h1>"
-            f"<table>{meta}</table>{notes}{tznote}</div></header>")
+            f"<table>{meta}</table>{notes}</div></header>")
 
 
 def _basemap_for_render() -> dict | None:
@@ -482,14 +552,18 @@ def _basemap_for_render() -> dict | None:
 
 
 def _render_report_maps(case: Case, rows: list[dict], *, flavor: str, cap: int
-                        ) -> tuple[str, dict[int, str], dict[str, int]]:
+                        ) -> tuple[str, dict[int, str], dict[str, int], list[dict],
+                                   dict[int, tuple[float, float]]]:
     """Draw the maps embedded in the HTML report from the active offline basemap.
 
     Returns the overview image (a data URI framing the files that were drawn), a
-    ``{file_id: data URI}`` of per-file locator maps, and a tally of why the rest
-    have none, which the Locations note reports: a map that is absent for a stated
-    reason is a result, and a map that is silently absent is a gap the reader has to
-    guess at. Everything is rendered locally; nothing is fetched.
+    ``{file_id: data URI}`` of per-file locator maps, a tally of why the rest have
+    none (the Locations note reports it: a map that is absent for a stated reason
+    is a result, and a map that is silently absent is a gap the reader has to guess
+    at), the rows that were actually drawn (parallel to the returned marker
+    positions), and a ``{file_id: (x, y)}`` of where each one's marker landed on
+    the overview image, so it can be wired up as a clickable overlay (see
+    _cluster_svg_markers). Everything is rendered locally; nothing is fetched.
 
     A point the basemap holds no tile for is skipped rather than drawn, the same as
     the LAVA export does, because it renders as the background colour with a pin on
@@ -501,11 +575,11 @@ def _render_report_maps(case: Case, rows: list[dict], *, flavor: str, cap: int
              "over the cap": 0, "failed to draw": 0}
     geo = [d for d in rows if d.get("gps_lat") is not None and d.get("gps_lon") is not None]
     if not geo:
-        return "", {}, tally
+        return "", {}, tally, [], {}
     rec = _basemap_for_render()
     if rec is None:
         tally["no basemap"] = len(geo)
-        return "", {}, tally
+        return "", {}, tally, [], {}
     # this report was drawn on this basemap: record the name and hash for the summary
     try:
         basemaps.record_use(case, basemaps.get_active())
@@ -514,6 +588,7 @@ def _render_report_maps(case: Case, rows: list[dict], *, flavor: str, cap: int
     cache: dict = {}
     per: dict[int, str] = {}
     covered: list[tuple] = []
+    drawn_rows: list[dict] = []
     for index, d in enumerate(geo):
         if index >= cap:
             tally["over the cap"] = len(geo) - cap
@@ -532,21 +607,110 @@ def _render_report_maps(case: Case, rows: list[dict], *, flavor: str, cap: int
             continue
         per[d["id"]] = "data:image/jpeg;base64," + base64.b64encode(jpg).decode("ascii")
         covered.append((lon, lat))
+        drawn_rows.append(d)
         tally["drawn"] += 1
     overview = ""
+    marker_px: dict[int, tuple[float, float]] = {}
     if covered:
         # framed on the drawn points only: one far away file the basemap cannot show
         # would otherwise zoom the overview out until the rest are a single dot
         try:
-            png = staticmap.render(rec, covered, width=900, height=540, flavor=flavor,
-                                   cache=cache, fmt="png")
+            png, px = staticmap.render(rec, covered, width=_OVERVIEW_SIZE[0],
+                                       height=_OVERVIEW_SIZE[1], flavor=flavor,
+                                       cache=cache, fmt="png", return_points=True)
             overview = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+            marker_px = {d["id"]: xy for d, xy in zip(drawn_rows, px)}
         except Exception:  # pylint: disable=broad-exception-caught
             overview = ""
-    return overview, per, tally
+    return overview, per, tally, drawn_rows, marker_px
 
 
-def _overview_html(overview: str, tally: dict[str, int]) -> str:
+# the marker itself is drawn with radius 7 in staticmap.render, so points landing
+# closer together than this already read as one blob on the raster underneath
+_CLUSTER_PX = 7
+
+
+def _cluster_svg_markers(geo_rows: list[dict], marker_px: dict[int, tuple[float, float]]) -> str:
+    """The clickable overlay for the overview map's markers, as SVG.
+
+    A location with only one file gets a plain link, same as before. Two or more
+    files at (near enough) the same point get a numbered cluster dot that fans its
+    files out around it on hover or keyboard focus, the way a map app spreads out
+    a pin stack - Google Earth is the example the report was asked to match.
+    Only the fanned-out copy is reachable by a mouse click at rest, so the plain
+    click-a-name list stays as the way to reach any file without hovering first.
+    """
+    # a fixed pixel grid would cluster two points 2px apart differently depending
+    # on whether they straddle a grid line - a real "is this within _CLUSTER_PX"
+    # test (union-find over every pair within range) doesn't have that seam
+    items = [d for d in geo_rows if d["id"] in marker_px]
+    parent = list(range(len(items)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(items)):
+        xi, yi = marker_px[items[i]["id"]]
+        for j in range(i + 1, len(items)):
+            xj, yj = marker_px[items[j]["id"]]
+            if (xi - xj) ** 2 + (yi - yj) ** 2 <= _CLUSTER_PX ** 2:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    buckets: dict[int, list[dict]] = {}
+    for i, d in enumerate(items):
+        buckets.setdefault(find(i), []).append(d)
+
+    parts = []
+    for items in buckets.values():
+        cx, cy = marker_px[items[0]["id"]]
+        if len(items) == 1:
+            d = items[0]
+            nm = html.escape(_disp_name(d))
+            parts.append(f"<a href='#file-{d['id']}'><circle cx='{cx:.1f}' cy='{cy:.1f}' "
+                        f"r='12' fill='transparent'><title>{nm}</title></circle></a>")
+            continue
+        n = len(items)
+        radius = min(70, 24 + 6 * (n - 1))          # fan spreads wider for more files, capped
+        petals = []
+        for i, d in enumerate(items):
+            angle = 2 * math.pi * i / n - math.pi / 2   # first petal points straight up
+            fx, fy = cx + radius * math.cos(angle), cy + radius * math.sin(angle)
+            nm = html.escape(_disp_name(d))
+            # each petal is its own group, scaled from zero at the shared centre
+            # (cx,cy) up to full size - the line and the dot collapse to that one
+            # point together, so a line to the number is what's actually shrinking
+            # away rather than a separate effect.
+            petals.append(
+                f"<g class='petal' style='transform-origin:{cx:.1f}px {cy:.1f}px'>"
+                f"<line class='spoke' x1='{cx:.1f}' y1='{cy:.1f}' x2='{fx:.1f}' y2='{fy:.1f}'></line>"
+                f"<a href='#file-{d['id']}'><circle class='petaldot' cx='{fx:.1f}' cy='{fy:.1f}' r='9'>"
+                f"<title>{nm}</title></circle></a></g>")
+        # moving from the centre to one petal, or from one petal to another, has
+        # to cross empty SVG space either way - a line only bridges its own petal,
+        # not the arc between two of them. One always-on, invisible disk sized to
+        # the fan's own footprint (never any bigger) keeps the whole cluster
+        # hovered anywhere inside it, so the fan stays open while the pointer
+        # travels around it, without reaching into another cluster's dot.
+        zone_r = radius + 9 + 6
+        parts.append(
+            f"<g class='cluster'>"
+            f"<circle class='clusterzone' cx='{cx:.1f}' cy='{cy:.1f}' r='{zone_r}' "
+            f"fill='transparent'></circle>"
+            f"<circle class='clusterdot' cx='{cx:.1f}' cy='{cy:.1f}' r='13'>"
+            f"<title>{n} files here - hover to choose one</title></circle>"
+            f"<text class='clustern' x='{cx:.1f}' y='{cy + 4.5:.1f}' text-anchor='middle'>{n}</text>"
+            f"{''.join(petals)}</g>")
+    return "".join(parts)
+
+
+def _overview_html(case: Case, overview: str, tally: dict[str, int], drawn_rows: list[dict],
+                   marker_px: dict[int, tuple[float, float]] | None = None,
+                   overview_size: tuple[int, int] = _OVERVIEW_SIZE) -> str:
     """The Locations section: the overview image, and what it does and does not hold.
 
     The note counts the geolocated files that got a map and the ones that did not,
@@ -557,6 +721,8 @@ def _overview_html(overview: str, tally: dict[str, int]) -> str:
     geo = sum(tally.values())
     if not geo or tally.get("no basemap"):
         return ""
+    marker_px = marker_px or {}
+    ow, oh = overview_size
     drawn = tally["drawn"]
     if drawn == geo:
         note = (f"{geo:,} geolocated file(s), drawn on the imported offline basemap. "
@@ -571,11 +737,55 @@ def _overview_html(overview: str, tally: dict[str, int]) -> str:
                  "overview frames those files only." if drawn else
                  "There is no overview map, because none of them could be drawn on "
                  "this basemap.")
-    img = (f"<img src='{html.escape(overview, quote=True)}' "
-           f"alt='map of the geolocated files that could be drawn'>"
-           if overview else "")
-    return (f"<section class='overview'><div class='cap'>Locations</div>{img}"
-            f"<div class='ovnote'>{html.escape(note)}</div></section>")
+
+    # each marker becomes a clickable point: an inline SVG with the raster map as
+    # its <image> and a transparent <a><circle> laid exactly on top of each marker,
+    # at the same coordinates staticmap.render drew it at (or, where several files
+    # share a point, a numbered cluster that fans them out on hover - see
+    # _cluster_svg_markers). Unlike an HTML image map (<area coords=...>), an
+    # SVG's own coordinate system scales with it, so the hit targets track the
+    # markers at any display size with no extra code.
+    areas = _cluster_svg_markers(drawn_rows, marker_px) if overview else ""
+    if areas:
+        note += " Click a point on the map, or a name below, to jump to that file."
+    if "class='cluster'" in areas:
+        note += " Hover (or tab to) a numbered point to pick from the files sharing that spot."
+
+    if areas:
+        mapimg = (f"<svg class='ovsvg' viewBox='0 0 {ow} {oh}' role='img' "
+                 f"aria-label='map of the geolocated files that could be drawn'>"
+                 f"<image href='{html.escape(overview, quote=True)}' "
+                 f"width='{ow}' height='{oh}'></image>{areas}</svg>")
+    elif overview:
+        mapimg = (f"<img src='{html.escape(overview, quote=True)}' "
+                 f"alt='map of the geolocated files that could be drawn'>")
+    else:
+        mapimg = ""
+
+    # a text jump-list alongside the clickable map: two files can sit at the same
+    # coordinate (only one is reachable as a map point), a name is easier to
+    # click precisely than a small dot, and it still works if the map image
+    # itself failed to render for some reason
+    links = "".join(
+        f"<a href='#file-{d['id']}'>{html.escape(_disp_name(d))}</a>"
+        for d in sorted(drawn_rows, key=lambda d: _disp_name(d).lower()))
+    linklist = (f"<div class='ovlinkscap'>Jump to a file</div>"
+               f"<div class='ovlinks'>{links}</div>") if links else ""
+
+    # which offline basemap the review's maps were drawn on, so a reader can obtain
+    # the same file and see the same map - shown under the map itself, not the sha256
+    # (that stays out of the report; a reader who needs it has the case)
+    bm_html = ""
+    if case.db.get_meta("basemap_sha256"):
+        bm = f"{case.db.get_meta('basemap_name') or ''} ({case.db.get_meta('basemap_format') or ''})"
+        bm_html = (f"<div class='ovbasemap'>Basemap used in review: "
+                   f"{html.escape(bm)}</div>")
+
+    return (f"<details class='overview'><summary>Locations "
+            f"<span class='n'>({geo:,})</span>"
+            f"<span class='hint'>click to view map ▾</span></summary>"
+            f"<div class='body'>{mapimg}"
+            f"<div class='ovnote'>{html.escape(note)}</div>{linklist}{bm_html}</div></details>")
 
 
 def _summary_html(case: Case, rows: list[dict], label: str) -> str:
@@ -613,30 +823,47 @@ def _summary_html(case: Case, rows: list[dict], label: str) -> str:
 
     out.append(line("tot", "Total media in the case", total))
 
-    # which offline basemap the review's maps were drawn on, so a reader can obtain the
-    # same file and see the same map
-    bm_sha = case.db.get_meta("basemap_sha256")
-    if bm_sha:
-        bm = f"{case.db.get_meta('basemap_name') or ''} ({case.db.get_meta('basemap_format') or ''})"
-        out.append("<tr class='grp'><td colspan='3'>Map</td></tr>")
-        out.append(f"<tr class='sub'><td class='lbl'>Basemap used in review</td>"
-                   f"<td colspan='2' style='font-size:11px'>{html.escape(bm)}<br>"
-                   f"<span style='font-family:monospace'>sha256 {html.escape(bm_sha)}</span></td></tr>")
-
-    bar = ""
-    if n and len(codes) > 1:
-        segs = "".join(
-            f"<i style='width:{100 * by_cat[c] / n:.4f}%;"
-            f"background:{html.escape(categories.color(case.db, c), quote=True)}' "
-            f"title='{html.escape(categories.label(case.db, c))}: "
-            f"{by_cat[c]:,} ({100 * by_cat[c] / n:.1f}%)'></i>"
-            for c in codes)
-        bar = f"<div class='bar'>{segs}</div>"
+    chart = _donut_svg(case, by_cat, codes, n)
+    chartcol = f"<div class='chartcol'>{chart}</div>" if chart else ""
 
     scope = f" &mdash; {html.escape(label)}" if label else ""
     return (f"<section class='summary'>"
-            f"<div class='cap'>Report contents{scope}</div>{bar}"
-            f"<table>{''.join(out)}</table></section>")
+            f"<div class='cap'>Report contents{scope}</div>"
+            f"<div class='sumrow'>{chartcol}"
+            f"<div class='datacol'><table>{''.join(out)}</table></div></div></section>")
+
+
+def _donut_svg(case: Case, by_cat: Counter, codes: list[int], n: int) -> str:
+    """A ring chart of the category breakdown, drawn as plain stroked SVG
+    circles (the classic percent-as-circumference trick) - no chart library,
+    since the report is a single offline file."""
+    if not n or not codes:
+        return ""
+    r = 15.91549430918954              # circumference == 100, so a percent is a percent
+    segs = []
+    cum = 0.0
+    for c in codes:
+        pct = 100 * by_cat[c] / n
+        if pct <= 0:
+            continue
+        color = html.escape(categories.color(case.db, c), quote=True)
+        title = (f"{html.escape(categories.label(case.db, c))}: "
+                 f"{by_cat[c]:,} ({pct:.1f}%)")
+        segs.append(
+            f"<circle class='ring' cx='21' cy='21' r='{r}' fill='none' "
+            f"stroke='{color}' stroke-width='8' "
+            f"stroke-dasharray='{pct:.4f} {100 - pct:.4f}' "
+            f"stroke-dashoffset='{-cum:.4f}'><title>{title}</title></circle>")
+        cum += pct
+    return (
+        "<svg viewBox='0 0 42 42' class='donut' role='img' aria-label='category breakdown'>"
+        "<g transform='rotate(-90 21 21)'>"
+        f"<circle cx='21' cy='21' r='{r}' fill='none' stroke='var(--line)' stroke-width='8'></circle>"
+        f"{''.join(segs)}"
+        "</g>"
+        f"<text x='21' y='19.5' text-anchor='middle' class='donut-n'>{n:,}</text>"
+        "<text x='21' y='25.5' text-anchor='middle' class='donut-lbl'>files</text>"
+        "</svg>")
 
 
 def _view_source(case: Case, d: dict) -> Path:
@@ -756,11 +983,13 @@ def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
             parts.append(f"<div class='f{' mono' if mono else ''}'>"
                          f"<span class='k'>{html.escape(lbl)}</span>"
                          f"<span class='v'>{html.escape(str(val))}</span></div>")
+    # the locator map sits inside the metadata drop, not under the thumbnail,
+    # so it only renders once the examiner opens that file's details
     locimg = (f"<img class='locmap' src='{html.escape(loc_map, quote=True)}' "
               f"alt='location of {name}' title='drawn on the imported offline basemap'>"
               if loc_map else "")
-    return (f"<div class='card'>{img}{catbar}{locimg}"
-            f"<details class='meta'><summary>{name}</summary>"
+    return (f"<div class='card' id='file-{d['id']}'>{img}{catbar}"
+            f"<details class='meta'><summary>{name}</summary>{locimg}"
             f"<div class='fields'>{''.join(parts)}</div></details></div>")
 
 
@@ -779,11 +1008,15 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
     cn = html.escape(str(case.db.get_meta("case_name") or "GLEAPP"))
     thumb_root = case.thumb_dir
 
-    # group by category, ordered by the category's display position (0 last)
+    # group by category (ordered by the category's display position, 0 last),
+    # then within each category by kind (images / videos / other) so a section
+    # can be browsed one media type at a time
     cmap = categories.catmap(case.db)
-    groups: dict[int, list[dict]] = {}
+    groups: dict[int, dict[str, list[dict]]] = {}
     for d in rows:
-        groups.setdefault(d.get("category") or 0, []).append(d)
+        code = d.get("category") or 0
+        kind = d.get("kind") if d.get("kind") in ("image", "video") else "other"
+        groups.setdefault(code, {}).setdefault(kind, []).append(d)
 
     def _order(code: int) -> tuple:
         if code == 0:
@@ -791,20 +1024,23 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
         return (0, cmap.get(code, {}).get("position", code), code)
     codes = sorted(groups, key=_order)
 
-    overview_uri, loc_maps, map_tally = ("", {}, {})
+    def _cat_count(code: int) -> int:
+        return sum(len(v) for v in groups[code].values())
+
+    overview_uri, loc_maps, map_tally, drawn_rows, marker_px = ("", {}, {}, [], {})
     if maps:
-        overview_uri, loc_maps, map_tally = _render_report_maps(
+        overview_uri, loc_maps, map_tally, drawn_rows, marker_px = _render_report_maps(
             case, rows, flavor=map_flavor, cap=map_cap)
 
     body = [_HTML_HEAD.format(case=cn)]
     body.append(_header_html(case, header))
     body.append(_summary_html(case, rows, scope_label))
-    body.append(_overview_html(overview_uri, map_tally))
+    body.append(_overview_html(case, overview_uri, map_tally, drawn_rows, marker_px))
 
     if len(codes) > 1:
         toc = "".join(
             f"<a href='#cat-{c}'>{html.escape(categories.label(case.db, c))} "
-            f"<span class='n'>{len(groups[c]):,}</span></a>" for c in codes)
+            f"<span class='n'>{_cat_count(c):,}</span></a>" for c in codes)
         body.append(f"<nav class='toc'><span class='lbl'>Jump to section:</span>{toc}</nav>")
     body.append(
         "<div class='rptbar'><span class='lbl'>Metadata:</span> "
@@ -821,14 +1057,20 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
         col = html.escape(categories.color(case.db, c))
         body.append(
             f"<h2 class='catsec' id='cat-{c}' style='border-left:6px solid {col}'>"
-            f"{lbl} <span class='n'>({len(groups[c]):,})</span>"
+            f"{lbl} <span class='n'>({_cat_count(c):,})</span>"
             f"<a class='toplink' href='#top'>&uarr; top</a></h2>")
-        body.append("<div class='grid'>")
-        for d in groups[c]:
-            body.append(_card_html(case, d, keys, thumb_root,
-                                   full_images, full_videos,
-                                   loc_map=loc_maps.get(d["id"], "")))
-        body.append("</div>")
+        for kind, klabel in (("image", "Images"), ("video", "Videos"), ("other", "Other files")):
+            items = groups[c].get(kind)
+            if not items:
+                continue
+            body.append(
+                f"<details class='kindsec' open><summary>{klabel} "
+                f"<span class='n'>({len(items):,})</span></summary><div class='grid'>")
+            for d in items:
+                body.append(_card_html(case, d, keys, thumb_root,
+                                       full_images, full_videos,
+                                       loc_map=loc_maps.get(d["id"], "")))
+            body.append("</div></details>")
 
     body.append(_REPORT_JS)
     body.append("</div></body></html>")
@@ -842,22 +1084,26 @@ _REPORT_JS = """
   var root = document.documentElement;
   function get(k){ try{ return localStorage.getItem('gleapp.report.'+k); }catch(e){ return null; } }
   function set(k,v){ try{ localStorage.setItem('gleapp.report.'+k, v); }catch(e){} }
-  // cls is applied by default when def is true; a stored '0'/'1' overrides.
-  function wire(id, cls, key, def){
+  // cls is applied by default when def is true; a stored '0'/'1' overrides,
+  // for toggles that opt into persistence (persist=true).
+  function wire(id, cls, key, def, persist){
     var btn = document.getElementById(id);
     if(!btn) return;
-    var stored = get(key);
+    var stored = persist ? get(key) : null;
     var on = stored === null ? def : (stored === '1');
     root.classList.toggle(cls, on);
     btn.classList.toggle('on', on);
     btn.addEventListener('click', function(){
       var v = root.classList.toggle(cls);
       btn.classList.toggle('on', v);
-      set(key, v ? '1' : '0');
+      if(persist) set(key, v ? '1' : '0');
     });
   }
-  wire('btnBlur', 'blur', 'blur', true);   // images start blurred
-  wire('btnDark', 'dark', 'dark', false);
+  // Blur always starts ON, every time this report is opened - not persisted,
+  // so an examiner turning it off to look at one report can't leave it off
+  // for the next one they open (local html files share storage per browser).
+  wire('btnBlur', 'blur', 'blur', true, false);
+  wire('btnDark', 'dark', 'dark', false, true);
   // click a thumbnail -> open the full-size image, or play the video, in a new tab
   function openImage(im){
     var w = window.open('', '_blank');
@@ -902,16 +1148,16 @@ _REPORT_JS = """
     im.title = isv ? 'play video in a new tab' : 'open full size in a new tab';
     im.addEventListener('click', function(){ isv ? openVideo(im) : openImage(im); });
   });
-  // always show every metadata block when printing, then restore
+  // always show every metadata block and image/video group when printing, then restore
   var snap = [];
   window.addEventListener('beforeprint', function(){
     snap = [];
-    document.querySelectorAll('details.meta').forEach(function(d){
+    document.querySelectorAll('details.meta, details.kindsec, details.overview').forEach(function(d){
       snap.push(d.open); d.open = true;
     });
   });
   window.addEventListener('afterprint', function(){
-    document.querySelectorAll('details.meta').forEach(function(d, i){
+    document.querySelectorAll('details.meta, details.kindsec, details.overview').forEach(function(d, i){
       d.open = snap[i];
     });
   });

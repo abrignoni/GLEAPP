@@ -155,6 +155,24 @@ def test_render_raster_produces_an_image_with_a_marker():
     assert _reddish(im) > 0                                    # the marker is on it
 
 
+def test_render_return_points_gives_the_markers_own_pixel():
+    """The clickable overlay in the report needs to know exactly where a marker
+    landed - not an approximation, the same pixel the marker itself was drawn at."""
+    rec = {"path": str(FIXTURE), "format": basemaps.FORMAT_PMTILES,
+           "tile_type": "png", "min_zoom": 0, "max_zoom": 1}
+    png, px = staticmap.render(rec, [(10.0, 20.0), (-5.0, 30.0)], width=200, height=140,
+                               zoom=1, return_points=True)
+    im = Image.open(io.BytesIO(png)).convert("RGB")
+    assert len(px) == 2
+    for x, y in px:
+        assert 0 <= x <= 200 and 0 <= y <= 140
+        x, y = round(x), round(y)
+        # sample a small box around the reported point: the marker (a filled red
+        # circle, radius 7) must actually be centred there, not merely nearby
+        box = im.crop((max(0, x - 3), max(0, y - 3), x + 3, y + 3))
+        assert _reddish(box) > 0
+
+
 def test_render_vector_draws_the_style_and_a_marker(monkeypatch):
     tile = _full_water()
     monkeypatch.setattr(basemaps, "pmtiles_tile", lambda p, z, x, y: tile)
@@ -206,8 +224,11 @@ def test_report_embeds_overview_and_per_file_maps(tmp_path):
     from gleapp import report
     ev = tmp_path / "ev" / "DCIM"
     ev.mkdir(parents=True)
+    # far enough apart that even this fixture's low max_zoom (1) keeps them as two
+    # distinct markers rather than clustering them - see test_staticmap.py's own
+    # test for what happens when files DO share a spot
     _gps_jpeg(ev / "a.jpg", 28.54, -81.37, (200, 40, 40))
-    _gps_jpeg(ev / "b.jpg", 28.60, -81.20, (40, 120, 200))
+    _gps_jpeg(ev / "b.jpg", 47.60, -122.30, (40, 120, 200))
     _gps_jpeg(ev / "c.jpg", 0, 0, (90, 90, 90), gps=False)      # no GPS: gets no map
     c = open_case(tmp_path / "case", create=True, examiner="t")
     assert ingest_sources(c, [Source(name="ev", path=str(ev.parent))]) == 3
@@ -219,7 +240,17 @@ def test_report_embeds_overview_and_per_file_maps(tmp_path):
     assert "class='overview'" in html
     assert "2 geolocated file(s)" in html
     assert html.count("class='locmap'") == 2                    # the two GPS files, not c.jpg
-    assert "Basemap used in review" in html                     # provenance recorded by the render
+    assert "Basemap used in review: base" in html                # provenance recorded by the render
+    import hashlib
+    assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() not in html   # name only, no hash
+
+    # the overview map is a clickable SVG (an <image> plus a transparent, linked
+    # <circle> on each marker) rather than a plain <img>, so a click on either
+    # marker jumps to that file's card
+    assert "<svg class='ovsvg'" in html and html.count("<image href=") == 1
+    assert html.count("fill='transparent'") == 2                 # one hit-circle per GPS file
+    assert html.count("href='#file-") == 4                       # 2 on the map + 2 in the jump list
+    assert "class='ovlinkscap'" in html and "a.jpg" in html and "b.jpg" in html
     # and maps can be turned off
     c2 = open_case(tmp_path / "case")
     html2 = report.export_html(c2, tmp_path / "r2.html", maps=False).read_text(encoding="utf-8")
@@ -303,7 +334,7 @@ def test_the_report_overview_frames_only_the_files_it_drew(tmp_path, monkeypatch
     until the files it can show are a single dot."""
     _half_world(monkeypatch)
     doc = _report(tmp_path, [WEST, EAST])
-    drawn = re.search(r"class='overview'.*?src='data:image/png;base64,([^']+)'",
+    drawn = re.search(r"class='overview'.*?<image href='data:image/png;base64,([^']+)'",
                       doc, re.S).group(1)
     rec = {"path": str(FIXTURE), "format": basemaps.FORMAT_PMTILES,
            "tile_type": "png", "min_zoom": 0, "max_zoom": 1}
@@ -327,10 +358,10 @@ def test_the_locations_note_accounts_for_every_geolocated_file(tmp_path, monkeyp
     c = _geo_case(tmp_path, [WEST, WEST, EAST])
     try:
         rows = report._rows(c)
-        _, per, tally = report._render_report_maps(c, rows, flavor="light", cap=400)
+        _, per, tally, _, _ = report._render_report_maps(c, rows, flavor="light", cap=400)
         assert sum(tally.values()) == 3 and tally["drawn"] == len(per) == 2
         assert tally["outside the basemap"] == 1
-        _, capped, tally = report._render_report_maps(c, rows, flavor="light", cap=1)
+        _, capped, tally, _, _ = report._render_report_maps(c, rows, flavor="light", cap=1)
         assert sum(tally.values()) == 3 and tally["over the cap"] == 2
         assert tally["drawn"] == len(capped)
     finally:
@@ -368,7 +399,7 @@ def test_the_html_report_and_the_lava_export_map_the_same_files(tmp_path, monkey
         c.close()
     html_mapped = {
         re.search(r"<summary>(.*?)</summary>", card).group(1)
-        for card in doc.split("<div class='card'>")[1:] if "class='locmap'" in card}
+        for card in doc.split("<div class='card' id=")[1:] if "class='locmap'" in card}
 
     manifest = json.loads((tmp_path / "lava" / "_lava_data.lava").read_text(
         encoding="utf-8"))
@@ -379,6 +410,53 @@ def test_the_html_report_and_the_lava_export_map_the_same_files(tmp_path, monkey
     finally:
         db.close()
     assert html_mapped == lava_mapped == {"f0.jpg"}
+
+
+def test_cluster_svg_markers_fans_out_files_sharing_a_point():
+    """Two files whose markers land on (near enough) the same pixel become one
+    numbered cluster with a collapsed petal per file, Google-Earth-pin-stack
+    style; a file on its own keeps the plain always-clickable marker."""
+    import math
+    from gleapp import report
+    geo_rows = [{"id": 1, "orig_name": "a.jpg"}, {"id": 2, "orig_name": "b.jpg"},
+                {"id": 3, "orig_name": "solo.jpg"}]
+    marker_px = {1: (100.0, 100.0), 2: (102.0, 101.0),     # 2px apart: one cluster
+                 3: (500.0, 300.0)}                        # far away: its own marker
+    svg = report._cluster_svg_markers(geo_rows, marker_px)  # pylint: disable=protected-access
+
+    assert "<a href='#file-3'><circle cx='500.0' cy='300.0' r='12' fill='transparent'>" in svg
+
+    assert "class='cluster'" in svg and "class='clusterdot'" in svg
+    assert ">2<" in svg                                     # the count badge
+    assert svg.count("class='petal'") == 2
+    assert "href='#file-1'" in svg and "href='#file-2'" in svg
+
+    # each petal is its own group, scaled from zero at the shared centre (cx,cy) -
+    # a line to the number and the dot at the end of it collapse to that one point
+    # together, which is what a click-a-name test can't see but a real hover can
+    m = re.search(
+        r"<g class='petal' style='transform-origin:([\d.]+)px ([\d.]+)px'>"
+        r"<line class='spoke' x1='([\d.]+)' y1='([\d.]+)' x2='([\d.]+)' y2='([\d.]+)'>"
+        r"</line><a href='#file-1'><circle class='petaldot' cx='([\d.]+)' cy='([\d.]+)' r='9'>",
+        svg)
+    assert m
+    ox, oy, x1, y1, x2, y2, dcx, dcy = (float(g) for g in m.groups())
+    # the transform-origin and the line's start must be the SAME shared centre -
+    # that's what makes the group collapse to one point rather than fly off
+    assert (ox, oy) == (100.0, 100.0) == (x1, y1)
+    assert (x2, y2) == (dcx, dcy)                            # the line reaches the dot it points at
+
+    # moving from the centre to a petal, or from one petal to another, crosses
+    # empty SVG space either way - only an always-on zone spanning the whole fan
+    # (not just a line to one petal) keeps the cluster hovered while doing that
+    m = re.search(r"<circle class='clusterzone' cx='([\d.]+)' cy='([\d.]+)' r='([\d.]+)' "
+                  r"fill='transparent'>", svg)
+    assert m
+    zcx, zcy, zr = (float(g) for g in m.groups())
+    assert (zcx, zcy) == (100.0, 100.0)
+    petal_dist = math.hypot(dcx - zcx, dcy - zcy)
+    assert zr >= petal_dist + 9                             # covers the petal's own radius too
+    assert svg.index("clusterzone") < svg.index("clusterdot")   # painted first, so under it
 
 
 # ---- labels ----------------------------------------------------------------

@@ -166,8 +166,11 @@ def test_web_serves_pmtiles_by_range_and_records_the_basemap_used(tmp_path):
         db = state["case"].db
         assert db.get_meta("basemap_name") == "tiny" and db.get_meta("basemap_sha256") == used["sha256"]
         from gleapp import report
-        html_out = report.export_html(state["case"], tmp_path / "r.html", "")
-        assert used["sha256"] in html_out.read_text(encoding="utf-8")
+        # this case has no files, so no map is drawn and the report has nowhere
+        # to attribute a basemap - see test_staticmap.py for that with real
+        # geolocated media, where the name (not the hash) appears under the map
+        html_out = report.export_html(state["case"], tmp_path / "r.html", "").read_text(encoding="utf-8")
+        assert "Basemap used in review" not in html_out and used["sha256"] not in html_out
         payload = json.loads(report.export_json(state["case"], tmp_path / "r.json", "")
                              .read_text(encoding="utf-8"))
         assert payload["basemap"]["sha256"] == used["sha256"]
