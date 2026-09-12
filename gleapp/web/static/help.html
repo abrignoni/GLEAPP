@@ -786,8 +786,11 @@ both remember your choice per browser. Printing shows every card's metadata and
 unblurred images in light mode.</p>
 <p>The report also draws its own <strong>location maps</strong> from the active
 basemap (&sect;19), if one is imported and any files are geolocated: a
-<strong>Locations</strong> overview of every geolocated file near the top, and a
-small locator map on each geolocated card, both baked into the report file so it
+<strong>Locations</strong> overview near the top, and a small locator map on each
+geolocated card the basemap covers. A file whose coordinates fall outside the
+basemap gets no map, because one would render as an empty background with a
+marker on it; the note under the overview counts those files, and the overview
+frames only the files it drew. Both are baked into the report file so it
 stays self-contained; the summary names the basemap and its hash so a reader can
 obtain the same file and see the same map years later. The maps carry the place,
 water and street names the basemap holds, where Pillow can supply a scalable font.
@@ -945,8 +948,8 @@ pane then shows a map for any file with GPS (plus a <strong>Copy</strong> button
 coordinates), and <strong>Show current filter on the map</strong> plots every
 geolocated file matching your filters; click a marker for its thumbnail and a
 <strong>Details</strong> button. The HTML report also draws its own maps from the
-basemap and embeds them: a <strong>Locations</strong> overview of every geolocated file
-near the top, and a small locator map on each geolocated file. Those images are baked
+basemap and embeds them: a <strong>Locations</strong> overview near the top, and a
+small locator map on each geolocated file the basemap covers. Those images are baked
 into the report file, so it stays self-contained and offline; the summary names the
 basemap and its hash so a reader can obtain the same file and see the same map. The
 maps carry the place, water and street names the basemap holds, where Pillow can supply

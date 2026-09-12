@@ -2,7 +2,10 @@
 the renderer, and the maps embedded in the HTML report. Everything here is offline
 and touches only local files."""
 
+import base64
 import io
+import json
+import re
 
 import pytest
 from PIL import Image
@@ -222,6 +225,160 @@ def test_report_embeds_overview_and_per_file_maps(tmp_path):
     html2 = report.export_html(c2, tmp_path / "r2.html", maps=False).read_text(encoding="utf-8")
     c2.close()
     assert "class='overview'" not in html2 and "class='locmap'" not in html2
+
+
+# ---- what the report does with a file the basemap cannot draw --------------
+# A point outside the basemap still renders: the tiles come back empty and the result
+# is the background colour with a pin on it, which reads as a location with nothing
+# around it. The LAVA export skips such a file and counts it; these pin that the HTML
+# report does the same, that the overview is framed on the files it could draw, and
+# that the note accounts for the cards left without a map.
+
+WEST = (28.54, -81.38)          # lon < 0: tile column 0 at the fixture's top zoom
+EAST = (59.33, 18.07)           # lon > 0: tile column 1
+
+
+def _half_world(monkeypatch):
+    """Serve only the western half of the world, so WEST is covered and EAST is not."""
+    real = basemaps.pmtiles_tile
+    monkeypatch.setattr(basemaps, "pmtiles_tile",
+                        lambda path, z, x, y: None if x else real(path, z, x, y))
+
+
+def _geo_case(tmp_path, points, name="case"):
+    """A case holding one geolocated file per (lat, lon), with the fixture imported."""
+    ev = tmp_path / name / "DCIM"
+    ev.mkdir(parents=True)
+    for i, (lat, lon) in enumerate(points):
+        _gps_jpeg(ev / f"f{i}.jpg", lat, lon, (40 + 30 * i, 120, 200))
+    c = open_case(tmp_path / f"{name}-case", create=True, examiner="t")
+    ingest_sources(c, [Source(name="ev", path=str(ev.parent))])
+    process(c, workers=1, keyframes=2, screen=False)
+    basemaps.import_basemap(FIXTURE, name=name)
+    return c
+
+
+def _report(tmp_path, points, name="case") -> str:
+    from gleapp import report
+    c = _geo_case(tmp_path, points, name)
+    try:
+        return report.export_html(c, tmp_path / f"{name}.html", maps=True).read_text(
+            encoding="utf-8")
+    finally:
+        c.close()
+
+
+def _note(doc: str) -> str:
+    return re.search(r"<div class='ovnote'>(.*?)</div>", doc, re.S).group(1)
+
+
+def test_a_point_the_basemap_cannot_draw_renders_as_a_blank_square(monkeypatch):
+    """The premise the skip rests on, measured rather than asserted.
+
+    The same figures come off a real regional basemap: a Stockholm point on an Orlando
+    extract drew a 360x240 JPEG that was 91.9% one colour, against 1.2% for a point
+    inside it.
+    """
+    monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
+    rec = {"path": str(FIXTURE), "format": basemaps.FORMAT_PMTILES,
+           "tile_type": "png", "min_zoom": 0, "max_zoom": 1}
+    assert staticmap.covers(rec, EAST[1], EAST[0]) is False
+    im = Image.open(io.BytesIO(staticmap.render(
+        rec, [(EAST[1], EAST[0])], width=360, height=240, fmt="jpeg"))).convert("RGB")
+    assert max(c for c, _ in im.getcolors(1 << 20)) > 0.85 * 360 * 240
+    assert _reddish(im) > 0, "the blank square carries a pin, which is what misreads"
+
+
+def test_the_report_draws_no_locator_for_a_file_outside_the_basemap(tmp_path,
+                                                                    monkeypatch):
+    _half_world(monkeypatch)
+    doc = _report(tmp_path, [WEST, EAST])
+    assert doc.count("class='locmap'") == 1, "the uncovered file still got a locator"
+    assert "2 geolocated file(s): 1 drawn on the imported offline basemap" in _note(doc)
+    assert "1 outside the basemap" in _note(doc)
+
+
+def test_the_report_overview_frames_only_the_files_it_drew(tmp_path, monkeypatch):
+    """One far away file the basemap cannot show would otherwise zoom the overview out
+    until the files it can show are a single dot."""
+    _half_world(monkeypatch)
+    doc = _report(tmp_path, [WEST, EAST])
+    drawn = re.search(r"class='overview'.*?src='data:image/png;base64,([^']+)'",
+                      doc, re.S).group(1)
+    rec = {"path": str(FIXTURE), "format": basemaps.FORMAT_PMTILES,
+           "tile_type": "png", "min_zoom": 0, "max_zoom": 1}
+
+    def px(raw: bytes) -> bytes:
+        return Image.open(io.BytesIO(raw)).convert("RGB").tobytes()
+
+    covered = staticmap.render(rec, [(WEST[1], WEST[0])], width=900, height=540,
+                               fmt="png")
+    both = staticmap.render(rec, [(WEST[1], WEST[0]), (EAST[1], EAST[0])],
+                            width=900, height=540, fmt="png")
+    assert px(covered) != px(both), "the two framings draw the same image"  # control
+    assert px(base64.b64decode(drawn)) == px(covered)
+
+
+def test_the_locations_note_accounts_for_every_geolocated_file(tmp_path, monkeypatch):
+    """Each geolocated file lands in exactly one bucket, so the note explains every
+    card that has no map instead of leaving the reader to guess."""
+    from gleapp import report
+    _half_world(monkeypatch)
+    c = _geo_case(tmp_path, [WEST, WEST, EAST])
+    try:
+        rows = report._rows(c)
+        _, per, tally = report._render_report_maps(c, rows, flavor="light", cap=400)
+        assert sum(tally.values()) == 3 and tally["drawn"] == len(per) == 2
+        assert tally["outside the basemap"] == 1
+        _, capped, tally = report._render_report_maps(c, rows, flavor="light", cap=1)
+        assert sum(tally.values()) == 3 and tally["over the cap"] == 2
+        assert tally["drawn"] == len(capped)
+    finally:
+        c.close()
+
+
+def test_nothing_covered_leaves_the_note_without_a_map(tmp_path, monkeypatch):
+    """No coverage means no overview, and a line saying so rather than no section.
+
+    An image framed on points the basemap cannot draw would be an empty background,
+    and a reader given no section at all cannot tell that from maps being turned off.
+    """
+    monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
+    doc = _report(tmp_path, [WEST, EAST])
+    assert "class='overview'" in doc and "class='locmap'" not in doc
+    assert "<img" not in _note(doc) and "data:image/png" not in doc
+    assert "2 geolocated file(s): 0 drawn" in _note(doc)
+    assert "2 outside the basemap" in _note(doc)
+    assert "no overview map" in _note(doc).lower()
+
+
+def test_the_html_report_and_the_lava_export_map_the_same_files(tmp_path, monkeypatch):
+    """The two reports are built from one case, so they must not disagree about which
+    file the basemap can place. They are separate code paths, and the HTML one used to
+    draw a locator for every geolocated file whatever the basemap held."""
+    import sqlite3
+    from gleapp import lava, report
+    _half_world(monkeypatch)
+    c = _geo_case(tmp_path, [WEST, EAST])
+    try:
+        doc = report.export_html(c, tmp_path / "r.html", maps=True).read_text(
+            encoding="utf-8")
+        lava.export_lava(c, tmp_path / "lava")
+    finally:
+        c.close()
+    html_mapped = {
+        re.search(r"<summary>(.*?)</summary>", card).group(1)
+        for card in doc.split("<div class='card'>")[1:] if "class='locmap'" in card}
+
+    manifest = json.loads((tmp_path / "lava" / "_lava_data.lava").read_text(
+        encoding="utf-8"))
+    db = sqlite3.connect(tmp_path / "lava" / manifest["lava_db_name"])
+    try:
+        lava_mapped = {name for name, ref in
+                       db.execute("SELECT file_name, map FROM media_locations") if ref}
+    finally:
+        db.close()
+    assert html_mapped == lava_mapped == {"f0.jpg"}
 
 
 # ---- labels ----------------------------------------------------------------

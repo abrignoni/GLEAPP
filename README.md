@@ -388,8 +388,10 @@ your filters, with a popup thumbnail that opens the file.
 
 **In the report**: the HTML report draws its own maps from the active basemap and embeds
 them in the file, so a saved report is self-contained and still fetches nothing. A
-"Locations" overview near the top plots every geolocated file on one map, and each
-geolocated file carries a small locator map with a marker. A raster basemap is drawn by
+"Locations" overview near the top plots the geolocated files it could map, and each
+of those files carries a small locator map with a marker. As in the LAVA report, a map
+is drawn only where the basemap holds tiles for those coordinates, and the note under
+the overview counts the files that got none and why. A raster basemap is drawn by
 compositing its tiles; a vector `.pmtiles` is drawn by decoding its tiles and filling
 land, water and land use and stroking roads, in a flat print-friendly palette. The
 place, water and street names the tiles carry are drawn over that, where Pillow can
