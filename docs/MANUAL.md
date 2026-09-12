@@ -730,6 +730,7 @@ When **HTML report** is ticked the dialog shows:
   thumbnail: file name, original name, path, device path, captured / file-
   modified / ingested dates, MD5 / SHA-1 / SHA-256 / pHash, dimensions, size,
   duration, camera, GPS, category, tags, notes, faces, skin ratio, source,
+  **how recovered** (§16), the **recorded reading** a zone-less volume stored,
   MIME, VIC MediaID, known-hash, error. Default: **file name, captured date,
   MD5**; remembered per case. Empty fields are omitted from a card.
 
@@ -821,7 +822,7 @@ walk cannot reach, in two steps that produce different kinds of row.
 | Origin | Recovered by | Name | Dates |
 |---|---|---|---|
 | walked | reading a live filesystem | real name and path | as the filesystem recorded them |
-| recovered | a deleted record that still named the file | **real name** | NTFS yes; FAT32 and exFAT as text only |
+| recovered | a deleted record that still named the file | **real name** | NTFS created, modified and accessed; FAT32 and exFAT as recorded text |
 | carved | a signature scan of raw bytes | none; filed under its byte offset | none, blank |
 
 - **From deleted records** (NTFS, FAT32 and exFAT): a deleted file whose
@@ -829,13 +830,16 @@ walk cannot reach, in two steps that produce different kinds of row.
 
   | Filesystem | Record used | What comes back |
   |---|---|---|
-  | NTFS | the MFT entry | real name **and** dates. The only way to recover a *resident* file: one small enough to live inside the record, which a carve of free space can never reach because it never occupied a cluster. |
-  | FAT32 | the deleted directory entry | real name (the delete overwrites the first character of a short 8.3 name, shown as `_`; a long name is rebuilt in full). Read on the assumption it lay in one cluster run, since delete zeroes the chain. No dates: FAT32 stores a wall-clock time with no zone, so the date columns stay blank. |
-  | exFAT | the deleted directory entry | real name. A single-run file is read exactly as recorded; a fragmented file is followed along the chain it kept; one whose chain was cleared is refused rather than read on a guess. No dates, for the same reason as FAT32. |
+  | NTFS | the MFT entry | real name **and** the created, modified and accessed times the record holds, as real instants (FILETIME is UTC based). The only way to recover a *resident* file: one small enough to live inside the record, which a carve of free space can never reach because it never occupied a cluster. |
+  | FAT32 | the deleted directory entry | real name (the delete overwrites the first character of a short 8.3 name, shown as `_`; a long name is rebuilt in full). Read on the assumption it lay in one cluster run, since delete zeroes the chain. Its dates are read, but FAT32 stores a wall clock with no zone, so they are carried as recorded text and the instant columns stay blank. |
+  | exFAT | the deleted directory entry | real name. A single-run file is read exactly as recorded; a fragmented file is followed along the chain it kept; one whose chain was cleared is refused rather than read on a guess. Dates as FAT32: read, carried as text, no instant. |
 
-  The FAT32 / exFAT times are still kept as recorded, and the HTML report
-  shows them when *Recorded (as stored, no zone)* is ticked in the Export
-  dialog. On all three filesystems, a file is recovered only while its
+  A zone-less reading is never turned into an instant here: it is carried in
+  the row's recorded reading, shown in the HTML report when *Recorded (as
+  stored, no zone)* is ticked in the Export dialog, exported as the CSV's
+  `recorded_times` column, and given its own column in the LAVA project. The
+  same is true of a **walked** FAT32 or exFAT file, which is the ordinary case.
+  On all three filesystems, a file is recovered only while its
   clusters are still free, and refused once a later file has taken one, so
   overwritten bytes are never presented as the file. Recovered files are
   always copied into the case, because a deleted file is not one contiguous
@@ -879,6 +883,12 @@ disk holding any volume that cannot report its free space the scan falls back
 to the whole image rather than leaving part of the disk unread. One ext4
 partition on a dual-boot disk is enough to do that.
 
+Not answering and answering "nothing" are different results. A volume that
+cannot say returns no answer and the whole image is scanned; a disk whose
+volumes all answer and between them claim every byte scopes to nothing, records
+"0 runs of space no volume claims, 0 bytes", and carves nothing. A full disk
+therefore does the smallest scan rather than the largest.
+
 **Scoping.** A signature inside an allocated run belongs to a file the
 directory tree already names and the walk already registered, so scanning only
 the space no volume claims is both far less work and far better material. The
@@ -914,12 +924,14 @@ currently carry that distinction onto the row.
 
 The Source panel shows the split per acquisition: *N walked · M carved · K
 recovered*. The sidebar's **How recovered** filter (§8) narrows the gallery to
-the walked or the carved rows; it has no entry for the files recovered from
-deleted records, and the carved option does not include them, so find those by
-name or from the Source panel count. No report carries the origin: it is not a
-CSV column, not an HTML report field and not a LAVA column, so a carved file is
-identifiable there only by its hex name and empty dates. Where the distinction
-matters, put it in your notes.
+any one of the three: *Walked, still listed*, *Recovered from a deleted record*
+or *Carved from unclaimed space*.
+
+The reports carry it too, in the same words, so the distinction survives the
+handover: **How recovered** is a field you can tick under each image in the HTML
+report, `origin` is a CSV column, and the LAVA project gives it a column of its
+own. A row from a folder or an ordinary archive leaves it empty, because the
+question only has an answer for an acquisition.
 
 ## 17. Keyboard shortcuts
 
