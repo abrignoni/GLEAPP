@@ -69,14 +69,30 @@ function renderNotifyMenu() {
     </button>`).join("")
     + `<div class="nfoot"><button type="button" id="notifyClear">Clear</button></div>`;
 }
+/* Header dropdowns (the recent-exports bell and the grouped ☰ Menu) share this
+   open/close/position plumbing - only one is open at a time, and either closes
+   on an outside click. */
+function toggleHdrMenu(btn, menu) {
+  if (menu.style.display === "block") { menu.style.display = "none"; return; }
+  document.querySelectorAll(".hdrmenu").forEach(m => m.style.display = "none");
+  const b = btn.getBoundingClientRect();
+  menu.style.display = "block";
+  menu.style.top = (b.bottom + 4) + "px";
+  menu.style.left = Math.max(4, b.right - menu.offsetWidth) + "px";
+}
+document.addEventListener("click", e => {
+  if (e.target.closest(".hdrmenu") || e.target.closest("#btnNotify") || e.target.closest("#btnMenu"))
+    return;
+  document.querySelectorAll(".hdrmenu").forEach(m => m.style.display = "none");
+});
+
 function toggleNotifyMenu() {
-  const m = $("#notifyMenu");
-  if (m.style.display === "block") { m.style.display = "none"; return; }
+  if ($("#notifyMenu").style.display === "block") {
+    $("#notifyMenu").style.display = "none";
+    return;
+  }
   renderNotifyMenu();
-  const b = $("#btnNotify").getBoundingClientRect();
-  m.style.display = "block";
-  m.style.top = (b.bottom + 4) + "px";
-  m.style.left = Math.max(4, b.right - m.offsetWidth) + "px";
+  toggleHdrMenu($("#btnNotify"), $("#notifyMenu"));
   $("#notifyDot").hidden = true;
 }
 $("#btnNotify").onclick = toggleNotifyMenu;
@@ -91,10 +107,6 @@ $("#notifyMenu").addEventListener("click", e => {
   const n = reportNotifications.find(x => x.id == item.dataset.id);
   if (n) openFolder(n.dir);
   $("#notifyMenu").style.display = "none";
-});
-document.addEventListener("click", e => {
-  if (!e.target.closest("#notifyMenu") && !e.target.closest("#btnNotify"))
-    $("#notifyMenu").style.display = "none";
 });
 
 const fmtDur = s => {
@@ -1568,7 +1580,7 @@ document.addEventListener("keydown", e => {
     $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
     $("#stashWipeDlg").style.display = "none"; $("#hashImportDlg").style.display = "none";
     $("#refDlg").style.display = "none"; $("#histDlg").style.display = "none";
-    $("#helpMenu").style.display = "none";
+    $("#mainMenu").style.display = "none"; $("#notifyMenu").style.display = "none";
     return;
   }
   if (e.key === "?" && !$("#helpDlg").style.display.includes("block")) {
@@ -1688,28 +1700,20 @@ async function openHelp() {
   }
   $("#helpDoc").scrollTop = 0;
 }
-/* "? Help ▾" opens a small menu: Manual (the manual dialog) or Processing history
-   (the audit-log dialog). The launcher's own Help button has no case, so it opens
-   the manual directly. */
-function toggleHelpMenu() {
-  const m = $("#helpMenu");
-  if (m.style.display === "block") { m.style.display = "none"; return; }
-  const b = $("#btnHelp").getBoundingClientRect();
-  m.style.display = "block";
-  m.style.top = (b.bottom + 4) + "px";
-  m.style.left = Math.max(4, b.right - m.offsetWidth) + "px";
-}
-$("#btnHelp").onclick = toggleHelpMenu;
-$("#helpMenu").addEventListener("click", e => {
+/* "☰ Menu" groups the case-tools, reference-data and help buttons that used to
+   sprawl across the whole header into one dropdown (Case / Reference / Help),
+   sharing toggleHdrMenu's open/close/position plumbing with the bell. Each
+   button inside keeps its own onclick, wired where the rest of that feature
+   lives; this listener only closes the menu once one of them fires, and
+   routes the two Help entries (which have no case of their own to act on).
+   The launcher's own Help button has no case either, so it opens the manual
+   directly, unaffected by any of this. */
+$("#btnMenu").onclick = () => toggleHdrMenu($("#btnMenu"), $("#mainMenu"));
+$("#mainMenu").addEventListener("click", e => {
   const which = e.target.dataset.help;
-  if (!which) return;
-  $("#helpMenu").style.display = "none";
   if (which === "manual") openHelp();
   else if (which === "history") openHistDlg();
-});
-document.addEventListener("click", e => {
-  if (!e.target.closest("#helpMenu") && !e.target.closest("#btnHelp"))
-    $("#helpMenu").style.display = "none";
+  if (e.target.tagName === "BUTTON") $("#mainMenu").style.display = "none";
 });
 $("#btnHelpLauncher").onclick = openHelp;      // same manual, from the launcher
 $("#helpClose").onclick = () => $("#helpDlg").style.display = "none";
@@ -2518,7 +2522,7 @@ $("#histClose").onclick = () => $("#histDlg").style.display = "none";
 $("#histDlg").addEventListener("click", e => {
   if (e.target.id === "histDlg") $("#histDlg").style.display = "none";
 });
-// opened from the "? Help ▾" menu — see toggleHelpMenu
+// opened from the "☰ Menu" dropdown's Help section
 
 /* ---------- local hash stash ---------- */
 const STASH_CAT_NAMES = { 1: "CAM", 2: "Child Exploitative", 3: "CGI / Animation" };
