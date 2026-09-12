@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -236,6 +239,24 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             return jsonify({"path": res[0] if res else None})
         except Exception as exc:  # noqa: BLE001
             return jsonify({"path": None, "error": f"{type(exc).__name__}: {exc}"})
+
+    @app.post("/api/open-folder")
+    def open_folder():
+        """Open a folder in the OS file manager - the reports folder an export
+        just wrote to, so clicking that toast takes the examiner straight there."""
+        path = (request.get_json(silent=True) or {}).get("path")
+        if not path or not Path(path).is_dir():
+            return jsonify({"error": "not_found", "message": "That folder is gone"}), 404
+        try:
+            if sys.platform == "win32":
+                os.startfile(path)  # noqa: S606 - local path this app itself wrote to
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except OSError as exc:
+            return jsonify({"error": "failed", "message": f"{type(exc).__name__}: {exc}"}), 500
+        return jsonify({"ok": True})
 
     def _close_current() -> None:
         cur = state["case"]
