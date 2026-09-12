@@ -1637,19 +1637,79 @@ const SEC_ACTIVE = {
   carve:  () => !!$("#forigin").value,
   arch:   () => $("#finarch").checked,
 };
+// Each active filter drives a removable chip under "N filters" - "Clear"
+// still resets everything, but one filter can now come off on its own.
+// active() decides whether it's on, label() is the chip's text, clear()
+// resets just that one control (the field-change handlers below re-run the
+// query the same way they do for a normal edit).
+const FILTER_DEFS = [
+  { active: () => $("#fq").value.trim(),
+    label: () => `Search: "${esc($("#fq").value.trim())}"`,
+    clear: () => { $("#fq").value = ""; } },
+  { active: () => $("#fcat").value !== "any",
+    label: () => `Category: ${esc($("#fcat").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fcat").value = "any"; } },
+  { active: () => !!$("#fkind").value,
+    label: () => `Type: ${esc($("#fkind").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fkind").value = ""; } },
+  { active: () => !!$("#fsrc").value,
+    label: () => `Source: ${esc($("#fsrc").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fsrc").value = ""; } },
+  { active: () => !!$("#forigin").value,
+    label: () => `How recovered: ${esc($("#forigin").selectedOptions[0].textContent)}`,
+    clear: () => { $("#forigin").value = ""; } },
+  { active: () => !!$("#fhashset").value,
+    label: () => `Known hashes: ${esc($("#fhashset").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fhashset").value = ""; } },
+  { active: () => !!$("#fdup").value,
+    label: () => `Duplicates: ${esc($("#fdup").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fdup").value = ""; } },
+  { active: () => $("#fhit").checked,
+    label: () => "Any known-hash hit",
+    clear: () => { $("#fhit").checked = false; } },
+  { active: () => $("#fhidegood").checked,
+    label: () => "Hide known-NSRL",
+    clear: () => { $("#fhidegood").checked = false; } },
+  { active: () => $("#ffaces").checked,
+    label: () => "Has faces",
+    clear: () => { $("#ffaces").checked = false; } },
+  { active: () => +$("#fskin").value > 0,
+    label: () => `Skin-tone ratio: ${esc($("#fskin").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fskin").value = "0"; } },
+  { active: () => $("#ferr").checked,
+    label: () => "Processing error / no preview",
+    clear: () => { $("#ferr").checked = false; } },
+  { active: () => $("#fgps").checked,
+    label: () => "Has GPS",
+    clear: () => { $("#fgps").checked = false; } },
+  { active: () => $("#finarch").checked,
+    label: () => "Extracted from an archive",
+    clear: () => { $("#finarch").checked = false; } },
+  { active: () => !!state.vstack,
+    label: () => "Viewing a visual-match group",
+    clear: () => { state.vstack = null; } },
+  { active: () => !!state.stack,
+    label: () => "Viewing an exact-duplicate group",
+    clear: () => { state.stack = null; } },
+];
 function countActiveFilters() {
-  let n = 0;
-  if ($("#fq").value.trim()) n++;
-  ["#fcat", "#fkind", "#fsrc", "#forigin", "#fhashset", "#fdup"].forEach(s => {
-    const v = $(s).value;
-    if (v && v !== "any") n++;
-  });
-  ["#fhit", "#fhidegood", "#ffaces", "#ferr", "#fgps", "#finarch"].forEach(s => { if ($(s).checked) n++; });
-  if (+$("#fskin").value > 0) n++;
-  if (state.vstack) n++;
-  if (state.stack) n++;
-  return n;
+  return FILTER_DEFS.filter(f => f.active()).length;
 }
+function renderFilterChips() {
+  const box = $("#fchips");
+  if (!box) return;
+  box.innerHTML = FILTER_DEFS.map((f, i) => !f.active() ? "" : (
+    `<span class="fchip"><span>${f.label()}</span>` +
+    `<button type="button" data-i="${i}" title="Remove this filter">&times;</button></span>`
+  )).join("");
+}
+$("#fchips").addEventListener("click", e => {
+  const btn = e.target.closest("button[data-i]");
+  if (!btn) return;
+  FILTER_DEFS[+btn.dataset.i].clear();
+  refreshSections();
+  reload();
+});
 function refreshSections() {
   document.querySelectorAll(".fsec").forEach(sec => {
     const fn = SEC_ACTIVE[sec.dataset.sec];
@@ -1661,6 +1721,7 @@ function refreshSections() {
     bar.hidden = !n;
     $("#fbarN").innerHTML = `<b>${n}</b> filter${n === 1 ? "" : "s"}`;
   }
+  renderFilterChips();
 }
 document.querySelectorAll(".fsec").forEach(sec => {
   const key = "gleapp.fsec." + sec.dataset.sec;
