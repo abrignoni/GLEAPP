@@ -1191,7 +1191,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             from .. import hashstore
             try:
                 hstore = hashstore.summary()
-            except Exception:  # noqa: BLE001 - never let a bad store break the launcher
+            except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                # never let a bad store break the launcher
                 hstore = {"sets": [], "entries": 0}
             return jsonify({"needs_case": True,
                             "recent": appconfig.recent_cases(limit=3),
