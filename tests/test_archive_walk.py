@@ -5,11 +5,14 @@ name, the path and, where the filesystem records one an instant can be made
 from, the date. These build a FAT32 volume, wrap it in an E01, and check what
 comes out the other side.
 
-What a fixture cannot show is timestamp fidelity: this reader does not yet read
-FAT's dates, which are local with no zone recorded, so the fixture proves only
-that no date is invented for them. Timestamps from NTFS and APFS are measured
-against real acquisitions instead, and the walk of one is quoted in the module
-that does it.
+FAT32's dates are read, and kept the way the volume recorded them: text with
+no zone, carried in recorded_times, with the epoch columns left empty because
+FAT32 stores no offset an instant could be made from. What a fixture cannot
+settle is fidelity against a real volume, because these dates are written by
+the test's own FAT writer, so a reading that comes back has round tripped
+through this code rather than decoded what a driver wrote. Timestamps from
+NTFS and APFS are measured against real acquisitions instead, and the walk of
+one is quoted in the module that does it.
 """
 
 from __future__ import annotations
