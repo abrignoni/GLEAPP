@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 16
 
 # Perceptual / robust hash algorithms that can appear in ``hashset_entries.algo``.
 #
@@ -149,6 +149,27 @@ CREATE TABLE IF NOT EXISTS keyframes (
     thumb    TEXT,          -- relative path to the frame image
     phash    TEXT
 );
+
+-- One row per detected face (a photo, or one video key frame, can hold
+-- several). Populated only when face/skin screening ran at ingest;
+-- ``embedding`` is NULL unless the SFace model was available to compute one -
+-- see gleapp/detect.py. ``keyframe_id`` (added in _migrate(), see the note
+-- there on why) is NULL for an image's own face (tied to the file directly);
+-- for a video, it names which key frame the face was seen in - a face
+-- belongs to one instant, not the video as a whole - and ``file_id`` still
+-- names the video itself, for a plain "faces on this file" query.
+CREATE TABLE IF NOT EXISTS faces (
+    id        INTEGER PRIMARY KEY,
+    file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    x         REAL,          -- bounding box, as a fraction (0-1) of image width/height -
+    y         REAL,          -- resolution-independent, so it still lines up however
+    w         REAL,          -- large or small the image is later displayed at
+    h         REAL,
+    score     REAL,          -- YuNet detection confidence
+    embedding BLOB           -- SFace 128-d float32 embedding (np.tobytes()), or NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_faces_file ON faces(file_id);
 
 -- Imported known-hash sets (Project VIC / CAID / CSV).
 CREATE TABLE IF NOT EXISTS hashsets (
@@ -290,6 +311,14 @@ class CaseDB:
         if "locked" not in cat_cols:
             self.conn.execute(
                 "ALTER TABLE categories ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+        face_cols = {r["name"] for r in self.conn.execute(
+            "PRAGMA table_info(faces)")}
+        if "keyframe_id" not in face_cols:
+            self.conn.execute(
+                "ALTER TABLE faces ADD COLUMN keyframe_id "
+                "INTEGER REFERENCES keyframes(id) ON DELETE CASCADE")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faces_keyframe ON faces(keyframe_id)")
         self.conn.commit()
 
     def _seed_categories(self) -> None:
@@ -532,16 +561,63 @@ class CaseDB:
         ]
 
     # -- keyframes -----------------------------------------------------
-    def add_keyframe(self, file_id: int, ts: float, thumb: str, phash: str | None) -> None:
+    def add_keyframe(self, file_id: int, ts: float, thumb: str, phash: str | None) -> int:
         with self.lock:
-            self.conn.execute(
+            cur = self.conn.execute(
                 "INSERT INTO keyframes(file_id, ts, thumb, phash) VALUES(?,?,?,?)",
                 (file_id, ts, thumb, phash),
             )
+            return int(cur.lastrowid)
 
     def keyframes_for(self, file_id: int) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM keyframes WHERE file_id=? ORDER BY ts", (file_id,)
+        ).fetchall()
+
+    # -- faces ----------------------------------------------------------
+    def replace_faces(self, file_id: int, records: list[dict]) -> None:
+        """Swap in a fresh set of detected-face rows for ``file_id`` - each
+        record is {'bbox': (x,y,w,h) as 0-1 fractions, 'score', 'embedding'
+        (bytes or None)}. Safe to call again on reprocess (old rows dropped
+        first), same as keyframes."""
+        with self.lock:
+            self.conn.execute("DELETE FROM faces WHERE file_id=?", (file_id,))
+            for r in records:
+                x, y, w, h = r["bbox"]
+                self.conn.execute(
+                    "INSERT INTO faces(file_id, x, y, w, h, score, embedding) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (file_id, x, y, w, h, r.get("score"), r.get("embedding")),
+                )
+
+    def replace_keyframe_faces(self, keyframe_id: int, file_id: int, records: list[dict]) -> None:
+        """Same idea as replace_faces, but for one video key frame's faces -
+        tied to that specific instant (a video's faces move), not the file as
+        a whole. ``file_id`` is carried too, so "every face on this file"
+        still just means WHERE file_id=?, image or video alike."""
+        with self.lock:
+            self.conn.execute("DELETE FROM faces WHERE keyframe_id=?", (keyframe_id,))
+            for r in records:
+                x, y, w, h = r["bbox"]
+                self.conn.execute(
+                    "INSERT INTO faces(file_id, keyframe_id, x, y, w, h, score, embedding) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (file_id, keyframe_id, x, y, w, h, r.get("score"), r.get("embedding")),
+                )
+
+    def faces_for(self, file_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM faces WHERE file_id=? ORDER BY id", (file_id,)
+        ).fetchall()
+
+    def get_face(self, face_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM faces WHERE id=?", (face_id,)).fetchone()
+
+    def iter_face_embeddings(self) -> list[sqlite3.Row]:
+        """Every face that has an embedding, for a match scan."""
+        return self.conn.execute(
+            "SELECT id, file_id, embedding FROM faces WHERE embedding IS NOT NULL"
         ).fetchall()
 
     # -- hash sets ----------------------------------------------------

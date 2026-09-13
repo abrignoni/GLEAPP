@@ -274,7 +274,8 @@ function tileEl(f) {
   el.style.borderColor = f.category ? catColor(f.category) : "";
   const nExact = f.stack_count || 1;
   const nVis = f.vstack_count || 0;
-  const dist = f.distance != null ? `<span class="b">${f.similarity}%</span>` : "";
+  // face-match results carry similarity with no "distance" (that's a pHash-only concept)
+  const dist = (f.distance != null || f.similarity != null) ? `<span class="b">${f.similarity}%</span>` : "";
   const faces = f.faces ? `<span class="b">${f.faces}\u{1F464}</span>` : "";
   const hit = f.hashset_hit
     ? (f.hashset_kind === "known-good"
@@ -1139,8 +1140,11 @@ window.addEventListener("pagehide", () => {
         { type: "application/json" }));
   } catch (e) {}
 });
+let _filmFaceLayerCleanups = [];
 async function showMeta(id) {
   if (pendingNoteFlush) { try { await pendingNoteFlush(); } catch (e) {} pendingNoteFlush = null; }
+  _filmFaceLayerCleanups.forEach(fn => fn());
+  _filmFaceLayerCleanups = [];
   const f = await api("/api/file/" + id);
   if (!f || f.id == null) {           // f.error here is the file's *processing*
     $("#meta").innerHTML = `<div class="empty">Could not load file #${id}.</div>`;
@@ -1229,7 +1233,7 @@ async function showMeta(id) {
 
       ${f.keyframes && f.keyframes.length ? `<div class="muted" style="margin-top:8px">Key frames</div>
         <div class="film">${f.keyframes.map(k =>
-          `<img src="${k.thumb}" title="${fmtDur(k.ts)}" data-ts="${k.ts}">`).join("")}</div>` : ""}
+          `<img src="${k.thumb}" title="${fmtDur(k.ts)}" data-ts="${k.ts}" data-kf="${k.id}">`).join("")}</div>` : ""}
 
       <table>
         ${rows.map(r => `<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join("")}
@@ -1304,6 +1308,8 @@ async function showMeta(id) {
     im.onclick = () => openViewer(id, +im.dataset.ts));
   m.querySelectorAll(".film img[data-open]").forEach(im =>
     im.onclick = () => { setFocus(+im.dataset.open); });
+  const film = m.querySelector(".film");
+  if (film && film.querySelector("img[data-kf]")) loadKeyframeFaceBoxes(id, film);
 }
 
 /* ---------- full-size viewer ---------- */
@@ -1326,10 +1332,62 @@ function _applyEnh() {
   try { localStorage.setItem("gleapp.viewenh", JSON.stringify(_enh)); } catch (e) {}
 }
 
+/* click a detected face's box to find other files with a matching face -
+   opt-in: only drawn/clickable when screening was on and SFace embedded it.
+   The overlay is a separate layer positioned in JS from the <img>'s actual
+   rendered box (getBoundingClientRect) rather than nested CSS percentages -
+   percentage max-height doesn't resolve through an auto-sized wrapper, which
+   left the image itself unconstrained (way oversized) when tried that way.
+   Shared by the full-size viewer (one image) and the details pane's video
+   key-frame filmstrip (several small thumbnails, one container). Returns a
+   cleanup function the caller should run when the image/thumbnail goes away. */
+function attachFaceLayer(img, faces, container, onClick) {
+  if (!faces || !faces.length) return null;
+  const layer = document.createElement("div");
+  layer.className = "faceLayer";
+  faces.forEach(fc => {
+    const [x, y, bw, bh] = fc.bbox;
+    const box = document.createElement(fc.has_embedding ? "button" : "div");
+    box.className = "faceBox" + (fc.has_embedding ? " clickable" : "");
+    box.style.left = (x * 100) + "%";
+    box.style.top = (y * 100) + "%";
+    box.style.width = (bw * 100) + "%";
+    box.style.height = (bh * 100) + "%";
+    if (fc.has_embedding) {
+      box.title = "Find matching faces";
+      box.onclick = e => { e.stopPropagation(); onClick(fc.id); };
+    }
+    layer.appendChild(box);
+  });
+  container.appendChild(layer);
+
+  const sync = () => {
+    if (!document.body.contains(img)) { cleanup(); return; }
+    const cRect = container.getBoundingClientRect();
+    const iRect = img.getBoundingClientRect();
+    layer.style.left = (iRect.left - cRect.left) + "px";
+    layer.style.top = (iRect.top - cRect.top) + "px";
+    layer.style.width = iRect.width + "px";
+    layer.style.height = iRect.height + "px";
+  };
+  const cleanup = () => {
+    window.removeEventListener("resize", sync);
+    container.removeEventListener("scroll", sync);
+  };
+  if (img.complete && img.naturalWidth) sync();
+  else img.addEventListener("load", sync, { once: true });
+  window.addEventListener("resize", sync);
+  container.addEventListener("scroll", sync);
+  return cleanup;
+}
+
+let _viewerFaceLayerCleanup = null;   // the viewer's active listener, if any - one at a time
+
 function openViewer(id, ts) {
   const f = state.files.find(x => x.id === id) || {};
   const w = $("#vWrap");
   $("#vBar").classList.add("show");   // "Lighten dark areas" works on video too
+  if (_viewerFaceLayerCleanup) { _viewerFaceLayerCleanup(); _viewerFaceLayerCleanup = null; }
   if (f.kind === "video") {
     w.innerHTML = `<video src="/media/${id}" controls autoplay></video>`;
     if (ts) w.querySelector("video").currentTime = ts;
@@ -1339,11 +1397,54 @@ function openViewer(id, ts) {
       onerror="this.replaceWith(Object.assign(document.createElement('div'),
         {className:'noimg',style:'padding:40px',
          innerHTML:'This file can\\'t be displayed<br><small>GPU texture / proprietary format — try the original file</small>'}))">`;
+    loadFaceBoxes(id);
   }
   $("#viewer").style.display = "block";
   _applyEnh();
 }
-function closeViewer() { $("#viewer").style.display = "none"; $("#vWrap").innerHTML = ""; }
+function closeViewer() {
+  $("#viewer").style.display = "none"; $("#vWrap").innerHTML = "";
+  if (_viewerFaceLayerCleanup) { _viewerFaceLayerCleanup(); _viewerFaceLayerCleanup = null; }
+}
+async function loadFaceBoxes(id) {
+  const img = $("#vWrap img");
+  if (!img) return;
+  // only an image's own faces (keyframe_id null) belong on the full-size photo
+  const raw = await api(`/api/faces/${id}`).catch(() => []);
+  const faces = Array.isArray(raw) ? raw.filter(fc => fc.keyframe_id == null) : [];
+  if (!document.body.contains(img)) return;   // viewer closed/reopened meanwhile
+  _viewerFaceLayerCleanup = attachFaceLayer(img, faces, $("#vWrap"),
+    faceId => { closeViewer(); showFaceMatches(faceId); });
+}
+
+/* the details pane's video key-frame filmstrip: same idea, one small
+   thumbnail at a time, each keyed by its own keyframe id */
+function loadKeyframeFaceBoxes(fileId, film) {
+  api(`/api/faces/${fileId}`).then(faces => {
+    if (!Array.isArray(faces) || !document.body.contains(film)) return;
+    const byKf = {};
+    faces.forEach(fc => {
+      if (fc.keyframe_id == null) return;
+      (byKf[fc.keyframe_id] ||= []).push(fc);
+    });
+    film.querySelectorAll("img[data-kf]").forEach(img => {
+      const kfFaces = byKf[img.dataset.kf];
+      if (!kfFaces) return;
+      const cleanup = attachFaceLayer(img, kfFaces, film, faceId => showFaceMatches(faceId));
+      if (cleanup) _filmFaceLayerCleanups.push(cleanup);
+    });
+  }).catch(() => {});
+}
+async function showFaceMatches(faceId) {
+  const d = await api(`/api/face-match/${faceId}`);
+  state.similarOf = faceId;   // reuses the same "special result set" plumbing as find-similar
+  state.files = d.files;
+  renderFiles(d.files);
+  renderPager();
+  $("#simBanner").style.display = "flex";
+  $("#simId").textContent = `files with a matching face (#${faceId})`;
+  updateStat();
+}
 $("#vClose").onclick = closeViewer;
 $("#viewer").addEventListener("click", e => { if (e.target.id === "viewer") closeViewer(); });
 $("#vEnhOn").onchange = () => { _enh.on = $("#vEnhOn").checked; _applyEnh(); };
