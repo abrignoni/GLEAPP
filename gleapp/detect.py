@@ -157,8 +157,8 @@ def detect_faces(img: Image.Image) -> list[dict]:
         }
         if rec is not None:
             try:
-                aligned = rec.alignCrop(work, d)
-                feat = rec.feature(aligned)
+                aligned = rec.alignCrop(work, d)  # pylint: disable=no-member
+                feat = rec.feature(aligned)  # pylint: disable=no-member
                 rec_out["embedding"] = np.asarray(feat, dtype=np.float32).tobytes()
             except cv2.error:  # pylint: disable=catching-non-exception
                 pass
