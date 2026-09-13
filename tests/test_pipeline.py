@@ -1684,7 +1684,6 @@ def test_recent_cases_hides_empty_and_annotates(tmp_path, evidence):
 def test_the_launcher_can_see_more_than_three_recent_cases(tmp_path, evidence):
     """The launcher only shows 3 until "Show more" - but the server has to
     actually hand it more than 3 for that button to have anything to reveal."""
-    from gleapp import appconfig
     from gleapp.web.app import create_app
 
     client = create_app(None).test_client()
