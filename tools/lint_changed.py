@@ -34,10 +34,12 @@ PYLINT_ARGS = ['--disable=C,R', '--persistent=no', '--output-format=json']
 
 
 def run_pylint(repo_dir, paths):
-    """Return Counter keyed by (path, symbol) for paths that exist in repo_dir."""
+    """Return (Counter keyed by (path, symbol), raw message list) for paths that
+    exist in repo_dir. The raw list is kept around only so a failure can name the
+    lines a newly-introduced warning sits on."""
     present = [p for p in paths if os.path.exists(os.path.join(repo_dir, p))]
     if not present:
-        return collections.Counter()
+        return collections.Counter(), []
 
     env = dict(os.environ, PYTHONPATH='.')
     result = subprocess.run(
@@ -51,7 +53,7 @@ def run_pylint(repo_dir, paths):
             print(f'pylint produced no output (exit {result.returncode}):\n{result.stderr}',
                   file=sys.stderr)
             sys.exit(2)
-        return collections.Counter()
+        return collections.Counter(), []
 
     try:
         messages = json.loads(stdout)
@@ -59,7 +61,7 @@ def run_pylint(repo_dir, paths):
         print(f'could not parse pylint output:\n{stdout[:2000]}', file=sys.stderr)
         sys.exit(2)
 
-    return collections.Counter((m['path'], m['symbol']) for m in messages)
+    return collections.Counter((m['path'], m['symbol']) for m in messages), messages
 
 
 def main():
@@ -111,7 +113,7 @@ def main():
             return 0
 
     print('Linting:\n' + '\n'.join(f'  {p}' for p in paths) + '\n')
-    after = run_pylint('.', paths)
+    after, after_messages = run_pylint('.', paths)
 
     # A detached worktree gives the base revision with full repo context, so pylint
     # resolves imports there the same way it does for the change.
@@ -120,7 +122,7 @@ def main():
         subprocess.run(['git', 'worktree', 'add', '--detach', '--quiet', base_dir,
                         args.base_ref], check=True, capture_output=True)
         try:
-            before = run_pylint(base_dir, paths)
+            before, _ = run_pylint(base_dir, paths)
         finally:
             subprocess.run(['git', 'worktree', 'remove', '--force', base_dir],
                            check=False, capture_output=True)
@@ -142,7 +144,10 @@ def main():
 
     print('\nThis change introduces new pylint warnings:\n')
     for (path, symbol), count in sorted(introduced.items()):
-        print(f'  {path}: {symbol} (+{count})')
+        lines = sorted(m['line'] for m in after_messages
+                       if m['path'] == path and m['symbol'] == symbol)
+        where = f" at line {lines[0]}" if len(lines) == 1 else f" at lines {lines}"
+        print(f'  {path}: {symbol} (+{count}){where}')
     print('\nRe-run locally with:')
     print(f'  PYTHONPATH=. python -m pylint {" ".join(paths)} {" ".join(PYLINT_ARGS[:2])}')
     return 1
