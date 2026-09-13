@@ -562,15 +562,18 @@ python tools/make_test_media.py test_media
 ## Credits
 
 GLEAPP is built on Pillow, OpenCV, NumPy, ImageHash, Flask, SQLite, the YuNet
-face detector (OpenCV Zoo), pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd,
-tzdata and more. E01 acquisitions are read with
-[ewfprobe](https://github.com/abrignoni/ewfprobe) and carved with
-[mediacarve](https://github.com/abrignoni/mediacarve), both MIT and vendored under
-`gleapp/vendor/`. GLEAPP is part of the **xLEAPP** family (ALEAPP / iLEAPP /
-RLEAPP …), the project started by Alexis Brignoni & contributors. It reads the
-**Project VIC** data model and the **NSRL RDS** (NIST). Full attributions and
-licences: **section 19 of the manual** (`docs/MANUAL.md`, or **? Help** in the
-app).
+face detector and the SFace face-recognition model (both OpenCV Zoo; SFace is
+Apache-2.0, its licence shipped at `gleapp/models/LICENSE-sface`),
+pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. E01
+acquisitions are walked with [qnxprobe](https://github.com/abrignoni/qnxprobe),
+read with [ewfprobe](https://github.com/abrignoni/ewfprobe) and carved with
+[mediacarve](https://github.com/abrignoni/mediacarve), all three MIT and
+vendored under `gleapp/vendor/`. GLEAPP is part of the **xLEAPP** family
+(ALEAPP / iLEAPP / RLEAPP …), the project started by Alexis Brignoni &
+contributors, and its Android storage-view table is ported from ALEAPP. It
+reads the **Project VIC** data model and the **NSRL RDS** (NIST). Full
+attributions and licences: **section 20 of the manual** (`docs/MANUAL.md`, or
+**? Help** in the app).
 
 ## License
 

@@ -1156,6 +1156,16 @@ no bundler, no web fonts, nothing loaded from a CDN.
   **Yuantao Feng**, distributed through the **OpenCV Zoo** project (MIT
   licence). GLEAPP runs the March-2023 model on the CPU through OpenCV's DNN
   module.
+- **SFace**: the bundled face-recognition model that powers "find matching
+  faces" (`face_recognition_sface_2021dec.onnx`, ~39 MB). Contributed by
+  **Yaoyao Zhong** (based on the SFace loss described in Zhong et al.,
+  ["SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face
+  Recognition"](https://github.com/zhongyy/SFace)), with the ONNX conversion
+  by **Chengrui Wang**, distributed through the **OpenCV Zoo** project under
+  the **Apache License 2.0**. GLEAPP runs it on the CPU through OpenCV's DNN
+  module and never sends a face or its embedding anywhere; matching happens
+  entirely inside the case. The full licence text ships alongside the model
+  at `gleapp/models/LICENSE-sface`, as the licence requires.
 - **Haar cascade** fallback (`haarcascade_frontalface_default.xml`): trained
   by **Rainer Lienhart**; ships inside OpenCV.
 - **Skin-tone ratio** uses no model: it is a plain HSV + YCrCb colour-range
@@ -1171,6 +1181,28 @@ dHash). The perceptual-hash / pHash idea itself is owed to **Neal Krawetz**
 distance ranking, the LSH-banding that keeps near-dup clustering out of
 O(n²), and per-key-frame video matching, is GLEAPP's own code, no extra
 library.
+
+### Disk-image reading & Android storage views (sections 1 & 16)
+
+Reading an **E01 acquisition** — walking its filesystems, carving deleted
+media, and the storage-view collapsing that folds one Android photo's several
+mount-point copies into a single row — is built on tools **Alexis Brignoni**
+wrote for this purpose and vendored verbatim under `gleapp/vendor/` (each with
+its own licence file, `gleapp/vendor/LICENSE-<name>`):
+
+- **[qnxprobe](https://github.com/abrignoni/qnxprobe)** reads the filesystems
+  inside an acquisition (NTFS, APFS, HFS+, ext, F2FS, FAT32, exFAT and more).
+- **[ewfprobe](https://github.com/abrignoni/ewfprobe)** presents an EnCase/EWF
+  (`.E01`) acquisition as a seekable disk image, reconstructing chunks across
+  segments; qnxprobe imports it to open an `.E01`.
+- **[mediacarve](https://github.com/abrignoni/mediacarve)** scans unallocated
+  (or whole-disk) space for image/video signatures when a carve is requested.
+
+All three are MIT licensed, © Alexis Brignoni. GLEAPP's Android storage-view
+table (`gleapp/storage_views.py`), which knows that credential-encrypted,
+device-encrypted and shared storage never collapse together, is ported from
+**ALEAPP**'s `scripts/artifacts/storagePathViews.py` (also Alexis Brignoni,
+MIT licence).
 
 ### Data standards & reference data (you supply these, none are bundled)
 
