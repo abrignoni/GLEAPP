@@ -1906,6 +1906,13 @@ $("#mainMenu").addEventListener("click", e => {
   if (e.target.tagName === "BUTTON") $("#mainMenu").style.display = "none";
 });
 $("#btnHelpLauncher").onclick = openHelp;      // same manual, from the launcher
+$("#helpPdf").onclick = async () => {
+  // No PDF library is bundled - this hands off to the browser/OS print dialog,
+  // scoped to just the manual by the @media print rules on #helpDlg, with
+  // "Save as PDF" as the destination the examiner picks.
+  if (!helpLoaded) await openHelp();
+  window.print();
+};
 $("#helpClose").onclick = () => $("#helpDlg").style.display = "none";
 $("#helpDlg").addEventListener("click", e => {
   if (e.target.id === "helpDlg") $("#helpDlg").style.display = "none";

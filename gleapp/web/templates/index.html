@@ -298,7 +298,7 @@
   #reportDlg .rfields label{margin:2px 0;font-size:12px}
   #helpDlg,#refDlg,#mapsDlg,#stashDlg{z-index:100}   /* above the launcher (z-index 95) so Help / Reference data / Maps / Hash stash work pre-case */
   #helpDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,94vw);height:88vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  #helpDlg .box>header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);position:static}
+  #helpDlg .box>header{display:flex;flex-direction:row;align-items:center;gap:10px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);position:static}
   #helpDlg .box>header h2{margin:0;font-size:15px;flex:1}
   #helpDoc{flex:1;overflow:auto;padding:18px 26px;line-height:1.6}
   #helpDoc h2{font-size:17px;margin:26px 0 8px;padding-top:10px;border-top:1px solid var(--line);color:var(--fg)}
@@ -314,6 +314,26 @@
   #helpDoc .tag{display:inline-block;border-radius:4px;padding:0 6px;font-size:11px;font-weight:700;color:#fff}
   #helpDoc .toc{columns:2;font-size:12.5px;margin:4px 0 8px}
   #helpDoc kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
+  /* "Download as PDF" is the browser/OS print dialog with "Save as PDF" as the
+     destination - no PDF library is bundled. This scopes printing to just the
+     manual, un-fixes it so it flows across pages, and forces a light page. */
+  @media print{
+    body *{visibility:hidden}
+    #helpDlg,#helpDlg *{visibility:visible}
+    #helpDlg{position:absolute;inset:auto;left:0;top:0;width:100%;margin:0;background:#fff}
+    /* the on-screen rule below also sets left:50%/top:50%/transform:translate(-50%,-50%)
+       to center the dialog; transform still applies to a statically positioned
+       element, so all three must be cancelled here or the printed page is
+       shifted off by half the box's own (now full-page) size and clipped. */
+    #helpDlg .box{position:static;left:auto;top:auto;transform:none;width:100%;max-width:none;height:auto;overflow:visible;display:block;background:#fff;color:#000;border:0;box-shadow:none;border-radius:0}
+    #helpDlg .box>header{display:none}
+    #helpDoc{overflow:visible;padding:0;color:#000}
+    #helpDoc h2,#helpDoc h3,#helpDoc p,#helpDoc li{color:#000}
+    #helpDoc h2{border-top-color:#ccc}
+    #helpDoc code,#helpDoc pre{background:#f5f5f5;border-color:#ccc;color:#000}
+    #helpDoc th{background:#f0f0f0}
+    #helpDoc td,#helpDoc th{border-color:#999}
+  }
   #hexDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
   #hexDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(820px,96vw);height:86vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   #hexDlg header{display:flex;flex-direction:row;align-items:center;gap:8px;padding:8px 12px;background:var(--panel2);border-bottom:1px solid var(--line)}
@@ -717,6 +737,7 @@
 <div id="helpDlg"><div class="box">
   <header>
     <h2>GLEAPP manual</h2>
+    <button class="btn sm" id="helpPdf" title="Opens your browser/OS print dialog - choose &quot;Save as PDF&quot; as the destination">Download as PDF</button>
     <button class="btn sm" id="helpClose">Close</button>
   </header>
   <div id="helpDoc"><p class="muted">Loading…</p></div>
