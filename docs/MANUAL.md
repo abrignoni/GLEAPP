@@ -22,12 +22,15 @@ button (top-right of the launcher, and in every case's header) opens this manual
 
 - **Recent cases**: click to reopen. Only cases that contain files are listed;
   each shows its live file count.
-- **Open existing case**: point at a folder containing a `case.gleapp` file.
+- **Open existing case**: point at a folder containing a `case.gleapp` file, or
+  at the `case.gleapp` file itself &mdash; **Browse to folder…** and
+  **Browse to file…** cover either.
 - **New case**: give it a name, a folder (created if missing) and your examiner
-  name, then add one or more **evidence sources** with the buttons under
-  *Evidence to ingest* (or paste a path and click **Add**):
-  - **Browse for extraction or acquisition**, which accepts two kinds of
-    source:
+  name, then add one or more **evidence sources** under *Evidence to ingest*
+  &mdash; paste a path and click **Add**, or use the two browse buttons. Add as
+  many sources as you like; they all ingest together into the one case.
+  - **Browse to folder…**: scanned recursively for media.
+  - **Browse to file…**, which accepts any of:
     - A full file-system **extraction archive**: `.zip`, or a `.tar` plain or
       compressed (`.gz`, `.bz2`, `.xz`). Its media is read straight from the
       archive unless you tick *Copy media out of extraction archives*; a
@@ -38,14 +41,12 @@ button (top-right of the launcher, and in every case's header) opens this manual
       exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume
       that cannot be read is named in the Source panel afterwards.
       **Recovering deleted media** is optional and separate from the walk:
-      tick *Recover deleted media from an E01 (deleted records and carving)*
-      to do it during this ingest, or run it later from the Source panel
-      (see §16).
-  - **Browse for JSON**: a GLEAPP job spec (a list of named sources) or a
-    **Project VIC 2.0 (US) JSON**, detected automatically; the VIC media folder
-    is resolved next to the file, and existing MediaID, category, original
-    path, MIME and victim-offender flags are imported.
-  - **Browse for folder**: scanned recursively for media.
+      tick *Recover media (filesystem records and carving)* to do it during
+      this ingest, or run it later from the Source panel (see §16).
+    - A **JSON**: a GLEAPP job spec (a list of named sources) or a
+      **Project VIC 2.0 (US) JSON**, detected automatically; the VIC media folder
+      is resolved next to the file, and existing MediaID, category, original
+      path, MIME and victim-offender flags are imported.
 
     Exporters store one copy per distinct MD5, so several Media entries routinely
     name the same stored file. Those become **one row**, carrying the first
@@ -60,11 +61,11 @@ button (top-right of the launcher, and in every case's header) opens this manual
     set `IsPrecategorized` true on every one of its 19,209 entries while every
     `Category` was null. The category you see always comes from `Category`.
 
-Ingest options: **Face / skin screening** (on by default; can be run later),
-**video key frames per clip** (default 6), **Copy media out of extraction
-archives into the case** (off keeps the case small but the archive must stay
-put; on makes the case self-contained), and **Recover deleted media from an
-E01 (deleted records and carving)** (E01 acquisitions only, off by default, see
+Ingest options: **Face / skin tone pre-processing** (on by default; can be run
+later), **video preview key frames** (default 6), **Copy media out of
+extraction archives into the case** (off keeps the case small but the archive
+must stay put; on makes the case self-contained), and **Recover media
+(filesystem records and carving)** (E01 acquisitions only, off by default, see
 §16). Click **Create case & ingest**.
 
 **The gallery opens as soon as files are registered, so you don't wait for
@@ -909,9 +910,9 @@ what it adds is resources embedded inside live files.
 
 To carve:
 
-- **At ingest**: tick *Recover deleted media from an E01 (deleted records and
-  carving)* on the launcher. The walk runs first, then the recovery, then
-  everything is processed together.
+- **At ingest**: tick *Recover media (filesystem records and carving)* on
+  the launcher. The walk runs first, then the recovery, then everything is
+  processed together.
 - **Later**: open the sidebar's **Carving** section and click **Carve for
   deleted media** (it becomes **Carve again** once a source has been carved;
   re-running skips offsets already recovered). The bar at the bottom follows

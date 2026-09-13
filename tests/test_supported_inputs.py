@@ -112,7 +112,7 @@ def test_the_ingest_screen_names_them():
     """Read the screen as a reader sees it, not the code behind it."""
     html = (ROOT / "gleapp/web/templates/index.html").read_text(encoding="utf-8")
     card = html[html.index("<h2 style=\"margin-top:16px\">Evidence to ingest</h2>"):]
-    card = card[:card.index("Face / skin screening")]
+    card = card[:card.index("Face / skin tone pre-processing")]
     for token in (".zip", ".tar", ".gz", ".bz2", ".xz", ".E01", ".json"):
         assert token in card, f"the ingest card does not mention {token}"
     assert "fsList" in card, "the ingest card has nowhere to name the filesystems"

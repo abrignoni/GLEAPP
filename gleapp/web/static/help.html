@@ -40,13 +40,18 @@ case's header) opens this manual.</p>
   <li><strong>Recent cases</strong>: click to reopen. Only cases that contain files
   are listed; each shows its live file count.</li>
   <li><strong>Open existing case</strong>: point at a folder that contains a
-  <code>case.gleapp</code> file.</li>
+  <code>case.gleapp</code> file, or at the <code>case.gleapp</code> file itself
+  &mdash; <strong>Browse to folder&hellip;</strong> and <strong>Browse to
+  file&hellip;</strong> cover either.</li>
   <li><strong>New case</strong>: give it a name, a folder (created if missing), and
-  your examiner name, then add one or more <strong>evidence sources</strong> with the
-  buttons under <em>Evidence to ingest</em> (or paste a path and click <strong>Add</strong>):
+  your examiner name, then add one or more <strong>evidence sources</strong> under
+  <em>Evidence to ingest</em> &mdash; paste a path and click <strong>Add</strong>,
+  or use the two browse buttons. Add as many sources as you like; they all ingest
+  together into the one case.
     <ul>
-      <li><strong>Browse for extraction or acquisition</strong>, which accepts two
-      kinds of source:
+      <li><strong>Browse to folder&hellip;</strong>: scanned recursively for
+      media.</li>
+      <li><strong>Browse to file&hellip;</strong>, which accepts any of:
         <ul>
           <li>A full file-system <strong>extraction archive</strong>: <code>.zip</code>,
           or a <code>.tar</code> plain or compressed (<code>.gz</code>, <code>.bz2</code>,
@@ -59,39 +64,38 @@ case's header) opens this manual.</p>
           FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A
           volume that cannot be read is named in the Source panel afterwards.
           <strong>Recovering deleted media</strong> is optional and separate from the
-          walk: tick <em>Recover deleted media from an E01 (deleted records and
-          carving)</em> to do it during this ingest, or run it later from the Source
-          panel (see &sect;16).</li>
+          walk: tick <em>Recover media (filesystem records and carving)</em> to do
+          it during this ingest, or run it later from the Source panel (see
+          &sect;16).</li>
+          <li>A <strong>JSON</strong>: a GLEAPP job spec (named sources) or
+          a <strong>Project VIC 2.0 (US) JSON</strong>, detected automatically; the VIC
+          media folder is resolved next to the file, and existing MediaID, category,
+          original path, MIME and victim-offender flags are imported.
+            <p style="margin:8px 0 0">Exporters store one copy per distinct MD5, so
+            several Media entries routinely name the same stored file. Those become
+            <strong>one row</strong>, carrying the first entry's device path with
+            the others listed as <em>Also under</em>. The count GLEAPP reports is
+            in entries, so it can exceed the number of rows, and the Source
+            panel's import line says both when they differ.</p>
+            <p style="margin:8px 0 0">Two case-header fields are deliberately
+            ignored, because exporters do not agree with them.
+            <code>TotalMediaFiles</code> counts Media entries in one export and
+            distinct MD5 values in another, so GLEAPP counts the array instead.
+            <code>IsPrecategorized</code> and <code>TotalPrecategorized</code> are
+            not read at all: one export set <code>IsPrecategorized</code> true on
+            every one of its 19,209 entries while every <code>Category</code> was
+            null. The category you see always comes from <code>Category</code>.</p>
+          </li>
         </ul>
       </li>
-      <li><strong>Browse for JSON</strong>: a GLEAPP job spec (named sources) or
-      a <strong>Project VIC 2.0 (US) JSON</strong>, detected automatically; the VIC
-      media folder is resolved next to the file, and existing MediaID, category,
-      original path, MIME and victim-offender flags are imported.
-        <p style="margin:8px 0 0">Exporters store one copy per distinct MD5, so
-        several Media entries routinely name the same stored file. Those become
-        <strong>one row</strong>, carrying the first entry's device path with
-        the others listed as <em>Also under</em>. The count GLEAPP reports is
-        in entries, so it can exceed the number of rows, and the Source
-        panel's import line says both when they differ.</p>
-        <p style="margin:8px 0 0">Two case-header fields are deliberately
-        ignored, because exporters do not agree with them.
-        <code>TotalMediaFiles</code> counts Media entries in one export and
-        distinct MD5 values in another, so GLEAPP counts the array instead.
-        <code>IsPrecategorized</code> and <code>TotalPrecategorized</code> are
-        not read at all: one export set <code>IsPrecategorized</code> true on
-        every one of its 19,209 entries while every <code>Category</code> was
-        null. The category you see always comes from <code>Category</code>.</p>
-      </li>
-      <li><strong>Browse for folder</strong>: scanned recursively for media.</li>
     </ul>
   </li>
 </ul>
-<p>Ingest options: <strong>Face / skin screening</strong> (on by default; can be run
-later instead), <strong>video key frames per clip</strong> (default 6),
+<p>Ingest options: <strong>Face / skin tone pre-processing</strong> (on by default; can be run
+later instead), <strong>video preview key frames</strong> (default 6),
 <strong>Copy media out of extraction archives into the case</strong> (off keeps the case
 small but the archive must stay put; on makes the case self-contained), and
-<strong>Recover deleted media from an E01 (deleted records and carving)</strong>
+<strong>Recover media (filesystem records and carving)</strong>
 (E01 acquisitions only; off by default, see &sect;16). Click <strong>Create case &amp; ingest</strong>.</p>
 <p><strong>The gallery opens as soon as files are registered, so you don't wait for
 processing to finish.</strong> A progress bar along the bottom of the window
@@ -890,9 +894,9 @@ deleted, in two steps:</p>
 rather than as a nameless carved twin.</p>
 <p>To carve:</p>
 <ul>
-  <li><strong>At ingest</strong>: tick <em>Recover deleted media from an
-    E01 (deleted records and carving)</em> on the launcher. The walk runs first,
-    then the recovery, then everything is processed together.</li>
+  <li><strong>At ingest</strong>: tick <em>Recover media (filesystem records
+    and carving)</em> on the launcher. The walk runs first, then the recovery,
+    then everything is processed together.</li>
   <li><strong>Later</strong>: the sidebar's <strong>Source</strong>
     section has a <strong>Carve for deleted media</strong> button for each E01
     (it reads <strong>Carve again</strong> once a source has been carved;
