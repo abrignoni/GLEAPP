@@ -8,7 +8,6 @@ case folder or a direct path to the case.gleapp file inside it.
 """
 
 from pathlib import Path
-from PIL import Image
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "gleapp/web/templates/index.html"
 
