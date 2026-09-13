@@ -9,6 +9,7 @@ fully processed are skipped unless ``force=True``.
 
 from __future__ import annotations
 
+import base64
 import struct
 import threading
 import time
@@ -141,7 +142,8 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
         return new or existing_dt
 
     upd: dict = {}
-    kfs: list[tuple[float, str, str | None]] = []
+    kfs: list[tuple[float, str, str | None, list[dict]]] = []
+    faces_detected: list[dict] = []
     try:
         # A Project VIC import supplies the hashes the exporting tool recorded, and
         # those are trusted rather than recomputed. Which hashes arrive is up to the
@@ -199,7 +201,9 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
                 if thumb:
                     upd["thumb"] = thumb
                 if screen:
-                    upd.update(detect.screen(im))
+                    s = detect.screen(im)
+                    faces_detected = s.pop("face_records", [])
+                    upd.update(s)
             finally:
                 im.close()
 
@@ -220,12 +224,20 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
                 upd["thumb"] = frames[mid]["name"]
                 upd["phash"] = frames[mid]["phash"]
                 for fr in frames:
-                    kfs.append((fr["ts"], fr["name"], fr["phash"]))
+                    # a face belongs to one key frame, not the video as a whole -
+                    # the embedding crossed the subprocess boundary as base64
+                    # (see _vidworker.run), decode it back to real bytes here
+                    kf_faces = fr.get("face_records", [])
+                    for fc in kf_faces:
+                        if fc.get("embedding"):
+                            fc["embedding"] = base64.b64decode(fc["embedding"])
+                    kfs.append((fr["ts"], fr["name"], fr["phash"], kf_faces))
                 if screen:
                     upd["faces"] = res.get("faces", 0)
                     upd["skin_ratio"] = res.get("skin_ratio", 0.0)
         upd["error"] = None
-        return {"id": fid, "status": "ok", "fields": upd, "keyframes": kfs}
+        return {"id": fid, "status": "ok", "fields": upd, "keyframes": kfs,
+                "faces_detected": faces_detected}
     except Exception as exc:  # noqa: BLE001 - record and continue
         err = imaging.describe_failure(local, exc)
         # the source tool tells us when its own carve was incomplete
@@ -400,7 +412,16 @@ def _video_result_to_payload(row, res: dict | None, *, screen: bool,
     mid = len(frames) // 2
     upd["thumb"] = frames[mid]["name"]
     upd["phash"] = frames[mid]["phash"]
-    kfs = [(f["ts"], f["name"], f["phash"]) for f in frames]
+    kfs = []
+    for f in frames:
+        # a face belongs to one key frame, not the video as a whole - the
+        # embedding crossed the subprocess boundary as base64 (see
+        # _vidworker.run), decode it back to real bytes here
+        kf_faces = f.get("face_records", [])
+        for fc in kf_faces:
+            if fc.get("embedding"):
+                fc["embedding"] = base64.b64decode(fc["embedding"])
+        kfs.append((f["ts"], f["name"], f["phash"], kf_faces))
     if screen:
         upd["faces"] = res.get("faces", 0)
         upd["skin_ratio"] = res.get("skin_ratio", 0.0)
@@ -499,10 +520,18 @@ def process(
         if res["fields"]:
             case.db.update_file(res["id"], **res["fields"])
         if res["keyframes"]:
+            # ON DELETE CASCADE on faces.keyframe_id drops that key frame's
+            # own faces along with it - nothing stale is left behind
             case.db.conn.execute(
                 "DELETE FROM keyframes WHERE file_id=?", (res["id"],))
-            for ts, name, ph in res["keyframes"]:
-                case.db.add_keyframe(res["id"], ts, name, ph)
+            for ts, name, ph, kf_faces in res["keyframes"]:
+                kf_id = case.db.add_keyframe(res["id"], ts, name, ph)
+                if kf_faces:
+                    case.db.replace_keyframe_faces(kf_id, res["id"], kf_faces)
+        # only the image path populates this (opt-in screening); everything
+        # else (archives, videos, errored files) just has none to write
+        if res.get("faces_detected"):
+            case.db.replace_faces(res["id"], res["faces_detected"])
         done[0] += 1
         if done[0] % 25 == 0 or done[0] == total:
             case.db.commit()

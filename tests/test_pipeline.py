@@ -756,6 +756,35 @@ def test_a_case_without_the_vic_series_columns_gains_them(tmp_path):
         db2.close()
 
 
+def test_a_case_with_the_old_faces_table_gains_keyframe_id(tmp_path):
+    """Regression: a case whose faces table predates video key-frame support
+    (the column was briefly a straight CREATE TABLE addition, so opening an
+    older case hit the classic "index on a migrated column runs before the
+    ALTER" trap - see .claude/rules memory) must still open cleanly and gain
+    the column, not raise "no such column: keyframe_id"."""
+    from gleapp.db import SCHEMA_VERSION, CaseDB
+    p = tmp_path / "old" / "case.gleapp"
+    p.parent.mkdir(parents=True)
+    db = CaseDB(p)
+    fid = db.upsert_file("/a/b.jpg", kind="image", md5="deadbeef")
+    db.replace_faces(fid, [{"bbox": (0, 0, 1, 1), "score": 1, "embedding": None}])
+    db.conn.execute("DROP INDEX idx_faces_keyframe")
+    db.conn.execute("ALTER TABLE faces DROP COLUMN keyframe_id")
+    db.conn.execute("UPDATE meta SET value='15' WHERE key='schema_version'")
+    db.commit()
+    db.close()
+
+    db2 = CaseDB(p)                                # reopen -> migration runs
+    try:
+        columns = {r["name"] for r in db2.conn.execute("PRAGMA table_info(faces)")}
+        assert "keyframe_id" in columns
+        assert db2.get_meta("schema_version") == str(SCHEMA_VERSION)
+        row = db2.conn.execute("SELECT * FROM faces").fetchone()
+        assert row["keyframe_id"] is None              # the old row survives, backfilled NULL
+    finally:
+        db2.close()
+
+
 def test_category_migration_seeds_used_codes(tmp_path, evidence):
     """A v1-style case with a custom category code on files gets a placeholder
     row, and the locked VIC presets are back-filled on open."""

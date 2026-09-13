@@ -10,6 +10,7 @@ Output: one JSON object on stdout.
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,14 @@ def run(video: str, thumb_dir: str, count: int, screen: bool) -> dict:
             s = detect.screen(pil)
             faces_max = max(faces_max, s["faces"])
             skin_max = max(skin_max, s["skin_ratio"])
+            # a face's embedding is raw bytes - base64 it for the JSON hop
+            # back to the parent process, which decodes it before storing
+            rec["face_records"] = [
+                {"bbox": fr["bbox"], "score": fr["score"],
+                 "embedding": (base64.b64encode(fr["embedding"]).decode("ascii")
+                              if fr["embedding"] else None)}
+                for fr in s["face_records"]
+            ]
         out_frames.append(rec)
     return {"info": info, "frames": out_frames,
             "faces": faces_max, "skin_ratio": skin_max}

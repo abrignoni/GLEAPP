@@ -203,7 +203,7 @@
   .meta td.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;word-break:break-all}
   .meta .catnow{display:inline-block;padding:2px 9px;border-radius:5px;color:#fff;font-weight:600;font-size:12px}
   .meta .empty{color:var(--muted);padding:24px 14px;text-align:center}
-  .film{display:flex;gap:4px;overflow-x:auto;padding:6px 0}
+  .film{position:relative;display:flex;gap:4px;overflow-x:auto;padding:6px 0}
   .film img{height:52px;border-radius:4px;cursor:pointer;border:1px solid var(--line)}
   .row{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
   .btn{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit}
@@ -220,6 +220,16 @@
   .modal .vwrap{position:absolute;inset:2%;display:flex;align-items:center;justify-content:center}
   .modal .vwrap img,.modal .vwrap video{max-width:100%;max-height:100%}
   .modal .vwrap img.enh,.modal .vwrap video.enh{filter:url(#vEnhFilter)}
+  /* face-box overlay: shared by the full-size viewer and the details pane's
+     video key-frame filmstrip - not scoped to .modal, since the filmstrip
+     lives in the details pane instead */
+  .faceLayer{position:absolute;pointer-events:none}
+  .faceBox{position:absolute;box-sizing:border-box;border:2px solid rgba(255,255,255,.55);
+    border-radius:3px;pointer-events:none}
+  .faceBox.clickable{border-color:#5b9dff;cursor:pointer;pointer-events:auto;
+    background:transparent;padding:0;font:inherit}
+  .faceBox.clickable:hover{border-color:#fff;background:rgba(91,157,255,.22)}
+  .film .faceBox{border-width:1px;border-radius:2px}
   .modal .close{position:absolute;right:14px;top:10px;font-size:26px;cursor:pointer;color:#fff}
   .modal .vbar{position:absolute;left:14px;top:12px;z-index:5;display:none;align-items:center;gap:10px;
     background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:12px;color:var(--fg)}

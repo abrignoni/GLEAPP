@@ -28,6 +28,7 @@ from werkzeug.exceptions import HTTPException
 from .. import appconfig, archive, backup, basemaps, categories, lava, report
 from ..case import open_case, parse_source_spec
 from ..db import ORIGINS
+from ..facematch import find_matching_faces
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
 
@@ -1056,7 +1057,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             abort(404)
         d = row_dict(r)
         d["keyframes"] = [
-            {"ts": k["ts"], "thumb": f"/thumb/{k['thumb']}"}
+            {"id": k["id"], "ts": k["ts"], "thumb": f"/thumb/{k['thumb']}"}
             for k in case.db.keyframes_for(file_id)
         ]
         if r["stack_id"]:
@@ -1082,6 +1083,31 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             h["category_label"] = categories.label(case.db, code)
             h["category_color"] = categories.color(case.db, code)
         return jsonify({"file_id": file_id, "count": len(hits), "files": hits})
+
+    @app.get("/api/faces/<int:file_id>")
+    def faces_for_file(file_id: int):
+        """Detected faces for one file, for drawing clickable box overlays.
+        No embedding bytes go over the wire - just enough to draw a box and,
+        for one with an embedding, offer "Find matching faces"."""
+        case = C()
+        return jsonify([
+            {"id": f["id"], "bbox": [f["x"], f["y"], f["w"], f["h"]],
+             "score": f["score"], "has_embedding": f["embedding"] is not None,
+             # null for an image's own face; for a video, which key frame
+             # (see /api/file/<id> "keyframes") the box belongs to
+             "keyframe_id": f["keyframe_id"]}
+            for f in case.db.faces_for(file_id)
+        ])
+
+    @app.get("/api/face-match/<int:face_id>")
+    def face_match(face_id: int):
+        case = C()
+        hits = find_matching_faces(case, face_id, limit=300)
+        for h in hits:
+            code = h.get("category") or 0
+            h["category_label"] = categories.label(case.db, code)
+            h["category_color"] = categories.color(case.db, code)
+        return jsonify({"face_id": face_id, "count": len(hits), "files": hits})
 
     # ---- categories -----------------------------------------
     @app.get("/api/categories")
