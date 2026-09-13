@@ -142,7 +142,7 @@ def detect_faces(img: Image.Image) -> list[dict]:
         det = _yunet()
         det.setInputSize((w, h))
         _n, dets = det.detect(work)
-    except cv2.error:  # pylint: disable=catching-non-exception
+    except cv2.error:  # pylint: disable=catching-non-exception,no-member
         return []
     if dets is None:
         return []
@@ -160,7 +160,7 @@ def detect_faces(img: Image.Image) -> list[dict]:
                 aligned = rec.alignCrop(work, d)  # pylint: disable=no-member
                 feat = rec.feature(aligned)  # pylint: disable=no-member
                 rec_out["embedding"] = np.asarray(feat, dtype=np.float32).tobytes()
-            except cv2.error:  # pylint: disable=catching-non-exception
+            except cv2.error:  # pylint: disable=catching-non-exception,no-member
                 pass
         out.append(rec_out)
     return out
