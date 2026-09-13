@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Written out rather than imported, so a change to the code's list fails here
 # instead of quietly rewriting what the screen promises.
 EXPECTED_FILESYSTEMS = [
-    "ext2", "ext3", "ext4", "FAT32", "exFAT", "NTFS",
+    "ext2", "ext3", "ext4", "F2FS", "FAT32", "exFAT", "NTFS",
     "HFS+", "HFSX", "APFS", "QNX4", "QNX EFS", "QNX ETFS", "QNX IFS",
 ]
 
@@ -48,8 +48,8 @@ def test_every_named_filesystem_has_a_walker_in_the_vendored_reader():
     walker needs a real volume, so this asserts the dispatch rather than the
     parse: None here means the screen names something GLEAPP cannot do.
     """
-    kinds = {"ext2": "ext2", "ext3": "ext3", "ext4": "ext4", "FAT32": "fat32",
-             "exFAT": "exfat", "NTFS": "ntfs", "HFS+": "hfs+", "HFSX": "hfsx",
+    kinds = {"ext2": "ext2", "ext3": "ext3", "ext4": "ext4", "F2FS": "f2fs",
+             "FAT32": "fat32", "exFAT": "exfat", "NTFS": "ntfs", "HFS+": "hfs+", "HFSX": "hfsx",
              "APFS": "apfs", "QNX4": "qnx4", "QNX EFS": "efs",
              "QNX ETFS": "etfs", "QNX IFS": "QNX IFS boot image"}
     assert set(kinds) == set(EXPECTED_FILESYSTEMS)

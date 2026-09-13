@@ -34,8 +34,8 @@ button (top-right of the launcher, and in every case's header) opens this manual
       compressed tar is always copied out.
     - An **E01 acquisition** (`.E01` with its numbered segments beside it).
       Its filesystems are walked file by file, so each file keeps the name,
-      path and dates the filesystem recorded: ext2, ext3, ext4, FAT32, exFAT,
-      NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume
+      path and dates the filesystem recorded: ext2, ext3, ext4, F2FS, FAT32,
+      exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume
       that cannot be read is named in the Source panel afterwards.
       **Recovering deleted media** is optional and separate from the walk:
       tick *Recover deleted media from an E01 (deleted records and carving)*
@@ -876,7 +876,7 @@ video) and a floor so a header with nothing behind it is not reported as a
 file: a stray `ff d8 ff d9` in ordinary data parses as a complete four-byte
 JPEG without one.
 
-**Which filesystems can do what.** The walk reads thirteen kinds, but the other
+**Which filesystems can do what.** The walk reads fourteen kinds, but the other
 two passes need more of a filesystem than the walk does:
 
 | Filesystem | Walked | Deleted records | Free space, for scoping |
@@ -884,12 +884,13 @@ two passes need more of a filesystem than the walk does:
 | NTFS, FAT32, exFAT | yes | **yes** | yes |
 | HFS+, HFSX, APFS | yes | no | yes |
 | ext2 / ext3 / ext4 | yes | no | **no** |
+| F2FS | yes | no | **no** |
 | QNX4, EFS, ETFS, IFS | yes | no | **no** |
 
 So on a Mac or Linux acquisition nothing comes back with its name, and on a
 disk holding any volume that cannot report its free space the scan falls back
 to the whole image rather than leaving part of the disk unread. One ext4
-partition on a dual-boot disk is enough to do that.
+partition on a dual-boot disk is enough to do that, and so is an F2FS one.
 
 Not answering and answering "nothing" are different results. A volume that
 cannot say returns no answer and the whole image is scanned; a disk whose
