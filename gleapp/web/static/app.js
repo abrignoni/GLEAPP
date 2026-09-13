@@ -1321,16 +1321,15 @@ function _applyEnh() {
   $("#vEnhOn").checked = _enh.on;
   $("#vEnhAmt").value = _enh.amt;
   $("#vEnhVal").textContent = _enh.amt;
-  const img = $("#vWrap").querySelector("img");
-  if (img) img.classList.toggle("enh", _enh.on);
+  const media = $("#vWrap").querySelector("img, video");
+  if (media) media.classList.toggle("enh", _enh.on);
   try { localStorage.setItem("gleapp.viewenh", JSON.stringify(_enh)); } catch (e) {}
 }
 
 function openViewer(id, ts) {
   const f = state.files.find(x => x.id === id) || {};
   const w = $("#vWrap");
-  const isImg = f.kind !== "video";
-  $("#vBar").classList.toggle("show", isImg);
+  $("#vBar").classList.add("show");   // "Lighten dark areas" works on video too
   if (f.kind === "video") {
     w.innerHTML = `<video src="/media/${id}" controls autoplay></video>`;
     if (ts) w.querySelector("video").currentTime = ts;
@@ -1342,7 +1341,7 @@ function openViewer(id, ts) {
          innerHTML:'This file can\\'t be displayed<br><small>GPU texture / proprietary format — try the original file</small>'}))">`;
   }
   $("#viewer").style.display = "block";
-  if (isImg) _applyEnh();
+  _applyEnh();
 }
 function closeViewer() { $("#viewer").style.display = "none"; $("#vWrap").innerHTML = ""; }
 $("#vClose").onclick = closeViewer;
