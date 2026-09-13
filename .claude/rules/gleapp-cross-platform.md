@@ -177,7 +177,8 @@ part of a disk while reporting the carve finished is worse than reading all of i
 `_unclaimed_space()` returns None the moment any volume cannot answer, and None means scan
 everything. NTFS answers through `$Bitmap`, FAT32 through its allocation table, exFAT through
 its allocation bitmap, HFS+ through its allocation file and APFS through the container's
-space manager.
+space manager. F2FS does not answer yet (its segment info table keeps a per-block valid
+map, so it could), and an image carrying one scans everything.
 
 **One quiet volume is enough, and it is usually the small one.** Every Windows disk carries a
 FAT32 EFI system partition of a fifth of a gigabyte beside its NTFS volumes, so until FAT
@@ -223,7 +224,7 @@ Three vendored single-file MIT tools do the work, copied verbatim into `gleapp/v
 with their provenance in `vendored.json` and their hashes asserted by the suite. `ewfprobe`
 presents the acquired disk as a seekable stream, reconstructing chunks across segments;
 `qnxprobe` reads the filesystems inside it (NTFS, APFS including the sealed system volume
-of macOS 11 and later, HFS+, ext, FAT32, exFAT and the QNX ones), importing ewfprobe from
+of macOS 11 and later, HFS+, ext, F2FS, FAT32, exFAT and the QNX ones), importing ewfprobe from
 beside it to open an .E01; `mediacarve` scans the stream for image and video signatures and
 reports each hit as an offset and a length. All three are standard library only, which is
 why they are vendored rather than required: GLEAPP ships as a frozen desktop app, and a

@@ -42,7 +42,7 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.25"
+QNXPROBE_VERSION = "1.28"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
@@ -764,6 +764,10 @@ class Qnx6Walker:
     root = QNX6_ROOT_INO
 
 
+class ExtUnreadable(Exception):
+    """An ext file this reader cannot hand back whole; the message says why."""
+
+
 class ExtWalker:
     def __init__(self, fh, base):
         self.fh, self.base = fh, base
@@ -792,28 +796,103 @@ class ExtWalker:
             return None
         return raw
 
+    def _runs(self, raw):
+        """[(logical block, block count, physical block or None)] in logical order.
+
+        A file's content is addressed by logical block; where a run's physical
+        block is None the run is an extent the kernel wrote as uninitialized,
+        which reads as zeros, and a logical range no run covers is a hole, which
+        also reads as zeros. Returns None for a file whose data lives inline in
+        the inode. Two layouts are read:
+
+        - the extent tree (EXT4_EXTENTS_FL), each leaf carrying its own logical
+          start (ee_block) and length, with bit 15 of the length marking an
+          uninitialized extent: linux/fs/ext4/ext4_extents.h;
+        - the classic block map of ext2 and ext3, twelve direct pointers then a
+          single, double and triple indirect block, a zero pointer being a
+          hole: linux/fs/ext2/ext2.h (i_block), linux/fs/ext4/ext4.h EXT4_*_BLOCK.
+
+        Reading the extents as a flat list of physical blocks, which this did
+        before, dropped every hole: a 32 KiB SQLite shared-memory file with two
+        written pages came back as 8 KiB, and its bytes in the wrong order.
+        """
+        flags = int.from_bytes(raw[32:36], "little")
+        if flags & 0x10000000:                                 # EXT4_INLINE_DATA_FL
+            return None
+        runs = []
+        if flags & 0x80000:                                    # EXT4_EXTENTS_FL
+            def walk(buf, off, depth_left=8):
+                if depth_left <= 0 or len(buf) < off + 12:
+                    return
+                if struct.unpack_from("<H", buf, off)[0] != 0xF30A:
+                    return
+                ent = struct.unpack_from("<H", buf, off + 2)[0]
+                depth = struct.unpack_from("<H", buf, off + 6)[0]
+                for i in range(ent):
+                    o = off + 12 + i * 12
+                    if len(buf) < o + 12:
+                        return
+                    if depth == 0:
+                        lblk = struct.unpack_from("<I", buf, o)[0]
+                        raw_len = struct.unpack_from("<H", buf, o + 4)[0]
+                        st = (struct.unpack_from("<I", buf, o + 8)[0]
+                              | struct.unpack_from("<H", buf, o + 6)[0] << 32)
+                        if raw_len > 0x8000:                   # uninitialized extent
+                            runs.append((lblk, raw_len - 0x8000, None))
+                        elif raw_len:
+                            runs.append((lblk, raw_len, st))
+                    else:
+                        leaf = (struct.unpack_from("<I", buf, o + 4)[0]
+                                | struct.unpack_from("<H", buf, o + 8)[0] << 32)
+                        walk(self._blk(leaf), 0, depth_left - 1)
+            walk(raw, 40)
+            runs.sort()
+            return runs
+
+        per = self.bs // 4                                      # pointers per indirect block
+
+        def add(lblk, phys):
+            if not phys:                                        # a zero pointer is a hole
+                return
+            if runs and runs[-1][2] is not None:
+                l0, n0, p0 = runs[-1]
+                if l0 + n0 == lblk and p0 + n0 == phys:
+                    runs[-1] = (l0, n0 + 1, p0)
+                    return
+            runs.append((lblk, 1, phys))
+
+        def indirect(block, level, lbase):
+            if not block:
+                return
+            buf = self._blk(block)
+            span = per ** (level - 1)                           # logical blocks per pointer
+            for i in range(min(per, len(buf) // 4)):
+                ptr = struct.unpack_from("<I", buf, 4 * i)[0]
+                if level == 1:
+                    add(lbase + i * span, ptr)
+                elif ptr:
+                    indirect(ptr, level - 1, lbase + i * span)
+
+        for i in range(12):
+            add(i, struct.unpack_from("<I", raw, 40 + 4 * i)[0])
+        indirect(struct.unpack_from("<I", raw, 88)[0], 1, 12)
+        indirect(struct.unpack_from("<I", raw, 92)[0], 2, 12 + per)
+        indirect(struct.unpack_from("<I", raw, 96)[0], 3, 12 + per + per * per)
+        return runs
+
     def _blocks(self, raw):
-        if not (int.from_bytes(raw[32:36], "little") & 0x80000):
-            return []                                   # not extent-mapped
-        def walk(buf, off):
-            if struct.unpack_from("<H", buf, off)[0] != 0xF30A:
-                return []
-            ent = struct.unpack_from("<H", buf, off + 2)[0]
-            depth = struct.unpack_from("<H", buf, off + 6)[0]
-            out = []
-            for i in range(ent):
-                o = off + 12 + i * 12
-                if depth == 0:
-                    st = (struct.unpack_from("<I", buf, o + 8)[0]
-                          | struct.unpack_from("<H", buf, o + 6)[0] << 32)
-                    ln = struct.unpack_from("<H", buf, o + 4)[0] & 0x7FFF
-                    out += list(range(st, st + ln))
-                else:
-                    leaf = (struct.unpack_from("<I", buf, o + 4)[0]
-                            | struct.unpack_from("<H", buf, o + 8)[0] << 32)
-                    out += walk(self._blk(leaf), 0)
-            return out
-        return walk(raw, 40)
+        """The physical blocks holding a directory's entries, in logical order.
+
+        Directories have no holes, so a run that reads as zeros is skipped.
+        """
+        runs = self._runs(raw)
+        if not runs:
+            return []
+        out = []
+        for _lblk, count, phys in runs:
+            if phys is not None:
+                out.extend(range(phys, phys + count))
+        return out
 
     def listdir(self, num):
         raw = self.inode(num)
@@ -846,21 +925,454 @@ class ExtWalker:
         return mode, size, struct.unpack_from("<I", raw, 16)[0]
 
     def read_file(self, num, size):
+        """Yield the file's bytes, exactly ``size`` of them, holes and all."""
         raw = self.inode(num)
         if not raw:
             return
+        runs = self._runs(raw)
+        if runs is None:
+            # Inline data keeps the first 60 bytes in the inode's block field and
+            # the rest in the system.data extended attribute, which is not read
+            # here. A short file is whole; a longer one is refused rather than
+            # handed back cut, because a cut file parses as a smaller one.
+            if size <= 60:
+                yield raw[40:40 + size]
+                return
+            raise ExtUnreadable(f"{size:,} bytes of inline data, of which only the 60 "
+                                "in the inode are read")
         left = size
-        for b in self._blocks(raw):
+        pos = 0                                                 # next logical block to deliver
+        for lblk, count, phys in runs:
             if left <= 0:
                 return
-            buf = self._blk(b)
-            if len(buf) < self.bs:
-                buf = buf + bytes(self.bs - len(buf))
+            if lblk > pos:                                      # a hole reads as zeros
+                for chunk in self._zeros(min(lblk - pos, -(-left // self.bs)) * self.bs, left):
+                    yield chunk
+                    left -= len(chunk)
+                pos = lblk
+            skip = pos - lblk                                   # an overlapping run, never expected
+            for i in range(skip, count):
+                if left <= 0:
+                    return
+                if phys is None:
+                    buf = bytes(self.bs)
+                else:
+                    buf = self._blk(phys + i)
+                    if len(buf) < self.bs:
+                        buf = buf + bytes(self.bs - len(buf))
+                take = min(self.bs, left)
+                yield buf[:take]
+                left -= take
+                pos += 1
+        if left > 0:                                            # a trailing hole
+            for chunk in self._zeros(left, left):
+                yield chunk
+                left -= len(chunk)
+
+    @staticmethod
+    def _zeros(n, cap):
+        """Zero bytes for a hole, at most cap, in pieces that do not sit in memory at once."""
+        n = min(n, cap)
+        while n > 0:
+            piece = min(n, 1 << 20)
+            yield bytes(piece)
+            n -= piece
+
+    root = 2
+
+
+# ---------------------------------------------------------------------------
+# F2FS (Flash-Friendly File System).
+#
+# F2FS is the filesystem Android uses for /data on most phones, so an Android
+# image or a userdata partition can carry one where an older device would have
+# ext4. It is read here directly, no mounting.
+#
+# The layout is sourced from the Linux kernel's own F2FS at v7.0 (commit
+# 028ef9c96e96197026887c0f092424679298aae8): the on-disk structures in
+# include/linux/f2fs_fs.h (f2fs_super_block, f2fs_checkpoint, f2fs_inode,
+# node_footer, f2fs_dir_entry, f2fs_dentry_block, f2fs_nat_entry), node
+# resolution in fs/f2fs/node.{c,h} (current_nat_addr, get_node_path),
+# checkpoint selection in fs/f2fs/checkpoint.c (validate_checkpoint) and
+# fs/f2fs/super.c (sanity_check_raw_super), the NAT journal in
+# fs/f2fs/segment.c (read_normal_summaries), the inode read in
+# fs/f2fs/inode.c (do_read_inode) and the directory walk in fs/f2fs/dir.c
+# (f2fs_fill_dentries). No F2FS implementation's code was copied; qnxprobe is
+# MIT and both the kernel driver and f2fs-tools are GPL. f2fs-tools' dump.f2fs
+# is used only as an independent oracle to validate this reader.
+#
+# To find a file this reader has to resolve a node id (nid) to the block that
+# holds its node. That mapping lives in the NAT (Node Address Table), and the
+# current copy of each NAT block is chosen by a bitmap in the active
+# checkpoint, with recent updates overriding it from a journal in the
+# checkpoint's data summary. Once the inode block is read, its data is
+# addressed the way ext is: pointers in the inode, then direct, indirect and
+# double-indirect node blocks. Small files and directories keep their content
+# inline in the inode instead.
+# ---------------------------------------------------------------------------
+F2FS_MAGIC = 0xF2F52010
+F2FS_SUPER_OFF = 1024               # the superblock sits 1024 bytes into block 0
+F2FS_BLKSIZE_BITS_MIN = 12          # only block == page size is valid: 4K or 16K
+F2FS_BLKSIZE_BITS_MAX = 16
+# i_inline flags (f2fs_fs.h)
+F2FS_INLINE_XATTR, F2FS_INLINE_DATA = 0x01, 0x02
+F2FS_INLINE_DENTRY, F2FS_EXTRA_ATTR = 0x04, 0x20
+F2FS_COMPR_FL = 0x00000004          # i_flags: file is compressed
+F2FS_FADVISE_ENCRYPT = 0x04         # i_advise: file is encrypted
+# superblock feature flags (f2fs_fs.h F2FS_FEATURE_*)
+F2FS_FEAT_ENCRYPT = 0x0001
+F2FS_FEAT_EXTRA_ATTR = 0x0008
+F2FS_FEAT_FLEX_INLINE_XATTR = 0x0040
+F2FS_FEAT_INODE_CRTIME = 0x0100
+F2FS_FEAT_COMPRESSION = 0x2000
+F2FS_FEAT_CASEFOLD = 0x1000
+F2FS_FEAT_PACKED_SSA = 0x10000
+# checkpoint flags (f2fs_fs.h CP_*)
+F2FS_CP_UMOUNT = 0x0001
+F2FS_CP_COMPACT_SUM = 0x0004
+F2FS_CP_FASTBOOT = 0x0020
+F2FS_CP_ERROR = 0x0008
+F2FS_CP_LARGE_NAT_BITMAP = 0x0400
+# reserved data-block-address markers (f2fs_fs.h)
+F2FS_NULL_ADDR, F2FS_NEW_ADDR, F2FS_COMPRESS_ADDR = 0, 0xFFFFFFFF, 0xFFFFFFFE
+F2FS_DEFAULT_INLINE_XATTR_ADDRS = 50
+F2FS_NAT_ENTRY_SIZE = 9             # f2fs_nat_entry: u8 version, le32 ino, le32 block_addr
+F2FS_ENC_NAME_MARKERS = ()          # names are not decoded; encryption is reported per file
+
+
+def f2fs_time(v):
+    """An F2FS timestamp (le64 Unix seconds, UTC) as a Unix second count, or 0."""
+    return v if 0 < v < (1 << 40) else 0
+
+
+class F2fsUnreadable(Exception):
+    """A file this reader will not hand back whole (encrypted or compressed);
+    the message says which."""
+
+
+class F2fsWalker:
+    """List and read files from an F2FS volume. Nodes are addressed by nid, so
+    listdir()/entry()/read_file() take a nid and the shared collect() and
+    extract_to_zip() work unchanged; the root is the superblock's root_ino."""
+
+    def __init__(self, fh, base):
+        self.fh, self.base = fh, base
+        sb = self._sb(base)
+        if sb is None:
+            raise F2fsUnreadable("no valid F2FS superblock")
+        self.log_bs = struct.unpack_from("<I", sb, 16)[0]
+        self.bs = 1 << self.log_bs
+        self.seg_blocks = 1 << struct.unpack_from("<I", sb, 20)[0]   # always 512
+        self.cp_blkaddr = struct.unpack_from("<I", sb, 76)[0]
+        self.nat_blkaddr = struct.unpack_from("<I", sb, 84)[0]
+        self.root_ino = struct.unpack_from("<I", sb, 96)[0]
+        self.cp_payload = struct.unpack_from("<I", sb, 1664)[0]
+        self.feature = struct.unpack_from("<I", sb, 2180)[0]
+        # NAT entry is 9 bytes; DEF_ADDRS_PER_INODE and the node capacity follow
+        # the same arithmetic the kernel uses, parameterised by block size.
+        self.nepb = self.bs // F2FS_NAT_ENTRY_SIZE
+        self.def_addrs = (self.bs - 360 - 20 - 24) // 4     # DEF_ADDRS_PER_INODE
+        self.addrs_per_block = (self.bs - 24) // 4          # direct/indirect node capacity
+        self._cache = {}
+        self._load_checkpoint()
+
+    root = property(lambda self: self.root_ino)
+
+    @staticmethod
+    def _sb_ok(b):
+        """True if b holds a superblock that passes the reserved-value checks
+        sanity_check_raw_super applies: the magic, a supported block size, 512
+        blocks per segment, and node/meta/root inode numbers of 1/2/3."""
+        return (len(b) >= 200
+                and struct.unpack_from("<I", b, 0)[0] == F2FS_MAGIC
+                and F2FS_BLKSIZE_BITS_MIN <= struct.unpack_from("<I", b, 16)[0] <= F2FS_BLKSIZE_BITS_MAX
+                and struct.unpack_from("<I", b, 20)[0] == 9
+                and struct.unpack_from("<I", b, 96)[0] == 3
+                and struct.unpack_from("<I", b, 100)[0] == 1
+                and struct.unpack_from("<I", b, 104)[0] == 2)
+
+    def _sb(self, base):
+        """The raw superblock bytes, from copy 1 (1024 bytes into block 0) or,
+        if that copy is unreadable, copy 2 (1024 bytes into block 1). The block
+        size is not known until a copy is read, so copy 2 is tried at both the
+        4K and 16K block offsets."""
+        b = read_at(self.fh, base + F2FS_SUPER_OFF, 3072)
+        if self._sb_ok(b):
+            return b
+        for blk_bytes in (4096, 16384):
+            c = read_at(self.fh, base + blk_bytes + F2FS_SUPER_OFF, 3072)
+            if self._sb_ok(c):
+                return c
+        return None
+
+    def block(self, blkaddr):
+        b = self._cache.get(blkaddr)
+        if b is None:
+            b = read_at(self.fh, self.base + blkaddr * self.bs, self.bs)
+            if len(self._cache) < 4096:
+                self._cache[blkaddr] = b
+        return b
+
+    def _load_checkpoint(self):
+        """Pick the newer of the two checkpoint packs, then read the NAT bitmap
+        and NAT journal it points at. A pack is only valid when the version at
+        its first block equals the version at its last, meaning it was written
+        whole (fs/f2fs/checkpoint.c validate_checkpoint)."""
+        best = None
+        for pack, addr in ((1, self.cp_blkaddr), (2, self.cp_blkaddr + self.seg_blocks)):
+            head = self.block(addr)
+            if len(head) < self.bs:
+                continue
+            ver = int.from_bytes(head[0:8], "little")
+            total = struct.unpack_from("<I", head, 136)[0]   # cp_pack_total_block_count
+            if not (2 < total <= self.seg_blocks):
+                continue
+            tail = self.block(addr + total - 1)
+            if len(tail) < self.bs or int.from_bytes(tail[0:8], "little") != ver:
+                continue
+            if best is None or ver > best[0]:
+                best = (ver, pack, head, total)
+        if best is None:
+            raise F2fsUnreadable("no valid F2FS checkpoint")
+        self.cp_ver, self.cur_pack, self.ckpt, self.cp_total = best
+        self.start_cp = self.cp_blkaddr + (self.seg_blocks if self.cur_pack == 2 else 0)
+        self.cp_flags = struct.unpack_from("<I", self.ckpt, 132)[0]
+        sit_bm = struct.unpack_from("<I", self.ckpt, 156)[0]   # sit_ver_bitmap_bytesize
+        # The version bitmap region begins at offset 192 (after alloc_type[16]).
+        # NAT bitmap placement follows f2fs.h __bitmap_ptr(NAT_BITMAP).
+        if self.cp_flags & F2FS_CP_LARGE_NAT_BITMAP:
+            self.nat_bitmap = self.ckpt[192 + 4:]
+        elif self.cp_payload > 0:
+            self.nat_bitmap = self.ckpt[192:]
+        else:
+            self.nat_bitmap = self.ckpt[192 + sit_bm:]
+        self._load_nat_journal()
+
+    def _load_nat_journal(self):
+        """Recent NAT updates not yet flushed to the on-disk table live in a
+        journal inside the checkpoint's hot-data summary (fs/f2fs/segment.c
+        read_normal_summaries / read_compacted_summaries). They override the
+        on-disk NAT, so a nid found here wins."""
+        self.nat_j = {}
+        sum_bs = 4096 if (self.feature & F2FS_FEAT_PACKED_SSA) else self.bs
+        sum_entry_size = 7 * (sum_bs // 8)     # entries_in_sum summaries of 7 bytes
+        if self.cp_flags & F2FS_CP_COMPACT_SUM:
+            blk = self.start_cp + struct.unpack_from("<I", self.ckpt, 140)[0]
+            joff = 0
+        elif self.cp_flags & (F2FS_CP_UMOUNT | F2FS_CP_FASTBOOT):
+            blk = self.start_cp + self.cp_total - 7    # HOT_DATA summary, base 6
+            joff = sum_entry_size
+        else:
+            blk = self.start_cp + self.cp_total - 4    # base 3, no node summaries
+            joff = sum_entry_size
+        buf = self.block(blk)
+        if len(buf) < self.bs or joff + 2 > len(buf):
+            return
+        n_nats = struct.unpack_from("<H", buf, joff)[0]
+        p = joff + 2
+        for _ in range(n_nats):
+            if p + 13 > len(buf):
+                break
+            nid = struct.unpack_from("<I", buf, p)[0]
+            # nat_journal_entry: nid(4) then f2fs_nat_entry{ver(1) ino(4) blkaddr(4)}
+            self.nat_j[nid] = struct.unpack_from("<I", buf, p + 9)[0]
+            p += 13
+
+    @staticmethod
+    def _test_bit(bm, i):
+        j = i >> 3
+        return (bm[j] >> (i & 7)) & 1 if j < len(bm) else 0
+
+    def resolve(self, nid):
+        """The block address holding node nid, or 0 if it is unallocated."""
+        if nid in self.nat_j:
+            return self.nat_j[nid]
+        start = (nid // self.nepb) * self.nepb
+        block_off = start // self.nepb
+        addr = self.nat_blkaddr + (block_off << 1) - (block_off & (self.seg_blocks - 1))
+        if self._test_bit(self.nat_bitmap, block_off):
+            addr += self.seg_blocks
+        blk = self.block(addr)
+        eo = (nid - start) * F2FS_NAT_ENTRY_SIZE
+        if eo + F2FS_NAT_ENTRY_SIZE > len(blk):
+            return 0
+        return struct.unpack_from("<I", blk, eo + 5)[0]     # f2fs_nat_entry.block_addr
+
+    def _node(self, nid):
+        blkaddr = self.resolve(nid)
+        if blkaddr in (F2FS_NULL_ADDR, F2FS_NEW_ADDR):
+            return None
+        b = self.block(blkaddr)
+        return b if len(b) >= self.bs else None
+
+    def inode(self, nid):
+        """The parsed inode for nid, or None. A node whose footer nid equals its
+        footer ino is an inode (f2fs.h RAW_IS_INODE)."""
+        b = self._node(nid)
+        if b is None:
+            return None
+        if struct.unpack_from("<I", b, self.bs - 24)[0] != struct.unpack_from("<I", b, self.bs - 20)[0]:
+            return None
+        i_inline = b[3]
+        extra = struct.unpack_from("<H", b, 360)[0] if (i_inline & F2FS_EXTRA_ATTR) else 0
+        if self.feature & F2FS_FEAT_FLEX_INLINE_XATTR:
+            ix = struct.unpack_from("<H", b, 362)[0]
+        elif i_inline & (F2FS_INLINE_XATTR | F2FS_INLINE_DENTRY):
+            ix = F2FS_DEFAULT_INLINE_XATTR_ADDRS
+        else:
+            ix = 0
+        base = extra // 4                                   # offset_in_addr
+        addrs_in_inode = (self.def_addrs - base) - ix       # ADDRS_PER_INODE
+        crtime = (struct.unpack_from("<Q", b, 372)[0]
+                  if (extra and (self.feature & F2FS_FEAT_INODE_CRTIME)) else 0)
+        return dict(
+            raw=b, mode=struct.unpack_from("<H", b, 0)[0], advise=b[2], inline=i_inline,
+            size=struct.unpack_from("<Q", b, 16)[0], flags=struct.unpack_from("<I", b, 80)[0],
+            atime=struct.unpack_from("<Q", b, 32)[0], mtime=struct.unpack_from("<Q", b, 48)[0],
+            crtime=crtime, base=base, addrs_in_inode=addrs_in_inode,
+            iaddr_off=360 + base * 4)
+
+    def _iaddr(self, ino, k):
+        return struct.unpack_from("<I", ino["raw"], ino["iaddr_off"] + k * 4)[0]
+
+    def _nid_slot(self, ino, k):        # i_nid[k], the five node-id pointers
+        return struct.unpack_from("<I", ino["raw"], self.bs - 44 + k * 4)[0]
+
+    def _node_word(self, nid, idx):
+        """Word idx of a direct/indirect node's array (addr[] or nid[]), 0 when
+        the node itself is unallocated (a hole covering that whole subtree)."""
+        b = self._node(nid)
+        if b is None or idx * 4 + 4 > len(b):
+            return 0
+        return struct.unpack_from("<I", b, idx * 4)[0]
+
+    def _block_of(self, ino, L):
+        """The data block address for logical block L of a file, following
+        fs/f2fs/node.c get_node_path; 0/NEW mark a hole that reads as zeros."""
+        n = ino["addrs_in_inode"]
+        if L < n:
+            return self._iaddr(ino, L)
+        L -= n
+        apb = self.addrs_per_block
+        if L < apb:
+            return self._node_word(self._nid_slot(ino, 0), L)
+        L -= apb
+        if L < apb:
+            return self._node_word(self._nid_slot(ino, 1), L)
+        L -= apb
+        if L < apb * apb:
+            ind = self._node_word(self._nid_slot(ino, 2), L // apb)
+            return self._node_word(ind, L % apb)
+        L -= apb * apb
+        if L < apb * apb:
+            ind = self._node_word(self._nid_slot(ino, 3), L // apb)
+            return self._node_word(ind, L % apb)
+        L -= apb * apb
+        dind = self._nid_slot(ino, 4)
+        l1 = self._node_word(dind, L // (apb * apb))
+        rem = L % (apb * apb)
+        ind = self._node_word(l1, rem // apb)
+        return self._node_word(ind, rem % apb)
+
+    def _encrypted(self, ino):
+        return bool((self.feature & F2FS_FEAT_ENCRYPT) and (ino["advise"] & F2FS_FADVISE_ENCRYPT))
+
+    def _compressed(self, ino):
+        return bool((self.feature & F2FS_FEAT_COMPRESSION) and (ino["flags"] & F2FS_COMPR_FL))
+
+    def entry(self, nid):
+        ino = self.inode(nid)
+        if ino is None:
+            return None
+        return ino["mode"], ino["size"], f2fs_time(ino["mtime"])
+
+    def stamps(self, nid):
+        """(created, modified, accessed) in Unix seconds, 0 where unset. F2FS
+        stores real UTC instants, so unlike a FAT reading these sit on a
+        timeline; created needs the inode_crtime feature and an extra_attr
+        inode, else it is 0."""
+        ino = self.inode(nid)
+        if ino is None:
+            return (0, 0, 0)
+        return (f2fs_time(ino["crtime"]), f2fs_time(ino["mtime"]), f2fs_time(ino["atime"]))
+
+    def _dentry_geom(self, span):
+        """(entries, bitmap bytes, dentry offset, filename offset) for a dentry
+        area of `span` bytes (f2fs_fs.h NR_DENTRY_IN_BLOCK and friends): a
+        validity bitmap, reserved padding, an 11-byte dir entry per slot, then
+        an 8-byte filename slot per slot."""
+        nr = (8 * span) // ((11 + 8) * 8 + 1)
+        bmsize = (nr + 7) // 8
+        reserved = span - ((11 + 8) * nr + bmsize)
+        return nr, bmsize, bmsize + reserved, bmsize + reserved + 11 * nr
+
+    def _parse_dentry(self, buf, off, span):
+        nr, bmsize, doff, foff = self._dentry_geom(span)
+        out, bit = [], 0
+        while bit < nr:
+            if not self._test_bit(buf[off:off + bmsize], bit):
+                bit += 1
+                continue
+            de = off + doff + bit * 11
+            child = struct.unpack_from("<I", buf, de + 4)[0]
+            name_len = struct.unpack_from("<H", buf, de + 8)[0]
+            if name_len == 0 or name_len > 255:
+                bit += 1
+                continue
+            slots = (name_len + 7) // 8
+            ns = off + foff + bit * 8
+            name = buf[ns:ns + name_len].decode("utf-8", "replace")
+            bit += slots
+            if name not in (".", ".."):
+                out.append((name, child))
+        return out
+
+    def listdir(self, nid):
+        ino = self.inode(nid)
+        if ino is None or not (ino["mode"] & S_IFDIR):
+            return []
+        if ino["inline"] & F2FS_INLINE_DENTRY:
+            off = ino["iaddr_off"] + 4                      # DEF_INLINE_RESERVED_SIZE
+            span = 4 * (ino["addrs_in_inode"] - 1)          # MAX_INLINE_DATA
+            return sorted(self._parse_dentry(ino["raw"], off, span))
+        out = []
+        for L in range((ino["size"] + self.bs - 1) // self.bs):
+            addr = self._block_of(ino, L)
+            if addr in (F2FS_NULL_ADDR, F2FS_NEW_ADDR, F2FS_COMPRESS_ADDR):
+                continue
+            buf = self.block(addr)
+            if len(buf) >= self.bs:
+                out.extend(self._parse_dentry(buf, 0, self.bs))
+        return sorted(out)
+
+    def read_file(self, nid, size):
+        """Yield exactly `size` bytes, holes emitted as zeros so offsets stay
+        correct. Inline data lives in the inode; encrypted or compressed content
+        is refused rather than guessed at."""
+        ino = self.inode(nid)
+        if ino is None:
+            return
+        if self._encrypted(ino):
+            raise F2fsUnreadable("the file is encrypted and the volume holds no key")
+        if self._compressed(ino):
+            raise F2fsUnreadable("the file is compressed (F2FS compression is not read here)")
+        if ino["inline"] & F2FS_INLINE_DATA:
+            off = ino["iaddr_off"] + 4                      # skip DEF_INLINE_RESERVED_SIZE
+            yield ino["raw"][off:off + size]
+            return
+        left, L = size, 0
+        while left > 0:
+            addr = self._block_of(ino, L)
+            if addr in (F2FS_NULL_ADDR, F2FS_NEW_ADDR, F2FS_COMPRESS_ADDR):
+                buf = bytes(self.bs)
+            else:
+                buf = self.block(addr)
+                if len(buf) < self.bs:
+                    buf = buf + bytes(self.bs - len(buf))
             take = min(self.bs, left)
             yield buf[:take]
             left -= take
-
-    root = 2
+            L += 1
 
 
 # ---------------------------------------------------------------------------
@@ -5169,6 +5681,8 @@ def walker_for(kind, fh, base, size=None):
         return ExfatWalker(fh, base)
     if kind == "ntfs":
         return NtfsWalker(fh, base)
+    if kind == "f2fs":
+        return F2fsWalker(fh, base)
     if kind in ("hfs+", "hfsx"):
         return HfsPlusWalker(fh, base)
     if kind == "apfs":
@@ -5411,6 +5925,66 @@ def identify_fat(fh, base):
     return None
 
 
+def identify_f2fs(fh, base):
+    """Return ("f2fs", lines) for an F2FS volume at base, else None.
+
+    F2FS names itself with a 4-byte magic 1024 bytes into the volume, and the
+    reserved inode numbers that follow (node 1, meta 2, root 3) are fixed, so
+    both are required rather than the magic alone (fs/f2fs/super.c
+    sanity_check_raw_super). Block size and blocks-per-segment must also be the
+    values the format allows.
+    """
+    b = read_at(fh, base + F2FS_SUPER_OFF, 3072)
+    if len(b) < 200 or struct.unpack_from("<I", b, 0)[0] != F2FS_MAGIC:
+        return None
+    log_bs = struct.unpack_from("<I", b, 16)[0]
+    if not (F2FS_BLKSIZE_BITS_MIN <= log_bs <= F2FS_BLKSIZE_BITS_MAX):
+        return None
+    if struct.unpack_from("<I", b, 20)[0] != 9:              # log blocks per segment
+        return None
+    if (struct.unpack_from("<I", b, 96)[0] != 3
+            or struct.unpack_from("<I", b, 100)[0] != 1
+            or struct.unpack_from("<I", b, 104)[0] != 2):
+        return None
+    bs = 1 << log_bs
+    total = struct.unpack_from("<Q", b, 36)[0] * bs          # block_count, user blocks
+    label = b[124:124 + 1024].decode("utf-16-le", "replace").split("\x00")[0]
+    uid = b[108:124].hex()
+    kver = b[1668:1668 + 256].split(b"\x00")[0].decode("ascii", "replace")
+    feat = struct.unpack_from("<I", b, 2180)[0]
+    names = [(F2FS_FEAT_ENCRYPT, "encrypt"), (F2FS_FEAT_COMPRESSION, "compression"),
+             (F2FS_FEAT_CASEFOLD, "casefold"), (F2FS_FEAT_EXTRA_ATTR, "extra_attr"),
+             (F2FS_FEAT_INODE_CRTIME, "inode_crtime")]
+    flags = " ".join(n for bit, n in names if feat & bit) or "(none)"
+    lines = [
+        f"label        {label or '(none)'}",
+        f"block size   {bs:,} bytes",
+        f"volume       {human(total)}",
+        f"uuid         {uid}",
+        f"features     {flags}",
+    ]
+    if kver:
+        lines.append(f"made by      {kver}")
+    try:
+        w = F2fsWalker(fh, base)
+    except (F2fsUnreadable, ValueError, OSError, struct.error) as exc:
+        lines.append(f"walk         not possible: {exc}")
+        return "f2fs", lines
+    used = int.from_bytes(w.ckpt[16:24], "little") * bs      # valid_block_count
+    if total:
+        lines.insert(3, f"used         {human(used)} of {human(total)} "
+                        f"({100.0 * used / total:.1f}%)")
+    clean = "cleanly unmounted" if (w.cp_flags & F2FS_CP_UMOUNT) else \
+            "NOT cleanly unmounted, so it may have been live at acquisition"
+    if w.cp_flags & F2FS_CP_ERROR:
+        clean += "; checkpoint carries an error flag"
+    lines.append(f"checkpoint   {clean}")
+    if feat & F2FS_FEAT_ENCRYPT:
+        lines.append("note         per-file encryption is enabled; encrypted files "
+                     "are named and their content is not read")
+    return "f2fs", lines
+
+
 def identify_fs(fh, base, size=None):
     """Return (name, [detail lines]) for whatever sits at this partition.
 
@@ -5487,6 +6061,10 @@ def identify_fs(fh, base, size=None):
     fat = identify_fat(fh, base)
     if fat:
         return fat
+
+    f2fs = identify_f2fs(fh, base)
+    if f2fs:
+        return f2fs
 
     efs = identify_efs(fh, base, size)
     if efs:
@@ -5570,6 +6148,166 @@ def volume_name(part_idx, lba, label=""):
     stem = f"p{part_idx}_lba{lba}" if part_idx is not None else f"lba{lba}"
     suffix = sanitize_volume_label(label) if label else ""
     return f"{stem}_{suffix}" if suffix else stem
+
+
+# The MBR type bytes that mark an extended partition container. main() keeps
+# the same tuple as a local; a consumer of volumes() needs it by name.
+EXT_PARTITION_TYPES = (0x05, 0x0f, 0x85)
+
+
+def partition_regions(fh, size):
+    """(regions, names, containers, protective) for an image, as main() sees them.
+
+    regions is [(label, base, size)] in report order: MBR primaries, then the
+    logical volumes found by walking the EBR chain, then GPT entries, or the
+    whole image as one region when no table is present. names maps a region's
+    byte offset to the directory an extraction uses (volume_name); containers
+    holds the labels of extended partition containers, which hold the logical
+    volumes and are not themselves volumes; protective holds the 0xEE entry a
+    GPT disk carries in its MBR.
+    """
+    regions, names = [], {}
+    containers, protective = set(), set()
+    parts = parse_mbr(fh)
+    if parts:
+        for idx, t, st, cnt in parts:
+            regions.append((f"MBR part {idx}", st * SECTOR, cnt * SECTOR))
+            names[st * SECTOR] = volume_name(idx, st)
+            if t in EXT_PARTITION_TYPES:
+                containers.add(f"MBR part {idx}")
+            if t == 0xEE:
+                protective.add(f"MBR part {idx}")
+        logical_idx = 4               # logical volumes number from 5, as OSes do
+        for idx, t, st, cnt in parts:
+            if t not in EXT_PARTITION_TYPES:
+                continue
+            base, cur, n = st, st, 0
+            while cur and n < 64:
+                ebr = read_at(fh, cur * SECTOR, 512)
+                if len(ebr) < 512 or ebr[510:512] != b"\x55\xaa":
+                    break
+                e1, e2 = ebr[446:462], ebr[462:478]
+                lst, lcnt = struct.unpack("<II", e1[8:16])
+                if lcnt:
+                    astart = cur + lst
+                    regions.append((f"logical @{astart}", astart * SECTOR, lcnt * SECTOR))
+                    logical_idx += 1
+                    names[astart * SECTOR] = volume_name(logical_idx, astart)
+                nxt = struct.unpack("<I", e2[8:12])[0]
+                cur = (base + nxt) if nxt else 0
+                n += 1
+    gpt = parse_gpt(fh)
+    if gpt:
+        for idx, name, _g, first, last in gpt:
+            sz = (last - first + 1) * SECTOR
+            regions.append((f"GPT part {idx} {name[:20]}", first * SECTOR, sz))
+            names[first * SECTOR] = volume_name(idx, first, name)
+    if not regions:
+        regions.append(("whole image", 0, size))
+        names[0] = volume_name(None, 0)
+    return regions, names, containers, protective
+
+
+def _ext_label(fh, base):
+    """An ext volume's label, or its last mount point when it has no label."""
+    sb = read_at(fh, base + EXT_SB_OFF, 1024)
+    lab = sb[EXT_F["volume_name"]:EXT_F["volume_name"] + 16]
+    lab = lab.split(b"\x00")[0].decode("utf-8", "replace")
+    mnt = sb[EXT_F["last_mounted"]:EXT_F["last_mounted"] + 64]
+    mnt = mnt.split(b"\x00")[0].decode("utf-8", "replace")
+    return lab or mnt.strip("/").replace("/", "_")
+
+
+def volumes(fh, size=None):
+    """Every volume main() would list or extract, in report order, as dicts.
+
+    This is the callable form of the discovery main() does while it prints.
+    The window's Contents pane and the LEAPP tools read images through it, so
+    a volume here is a volume in the report: `qnxprobe_gui.py --check-discovery
+    IMAGE` proves that against the report text for any image.
+
+    Each dict carries:
+        label       the region as the report names it ("GPT part 3 storage")
+        base, size  byte offset and byte length of the region
+        lba         base in sectors, the identity an extraction is named by
+        kind        "qnx6", "ext4", "fat32", "ntfs", ..., "extended container",
+                    or "not recognised"
+        name        the directory the volume extracts under (volume_name)
+        detail      a short description from the identifier
+        missing_past_end
+                    bytes of the region that lie past the end of the image; a
+                    positive value means the file holds only part of this
+                    volume (a lone first segment of a split image reads so)
+        walker      an object with root, listdir, entry and read_file, when the
+                    kind is one this reads; else
+        note        why there is no walker
+
+    Brute-scan finds are report-only in main() too (they have no region and so
+    no base to walk), so they are not here either. fh is what open_image()
+    returns; size defaults to image_size(fh).
+    """
+    if size is None:
+        size = image_size(fh)
+    regions, names, containers, protective = partition_regions(fh, size)
+    missing = {start: gap for _lab, start, _rs, gap in
+               short_regions(size, regions, skip=protective)}
+    out, qnx6_labels = [], set()
+
+    for label, base, rsize in regions:
+        best = None
+        for off, _rel in sb_slots(fh, base, label, regions):
+            r = check(fh, off)
+            if r and not r[2] and (best is None or r[1]["serial"] > best[1]["serial"]):
+                best = (off, r[1])
+        if best is None:
+            continue
+        qnx6_labels.add(label)
+        vol = dict(label=label, base=base, size=rsize, lba=base // SECTOR, kind="qnx6",
+                   name=names.get(base) or f"lba{base // SECTOR}",
+                   detail=f"serial {best[1]['serial']:,}, "
+                          f"volumeid {best[1]['volumeid'].hex()} (as stored)",
+                   missing_past_end=missing.get(base, 0))
+        try:
+            vol["walker"] = Qnx6Walker(fh, base, best[0] - base)
+        except Exception as exc:                        # report it, do not hide it
+            vol["note"] = f"could not walk this filesystem: {exc}"
+        out.append(vol)
+
+    for label, base, rsize in regions:
+        if label in qnx6_labels or label in protective:
+            continue
+        if label in containers:
+            out.append(dict(label=label, base=base, size=rsize, lba=base // SECTOR,
+                            kind="extended container", name="", detail="",
+                            missing_past_end=missing.get(base, 0),
+                            note="holds the logical volumes, nothing to walk"))
+            continue
+        kind, lines = identify_fs(fh, base, rsize)
+        stem = names.get(base) or f"lba{base // SECTOR}"
+        vol = dict(label=label, base=base, size=rsize, lba=base // SECTOR,
+                   kind=kind or "not recognised", name=stem,
+                   detail="; ".join(lines[:2]), missing_past_end=missing.get(base, 0))
+        try:
+            if kind and kind.startswith("ext"):
+                ext_name = _ext_label(fh, base)
+                suffix = sanitize_volume_label(ext_name) if ext_name else ""
+                if suffix and not stem.endswith(f"_{suffix}"):
+                    vol["name"] = f"{stem}_{suffix}"
+                vol["walker"] = ExtWalker(fh, base)
+            elif kind == "QNX IFS boot image":
+                vol["walker"] = IfsWalker(fh, base)
+            elif kind:
+                vol["walker"] = walker_for(kind, fh, base, rsize)
+                if vol["walker"] is None:
+                    vol["note"] = "recognised, but no walker for this kind"
+            else:
+                vol["note"] = "not a filesystem this tool reads"
+        except IfsUnsupported as exc:
+            vol["note"] = f"contents not read: {exc}"
+        except Exception as exc:
+            vol["note"] = f"could not walk this filesystem: {exc}"
+        out.append(vol)
+    return out
 
 
 def main(path, scan_limit_mib=256, do_list=False, list_depth=2, list_max=400,
@@ -6001,7 +6739,7 @@ def main(path, scan_limit_mib=256, do_list=False, list_depth=2, list_max=400,
                     except Exception as exc:
                         print(f"        could not extract: {exc}")
 
-                if kind in ("fat32", "exfat", "ntfs", "hfs+", "hfsx", "apfs",
+                if kind in ("fat32", "exfat", "ntfs", "f2fs", "hfs+", "hfsx", "apfs",
                             "etfs", "efs", "qnx4") and wanted:
                     if do_list:
                         print(f"        CONTENTS  (depth {list_depth})")
@@ -6294,6 +7032,111 @@ def _ntfs_deleted_check(image_gz, listing):
         else:
             different += 1
     return matched, len(want), missing, different
+
+
+def _ext_fixture_check(image_gz, listing):
+    """Walk a committed ext fixture and compare every file against the hashes
+    sha256sum recorded over the tree the image was built from.
+
+    Returns (kind, matched, expected, missing, different). The fixtures hold
+    sparse files of every shape (a hole first, a hole in the middle, a trailing
+    hole past the last block, a file that is nothing but hole, and a 3 MiB one
+    whose data sits at both ends), so a reader that drops holes or loses the
+    logical position of an extent fails here; the ext2 image reaches the same
+    files through the classic block map instead of an extent tree.
+    """
+    import gzip, hashlib, io
+    with gzip.open(image_gz, "rb") as gz:
+        img = io.BytesIO(gz.read())
+    size = img.getbuffer().nbytes
+    want = {}
+    with open(listing, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            digest, path = line.split("  ", 1)
+            want[path] = digest
+    kind = (identify_fs(img, 0, size) or (None,))[0]
+    w = walker_for(kind, img, 0, size) if kind else None
+    if w is None:
+        return kind, 0, len(want), len(want), 0
+    have = {path: (ino, sz) for path, ino, sz, _mtime in collect(w, w.root) if sz is not None}
+    matched = missing = different = 0
+    for path, digest in want.items():
+        got = have.get(path)
+        if got is None:
+            missing += 1
+            continue
+        h = hashlib.sha256()
+        read = 0
+        try:
+            for chunk in w.read_file(got[0], got[1]):
+                h.update(chunk)
+                read += len(chunk)
+        except ExtUnreadable:
+            different += 1
+            continue
+        if read == got[1] and h.hexdigest() == digest:
+            matched += 1
+        else:
+            different += 1
+    return kind, matched, len(want), missing, different
+
+
+def _f2fs_fixture_check(image_gz, listing):
+    """Walk the committed F2FS fixture and compare every file in `listing`
+    against its recorded hash. Returns (kind, matched, expected, missing,
+    different).
+
+    Two listings are checked with this. The main one is sha256sum over the
+    source tree, an oracle independent of the image and of this reader; it
+    covers files that live inside the inode's own address list (inline data,
+    inline directories, and files up to a few MiB), plus the multi-block
+    directory and the symlink. The second is the one file large enough to run
+    past the inode into direct and single-indirect node blocks: sload.f2fs
+    relocates such a file's node blocks (it writes them as if the inode had no
+    inline xattr while stamping the inode with one), so the source hash does
+    not match, and the recorded hash is what f2fs-tools' own dump.f2fs, an
+    independent reader, extracts from the committed image.
+    """
+    import gzip, hashlib, io
+    with gzip.open(image_gz, "rb") as gz:
+        img = io.BytesIO(gz.read())
+    size = img.getbuffer().nbytes
+    want = {}
+    with open(listing, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            digest, path = line.split("  ", 1)
+            want[path] = digest
+    kind = (identify_fs(img, 0, size) or (None,))[0]
+    w = walker_for(kind, img, 0, size) if kind else None
+    if w is None:
+        return kind, 0, len(want), len(want), 0
+    have = {path: (ino, sz) for path, ino, sz, _mtime in collect(w, w.root) if sz is not None}
+    matched = missing = different = 0
+    for path, digest in want.items():
+        got = have.get(path)
+        if got is None:
+            missing += 1
+            continue
+        h = hashlib.sha256()
+        read = 0
+        try:
+            for chunk in w.read_file(got[0], got[1]):
+                h.update(chunk)
+                read += len(chunk)
+        except F2fsUnreadable:
+            different += 1
+            continue
+        if read == got[1] and h.hexdigest() == digest:
+            matched += 1
+        else:
+            different += 1
+    return kind, matched, len(want), missing, different
 
 
 def _ntfs_fixture_check(image_gz, listing):
@@ -8114,6 +8957,119 @@ def self_test():
                 ok = False
             print(f"  [{'PASS' if cond else 'FAIL'}] {label}")
 
+        # ext: sparse files and the classic block map. Both fixtures were built
+        # from one tree with mke2fs -d, so one hash list serves both, and it was
+        # written by sha256sum over that tree, not by any reader of the image.
+        ext_want = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "tests", "fixtures", "ext-sparse.sha256")
+        for stem, want_kind in (("ext4-sparse", "ext4"), ("ext2-sparse", "ext2")):
+            ext_fix = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "tests", "fixtures", stem + ".img.gz")
+            if not (os.path.isfile(ext_fix) and os.path.isfile(ext_want)):
+                print(f"  [SKIP] the {stem} fixture is not beside this script, so the "
+                      "walk was not compared against it")
+                continue
+            try:
+                ekind, egot, ewant, emiss, ediff = _ext_fixture_check(ext_fix, ext_want)
+                ebroke = ""
+            except Exception as exc:                 # pylint: disable=broad-except
+                ekind, egot, ewant, emiss, ediff = None, 0, 0, 0, 0
+                ebroke = f"; the walk raised {type(exc).__name__}: {exc}"
+            econd = (ekind == want_kind and egot and egot == ewant and not emiss
+                     and not ediff and not ebroke)
+            if not econd:
+                ok = False
+            print(f"  [{'PASS' if econd else 'FAIL'}] every file of the {stem} fixture, "
+                  f"holes included, matches what sha256sum recorded over its source tree "
+                  f"({egot} of {ewant}, identified as {ekind}"
+                  + (f", {emiss} missing" if emiss else "")
+                  + (f", {ediff} different" if ediff else "") + ")" + ebroke)
+
+        # F2FS detection rejects the negatives: an all-zero region, the right
+        # magic with a wrong reserved inode number, and the right magic with an
+        # impossible block size. Each must return None, so a chance 4-byte match
+        # cannot be read as a filesystem.
+        _bad = bytearray(3072)
+        struct.pack_into("<I", _bad, 0, F2FS_MAGIC)
+        struct.pack_into("<I", _bad, 16, 12)      # log_blocksize 4K
+        struct.pack_into("<I", _bad, 20, 9)       # log_blocks_per_seg
+        struct.pack_into("<I", _bad, 96, 3)       # root_ino ok
+        struct.pack_into("<I", _bad, 100, 1)
+        struct.pack_into("<I", _bad, 104, 2)
+        _wrong_root = bytearray(_bad)
+        struct.pack_into("<I", _wrong_root, 96, 99)   # root_ino must be 3
+        _wrong_bs = bytearray(_bad)
+        struct.pack_into("<I", _wrong_bs, 16, 20)     # log_blocksize out of range
+        f2fs_neg_ok = (identify_f2fs(io.BytesIO(bytes(3072)), 0) is None
+                       and identify_f2fs(io.BytesIO(bytes(_wrong_root)), 0) is None
+                       and identify_f2fs(io.BytesIO(bytes(_wrong_bs)), 0) is None)
+        if not f2fs_neg_ok:
+            ok = False
+        print(f"  [{'PASS' if f2fs_neg_ok else 'FAIL'}] F2FS detection rejects an "
+              "all-zero region, a wrong reserved inode and an impossible block size")
+
+        # F2FS: the same reader over an image f2fs-tools wrote. The source-tree
+        # hashes cover the inline and in-inode files (and the symlink and the
+        # multi-block directory); the nodes list covers the one file large
+        # enough to reach direct and single-indirect node blocks, checked
+        # against what dump.f2fs extracts (see _f2fs_fixture_check).
+        f2fs_fix = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "tests", "fixtures", "f2fs-fixture.img.gz")
+        for want_name, what in (("f2fs-fixture.src.sha256",
+                                 "sha256sum recorded over its source tree"),
+                                ("f2fs-fixture.nodes.sha256",
+                                 "dump.f2fs extracted from the image")):
+            f2fs_want = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     "tests", "fixtures", want_name)
+            if not (os.path.isfile(f2fs_fix) and os.path.isfile(f2fs_want)):
+                print(f"  [SKIP] the {want_name} F2FS fixture is not beside this "
+                      "script, so the walk was not compared against it")
+                continue
+            try:
+                fkind, fgot, fwant, fmiss, fdiff = _f2fs_fixture_check(f2fs_fix, f2fs_want)
+                fbroke = ""
+            except Exception as exc:                 # pylint: disable=broad-except
+                fkind, fgot, fwant, fmiss, fdiff = None, 0, 0, 0, 0
+                fbroke = f"; the walk raised {type(exc).__name__}: {exc}"
+            fcond = (fkind == "f2fs" and fgot and fgot == fwant and not fmiss
+                     and not fdiff and not fbroke)
+            if not fcond:
+                ok = False
+            print(f"  [{'PASS' if fcond else 'FAIL'}] every file in {want_name} "
+                  f"matches what {what} "
+                  f"({fgot} of {fwant}, identified as {fkind}"
+                  + (f", {fmiss} missing" if fmiss else "")
+                  + (f", {fdiff} different" if fdiff else "") + ")" + fbroke)
+
+        # F2FS holes, against the Linux kernel driver as a third oracle. sload.f2fs
+        # allocates every block, so this second image is built by mounting a fresh
+        # volume with the kernel and writing sparse files (a leading hole, a middle
+        # hole, a trailing hole, and one file that is all hole); the recorded hashes
+        # are what the kernel read back. See tools/make_f2fs_hole_fixture.sh.
+        f2fs_holes = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "tests", "fixtures", "f2fs-fixture-holes.img.gz")
+        f2fs_holes_want = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "tests", "fixtures", "f2fs-fixture.holes.sha256")
+        if os.path.isfile(f2fs_holes) and os.path.isfile(f2fs_holes_want):
+            try:
+                hkind, hgot, hwant, hmiss, hdiff = _f2fs_fixture_check(f2fs_holes, f2fs_holes_want)
+                hbroke = ""
+            except Exception as exc:                 # pylint: disable=broad-except
+                hkind, hgot, hwant, hmiss, hdiff = None, 0, 0, 0, 0
+                hbroke = f"; the walk raised {type(exc).__name__}: {exc}"
+            hcond = (hkind == "f2fs" and hgot and hgot == hwant and not hmiss
+                     and not hdiff and not hbroke)
+            if not hcond:
+                ok = False
+            print(f"  [{'PASS' if hcond else 'FAIL'}] every F2FS file with holes reads "
+                  f"back the bytes the Linux kernel driver read from the same image "
+                  f"({hgot} of {hwant}, identified as {hkind}"
+                  + (f", {hmiss} missing" if hmiss else "")
+                  + (f", {hdiff} different" if hdiff else "") + ")" + hbroke)
+        else:
+            print("  [SKIP] the F2FS holes fixture is not beside this script, so the "
+                  "hole path was not compared against the kernel driver")
+
         ntfs_fix = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "tests", "fixtures", "ntfs-fixture.img.gz")
         ntfs_want = ntfs_fix[:-len(".img.gz")] + ".sha256"
@@ -8223,6 +9179,52 @@ def self_test():
                 ok = False
             print(f"  [{'PASS' if nok else 'FAIL'}] an NTFS listing still prints an "
                   f"instant's date ({ndetail})")
+
+        # volumes(): the callable form of the report's discovery. The names and
+        # kinds below are written out, not read back from volume_name() or from
+        # main(), so a wrong region, a wrong kind or a missing walker each fails.
+        def _vol_view(path):
+            with open(path, "rb") as fh:
+                return [(v["kind"], v["name"], "walker" in v, v["missing_past_end"])
+                        for v in volumes(fh, os.path.getsize(path))]
+        vol_checks = (
+            ("volumes() names the qnx6 behind an MBR by its partition and LBA",
+             a, [("qnx6", "p1_lba2048", True, 0)]),
+            ("volumes() names a whole-image big-endian qnx6 lba0",
+             b, [("qnx6", "lba0", True, 0)]),
+            ("volumes() reports an unrecognised image as one region without a walker",
+             c, [("not recognised", "lba0", False, 0)]),
+            ("volumes() recognises a synthetic FAT32 boot sector",
+             fp, [("fat32", "lba0", True, 0)]),
+            ("volumes() recognises a synthetic exFAT boot sector",
+             xp, [("exfat", "lba0", True, 0)]),
+        )
+        for label, path, want in vol_checks:
+            try:
+                got = _vol_view(path)
+                vbroke = ""
+            except Exception as exc:                 # pylint: disable=broad-except
+                got, vbroke = None, f"; raised {type(exc).__name__}: {exc}"
+            cond = got == want and not vbroke
+            if not cond:
+                ok = False
+            print(f"  [{'PASS' if cond else 'FAIL'}] {label}"
+                  + ("" if cond else f"  (got {got}{vbroke})"))
+        # A region the file does not hold in full reports how much is missing:
+        # the first segment of a split image has exactly this shape.
+        try:
+            with open(cut, "rb") as fh:
+                cut_vols = volumes(fh, os.path.getsize(cut))
+            cut_cond = (len(cut_vols) == 1 and cut_vols[0]["kind"] == "qnx6"
+                        and cut_vols[0]["missing_past_end"] > 0)
+            cut_detail = (f"{cut_vols[0]['missing_past_end']:,} bytes past the end"
+                          if cut_vols else "no volume found")
+        except Exception as exc:                     # pylint: disable=broad-except
+            cut_cond, cut_detail = False, f"raised {type(exc).__name__}: {exc}"
+        if not cut_cond:
+            ok = False
+        print(f"  [{'PASS' if cut_cond else 'FAIL'}] volumes() reports a volume the "
+              f"image is too short for as missing bytes ({cut_detail})")
 
         print()
         print("  SELF-TEST PASSED. The detector reports positives and negatives"

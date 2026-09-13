@@ -87,7 +87,7 @@ MODE_STAGED = "staged"
 # Not on this list, and worth knowing: QNX6. The vendored reader has a Qnx6Walker
 # and its own CLI uses it, but walker_for does not hand one out and identify_fs
 # does not name the format, so a QNX6 volume is not seen as a volume here at all.
-WALKED_FILESYSTEMS = ("ext2", "ext3", "ext4", "FAT32", "exFAT", "NTFS",
+WALKED_FILESYSTEMS = ("ext2", "ext3", "ext4", "F2FS", "FAT32", "exFAT", "NTFS",
                       "HFS+", "HFSX", "APFS", "QNX4", "QNX EFS", "QNX ETFS",
                       "QNX IFS")
 
