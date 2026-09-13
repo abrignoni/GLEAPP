@@ -882,15 +882,14 @@ two passes need more of a filesystem than the walk does:
 | Filesystem | Walked | Deleted records | Free space, for scoping |
 |---|---|---|---|
 | NTFS, FAT32, exFAT | yes | **yes** | yes |
-| HFS+, HFSX, APFS | yes | no | yes |
+| HFS+, HFSX, APFS, F2FS | yes | no | yes |
 | ext2 / ext3 / ext4 | yes | no | **no** |
-| F2FS | yes | no | **no** |
 | QNX4, EFS, ETFS, IFS | yes | no | **no** |
 
 So on a Mac or Linux acquisition nothing comes back with its name, and on a
 disk holding any volume that cannot report its free space the scan falls back
 to the whole image rather than leaving part of the disk unread. One ext4
-partition on a dual-boot disk is enough to do that, and so is an F2FS one.
+partition on a dual-boot disk is enough to do that.
 
 Not answering and answering "nothing" are different results. A volume that
 cannot say returns no answer and the whole image is scanned; a disk whose
