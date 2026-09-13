@@ -2760,18 +2760,24 @@ function stashRows(byCat, catList) {
 }
 let stashLastTotal = 0;
 async function refreshStashDlg() {
-  $("#stashCase").innerHTML = "<div class='muted'>Loading…</div><div></div>";
+  // "This case" only means something with a case open - hide it on the launcher.
+  const hasCase = $("#launcher").style.display !== "block";
+  $("#stashCaseSection").style.display = hasCase ? "" : "none";
+  if (hasCase) $("#stashCase").innerHTML = "<div class='muted'>Loading…</div><div></div>";
   const d = await api("/api/stash").catch(() => null);
-  if (!d) { $("#stashCase").innerHTML = "<div>Couldn't read the stash.</div><div></div>"; return; }
+  if (!d) {
+    if (hasCase) $("#stashCase").innerHTML = "<div>Couldn't read the stash.</div><div></div>";
+    return;
+  }
   stashLastTotal = d.stash.total || 0;
-  $("#stashCase").innerHTML = stashRows(d.case.by_category, d.case.categories);
   $("#stashTotal").innerHTML = stashRows(d.stash.by_category, d.case.categories);
-  $("#stashAdd").disabled = !d.case.eligible;
-  $("#stashAdd").textContent = d.case.eligible
-    ? `Add this case's ${d.case.eligible.toLocaleString()} hash(es) to the stash`
-    : ($("#launcher").style.display === "block"
-       ? "Open a case to add its category 1–3 hashes"
-       : "No category 1–3 files in this case yet");
+  if (hasCase) {
+    $("#stashCase").innerHTML = stashRows(d.case.by_category, d.case.categories);
+    $("#stashAdd").disabled = !d.case.eligible;
+    $("#stashAdd").textContent = d.case.eligible
+      ? `Add this case's ${d.case.eligible.toLocaleString()} hash(es) to the stash`
+      : "No category 1–3 files in this case yet";
+  }
   $("#stashClear").disabled = !d.stash.total;
   $("#stashUpdated").textContent = d.stash.updated
     ? "Stash last updated " + fmtEpoch(d.stash.updated)
@@ -2830,7 +2836,7 @@ async function stashExport(format) {
 $("#stashExportDb").onclick = () => stashExport("db");
 $("#stashExportCsv").onclick = () => stashExport("csv");
 $("#stashMerge").onclick = async () => {
-  const p = await pick("stashfile", "Path to a colleague's stash file (.gleapp or .csv):");
+  const p = await pick("stashfile", "Path to the external hash stash file (.gleapp or .csv):");
   if (!p) return;
   const r = await api("/api/stash/merge", {
     method: "POST", headers: { "Content-Type": "application/json" },

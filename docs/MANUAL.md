@@ -614,10 +614,10 @@ The *Sharing* section of the Hash stash panel:
 
 | Control | Effect |
 |---|---|
-| **Export a copy...** | writes a portable `hash-stash-<date>.gleapp` into `%LOCALAPPDATA%\GLEAPP\hashsets\`; hand it to a colleague |
+| **Export a backup...** | writes a portable `hash-stash-<date>.gleapp` into `%LOCALAPPDATA%\GLEAPP\hashsets\`; hand it to a colleague |
 | **Export CSV...** | same, as a `md5,category,source` CSV |
-| **Merge a colleague's stash...** | folds their `.gleapp` or `.csv` into yours; the more-severe code wins on any overlapping hash |
-| **Use a shared file...** | point GLEAPP at one stash file on a shared / network drive; the whole team reads and writes the same stash |
+| **Merge external hash stash...** | folds another `.gleapp` or `.csv` stash into yours; the more-severe code wins on any overlapping hash |
+| **Use a shared hash stash...** | point GLEAPP at one stash file on a shared / network drive; the whole team reads and writes the same stash |
 | **Back to my own** | revert to your per-user `stash.gleapp` (the shared file is left untouched) |
 
 The stash location can also be set with the `GLEAPP_STASH_PATH` environment
