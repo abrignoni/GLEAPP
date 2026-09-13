@@ -19,6 +19,9 @@ This manual is also available in the app: **? Help** in the header, or press `?`
 
 On launch with no case open, GLEAPP shows the **launcher**. The **? Help / Manual**
 button (top-right of the launcher, and in every case's header) opens this manual.
+Its **Download as PDF** button hands off to your browser/OS print dialog, scoped
+to just the manual &mdash; choose **Save as PDF** as the destination for an
+offline copy. No PDF is generated or stored by GLEAPP itself.
 
 - **Recent cases**: click to reopen. Only cases that contain files are listed;
   each shows its live file count.
