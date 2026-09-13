@@ -1310,6 +1310,34 @@ async function showMeta(id) {
     im.onclick = () => { setFocus(+im.dataset.open); });
   const film = m.querySelector(".film");
   if (film && film.querySelector("img[data-kf]")) loadKeyframeFaceBoxes(id, film);
+  if (f.faces) loadPreviewFaceBoxes(id, m.querySelector(".preview"), isVid ? _posterKeyframeId(f) : null);
+}
+
+/* a video's preview thumbnail IS one specific key frame - pipeline.py picks
+   the middle extracted frame as both (see "mid = len(frames) // 2"), and
+   that frame was written to the keyframes table like any other, faces and
+   all. Match it by its thumb filename to find which keyframe id it is, so
+   the same box the filmstrip shows can be drawn on the bigger preview too. */
+function _posterKeyframeId(f) {
+  if (!f.thumb || !Array.isArray(f.keyframes)) return null;
+  const kf = f.keyframes.find(k => k.thumb === "/thumb/" + f.thumb);
+  return kf ? kf.id : null;
+}
+
+/* the details pane's own preview thumbnail - same idea as the full-size
+   viewer's loadFaceBoxes, just a smaller image and no modal to close first.
+   keyframeId is null for an image's own faces; for a video it's the poster
+   frame's keyframe id from _posterKeyframeId (or null if it couldn't be
+   matched, which just means no box - the same as a file with no faces). */
+function loadPreviewFaceBoxes(id, container, keyframeId) {
+  const img = container && container.querySelector("img");
+  if (!img) return;
+  api(`/api/faces/${id}`).then(raw => {
+    const faces = Array.isArray(raw) ? raw.filter(fc => fc.keyframe_id === keyframeId) : [];
+    if (!faces.length || !document.body.contains(img)) return;
+    const cleanup = attachFaceLayer(img, faces, container, faceId => showFaceMatches(faceId));
+    if (cleanup) _filmFaceLayerCleanups.push(cleanup);
+  }).catch(() => {});
 }
 
 /* ---------- full-size viewer ---------- */
