@@ -909,9 +909,11 @@
     always confirm the final call.
   </p>
 
-  <div style="font-weight:600;font-size:12px;margin-top:12px">This case</div>
-  <div class="statgrid" id="stashCase"></div>
-  <button class="btn" id="stashAdd" style="border-color:var(--accent)">Add this case's hashes to the stash</button>
+  <div id="stashCaseSection">
+    <div style="font-weight:600;font-size:12px;margin-top:12px">This case</div>
+    <div class="statgrid" id="stashCase"></div>
+    <button class="btn" id="stashAdd" style="border-color:var(--accent)">Add this case's hashes to the stash</button>
+  </div>
 
   <div style="font-weight:600;font-size:12px;margin-top:16px">Stash total</div>
   <div class="statgrid" id="stashTotal"></div>
@@ -925,10 +927,10 @@
     <span id="stashPath"></span> <span id="stashShared"></span>
   </div>
   <div class="row" style="gap:6px">
-    <button class="btn sm" id="stashExportDb">Export a copy…</button>
+    <button class="btn sm" id="stashExportDb">Export a backup…</button>
     <button class="btn sm" id="stashExportCsv">Export CSV…</button>
-    <button class="btn sm" id="stashMerge">Merge a colleague's stash…</button>
-    <button class="btn sm" id="stashSetPath">Use a shared file…</button>
+    <button class="btn sm" id="stashMerge">Merge external hash stash…</button>
+    <button class="btn sm" id="stashSetPath">Use a shared hash stash…</button>
     <button class="btn sm" id="stashResetPath" style="display:none">Back to my own</button>
   </div>
 
