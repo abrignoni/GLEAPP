@@ -579,12 +579,13 @@ automatically.
 It is **its own file, separate from the NSRL / global store**:
 
 ```
-%LOCALAPPDATA%\GLEAPP\hashsets\stash.gleapp
+%LOCALAPPDATA%\GLEAPP\hashsets\stash.hstash
 ```
 
 (A small SQLite file: one `stash` table of `md5, category, added_at, source`.)
-GLEAPP still ships no hash database and makes no content decision; the stash
-holds only hashes of files **you** categorized.
+Its extension is deliberately not `.gleapp`, so it's never mistaken for a
+case file on disk. GLEAPP still ships no hash database and makes no content
+decision; the stash holds only hashes of files **you** categorized.
 
 ### Creating / adding to it
 
@@ -617,11 +618,11 @@ The *Sharing* section of the Hash stash panel:
 
 | Control | Effect |
 |---|---|
-| **Export a backup...** | writes a portable `hash-stash-<date>.gleapp` into `%LOCALAPPDATA%\GLEAPP\hashsets\`; hand it to a colleague |
+| **Export a backup...** | writes a portable `hash-stash-<date>.hstash` into `%LOCALAPPDATA%\GLEAPP\hashsets\`; hand it to a colleague |
 | **Export CSV...** | same, as a `md5,category,source` CSV |
-| **Merge external hash stash...** | folds another `.gleapp` or `.csv` stash into yours; the more-severe code wins on any overlapping hash |
+| **Merge external hash stash...** | folds another `.hstash` or `.csv` stash into yours (an older `.gleapp`-named export still works too); the more-severe code wins on any overlapping hash |
 | **Use a shared hash stash...** | point GLEAPP at one stash file on a shared / network drive; the whole team reads and writes the same stash |
-| **Back to my own** | revert to your per-user `stash.gleapp` (the shared file is left untouched) |
+| **Back to my own** | revert to your per-user `stash.hstash` (the shared file is left untouched) |
 
 The stash location can also be set with the `GLEAPP_STASH_PATH` environment
 variable (it wins over the panel setting).
@@ -636,9 +637,9 @@ undoable**; export a copy first if you're unsure.
 ```
 gleapp stash                       # show totals and the file location
 gleapp stash --add -c <case dir>   # add that case's category 1-3 MD5s
-gleapp stash --export stash.gleapp # portable copy  (.csv also works)
-gleapp stash --merge theirs.gleapp # fold in a colleague's stash
-gleapp stash --set-path "\\nas\team\stash.gleapp"   # use a shared file
+gleapp stash --export stash.hstash # portable copy  (.csv also works)
+gleapp stash --merge theirs.hstash # fold in a colleague's stash
+gleapp stash --set-path "\\nas\team\stash.hstash"   # use a shared file
 gleapp stash --set-path ""         # back to the per-user default
 gleapp stash --clear
 ```
