@@ -35,7 +35,7 @@ def test_the_new_case_form_has_no_logo_field_of_its_own():
     assert "logo" not in card.lower()
 
 
-def test_setting_the_default_logo_round_trips(tmp_path):
+def test_setting_the_default_logo_round_trips():
     from gleapp.web.app import create_app  # pylint: disable=import-outside-toplevel
 
     cl = create_app(None).test_client()
