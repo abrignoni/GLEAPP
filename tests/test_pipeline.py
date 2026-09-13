@@ -1679,3 +1679,51 @@ def test_recent_cases_hides_empty_and_annotates(tmp_path, evidence):
     recent = appconfig.recent_cases()
     assert [r["name"] for r in recent] == ["Real"]
     assert recent[0]["files"] > 0
+
+
+def test_the_launcher_can_see_more_than_three_recent_cases(tmp_path, evidence):
+    """The launcher only shows 3 until "Show more" - but the server has to
+    actually hand it more than 3 for that button to have anything to reveal."""
+    from gleapp import appconfig
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    for i in range(5):
+        client.post("/api/case/create",
+                    json={"path": str(tmp_path / f"c{i}"), "name": f"Case{i}"})
+        client.post("/api/case/ingest", json={
+            "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+            "options": {"keyframes": 0, "screen": False}})
+        for _ in range(120):
+            job = client.get("/api/job").get_json()
+            if not job["running"] and job["stage"] in ("done", "error"):
+                break
+            time.sleep(0.5)
+        client.post("/api/case/close")
+
+    ctx = client.get("/api/context").get_json()
+    assert len(ctx["recent"]) == 5, "the pre-case /api/context capped recent at 3"
+
+
+def test_clearing_recent_cases_empties_the_list_but_not_the_cases(tmp_path, evidence):
+    from gleapp import appconfig
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    client.post("/api/case/create",
+                json={"path": str(tmp_path / "real"), "name": "Real"})
+    client.post("/api/case/ingest", json={
+        "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = client.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    assert appconfig.recent_cases() != []
+
+    r = client.post("/api/recent/clear")
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert appconfig.recent_cases() == []
+    # the case itself is untouched - it still opens
+    assert (tmp_path / "real" / "case.gleapp").exists()

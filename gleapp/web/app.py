@@ -190,6 +190,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def recent():
         return jsonify(appconfig.recent_cases(limit=3))
 
+    @app.post("/api/recent/clear")
+    def recent_clear():
+        """Forget the recent-cases list. Cases on disk are untouched."""
+        appconfig.clear_recent()
+        return jsonify({"ok": True})
+
     @app.post("/api/pick")
     def pick():
         """Native folder/file dialog (desktop mode only).
@@ -1227,7 +1233,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 # never let a bad store break the launcher
                 hstore = {"sets": [], "entries": 0}
             return jsonify({"needs_case": True,
-                            "recent": appconfig.recent_cases(limit=3),
+                            # capped at what push_recent ever stores (12); the
+                            # launcher itself only shows 3 until "Show more"
+                            "recent": appconfig.recent_cases(limit=12),
                             # the launcher says what an acquisition can be read
                             # as, from the list the walk itself is built on
                             "walked_filesystems": list(archive.WALKED_FILESYSTEMS),

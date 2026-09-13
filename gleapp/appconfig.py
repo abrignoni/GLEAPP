@@ -134,6 +134,14 @@ def recent_cases(*, include_empty: bool = False, limit: int | None = None) -> li
     return out
 
 
+def clear_recent() -> None:
+    """Forget every recent case. Nothing on disk is touched - this only
+    empties the launcher's own memory of what it has opened before."""
+    cfg = load()
+    cfg["recent"] = []
+    save(cfg)
+
+
 def push_recent(path: str, name: str | None = None) -> None:
     cfg = load()
     path = str(Path(path).resolve())

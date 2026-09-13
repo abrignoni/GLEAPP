@@ -2882,7 +2882,7 @@ $("#btnVic").onclick = async () => {
 };
 
 /* ---------- launcher ---------- */
-const Lr = { native: false, sources: [] };
+const Lr = { native: false, sources: [], recent: [], recentExpanded: false };
 function fmtAgo(ts) {
   const s = (Date.now() / 1000) - ts;
   if (s < 3600) return Math.round(s / 60) + "m ago";
@@ -2925,19 +2925,37 @@ function showLauncher(ctx) {
   $("#fsList").innerHTML = fs.length
     ? fs.map(f => `<code>${esc(f)}</code>`).join(", ")
     : "the filesystems the reader supports";
-  const rc = ctx.recent || [];
-  if (rc.length) {
-    $("#recentCard").style.display = "block";
-    $("#recentList").innerHTML = rc.map(r => {
-      const n = (typeof r.files === "number")
-        ? r.files.toLocaleString() + (r.files === 1 ? " file" : " files") : "";
-      const bits = [esc(r.path), n, fmtAgo(r.opened)].filter(Boolean).join(" · ");
-      return `<button data-path="${esc(r.path)}">${esc(r.name)}<small>${bits}</small></button>`;
-    }).join("");
-    $("#recentList").querySelectorAll("button").forEach(b =>
-      b.onclick = () => openCase(b.dataset.path));
-  }
+  Lr.recent = ctx.recent || [];
+  Lr.recentExpanded = false;
+  $("#recentCard").style.display = Lr.recent.length ? "block" : "none";
+  renderRecent();
 }
+const RECENT_SHOWN = 3;
+function renderRecent() {
+  const rc = Lr.recentExpanded ? Lr.recent : Lr.recent.slice(0, RECENT_SHOWN);
+  $("#recentList").innerHTML = rc.map(r => {
+    const n = (typeof r.files === "number")
+      ? r.files.toLocaleString() + (r.files === 1 ? " file" : " files") : "";
+    const bits = [esc(r.path), n, fmtAgo(r.opened)].filter(Boolean).join(" · ");
+    return `<button data-path="${esc(r.path)}">${esc(r.name)}<small>${bits}</small></button>`;
+  }).join("");
+  $("#recentList").querySelectorAll("button").forEach(b =>
+    b.onclick = () => openCase(b.dataset.path));
+  $("#recentMore").style.display = Lr.recent.length > RECENT_SHOWN ? "" : "none";
+  $("#recentMore").textContent = Lr.recentExpanded ? "Show less" : "Show more";
+}
+$("#recentMore").onclick = () => { Lr.recentExpanded = !Lr.recentExpanded; renderRecent(); };
+$("#recentClear").onclick = async () => {
+  if (!confirm("Clear the recent-cases list?\n\n"
+    + "This only forgets these cases were opened here - nothing on disk is "
+    + "deleted, and each case still opens fine from its own folder.")) return;
+  await api("/api/recent/clear", { method: "POST" });
+  Lr.recent = [];
+  Lr.recentExpanded = false;
+  $("#recentCard").style.display = "none";
+  $("#recentList").innerHTML = "";
+};
+
 async function openCase(path) {
   const r = await api("/api/case/open", {
     method: "POST", headers: { "Content-Type": "application/json" },
