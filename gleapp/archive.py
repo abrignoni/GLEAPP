@@ -1170,7 +1170,8 @@ def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
     quietly skipped: leaving part of a disk unscanned while reporting a carve as
     done is worse than scanning all of it. NTFS answers through $Bitmap, FAT32
     through its allocation table, exFAT through its allocation bitmap, HFS+
-    through its allocation file and APFS through the container's space manager,
+    through its allocation file, APFS through the container's space manager and
+    F2FS through the per-block valid map in its segment information table,
     so none of the six acquisitions measured falls back: they scope to between
     60% and 92% of themselves, each in under a second.
     """

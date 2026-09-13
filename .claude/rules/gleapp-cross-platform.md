@@ -177,8 +177,8 @@ part of a disk while reporting the carve finished is worse than reading all of i
 `_unclaimed_space()` returns None the moment any volume cannot answer, and None means scan
 everything. NTFS answers through `$Bitmap`, FAT32 through its allocation table, exFAT through
 its allocation bitmap, HFS+ through its allocation file and APFS through the container's
-space manager. F2FS does not answer yet (its segment info table keeps a per-block valid
-map, so it could), and an image carrying one scans everything.
+space manager, and F2FS through the per-block valid map in its segment information table
+(qnxprobe 1.29; before that an image carrying an F2FS volume scanned everything).
 
 **One quiet volume is enough, and it is usually the small one.** Every Windows disk carries a
 FAT32 EFI system partition of a fifth of a gigabyte beside its NTFS volumes, so until FAT
