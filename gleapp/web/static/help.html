@@ -804,8 +804,13 @@ frames only the files it drew. Both are baked into the report file so it
 stays self-contained; the summary names the basemap and its hash so a reader can
 obtain the same file and see the same map years later. The maps carry the place,
 water and street names the basemap holds, where Pillow can supply a scalable font.
-Untick <strong>Draw location maps</strong> in the Export dialog, or pass
-<code>--no-maps</code> to <code>gleapp report</code>, to leave them out.</p>
+On the <strong>Locations</strong> overview, a <strong>red</strong> dot is one file at
+that spot, baked into the map image itself; a <strong>blue</strong> dot is two or more
+files close enough together to overlap, drawn as a clickable overlay on top with a
+count - hover it (or tab to it) to fan the files out into individual points you can
+click, same as a map app spreading out a stacked pin. Untick <strong>Draw location
+maps</strong> in the Export dialog, or pass <code>--no-maps</code> to
+<code>gleapp report</code>, to leave them out.</p>
 <p><strong>Media</strong> (dialog checkboxes, on by default, saved with the case):</p>
 <ul>
   <li><strong>Embed full-size images</strong>: each image goes in downscaled to
