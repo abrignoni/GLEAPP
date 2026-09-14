@@ -982,27 +982,57 @@ document.addEventListener("click", e => {
 });
 
 /* ---------- video scrubbing ---------- */
+// Hovering a video tile seeks a real <video> across the whole file (/media/<id>
+// is sent with conditional=True, so Flask answers byte-range requests and a
+// seek only pulls the bytes near that timestamp) rather than stepping through
+// the handful of extracted key frames. Falls back to the sparse key-frame
+// thumbnails if the browser can't decode this file at all (codec it doesn't
+// support, or the source archive is unavailable) so scrubbing still shows
+// something rather than nothing.
 function enableScrub(el, f) {
   const img = el.querySelector("img");
   const bar = el.querySelector(".scrub i");
-  let frames = null, base = img.getAttribute("src"), loading = false;
-  async function ensure() {
-    if (frames || loading) return;
-    if (state.keyframeCache.has(f.id)) { frames = state.keyframeCache.get(f.id); return; }
-    loading = true;
-    frames = await api(`/api/file/${f.id}/keyframes`);
-    state.keyframeCache.set(f.id, frames); loading = false;
+  const base = img.getAttribute("src");
+  let vid = null, vidReady = false, vidFailed = false;
+  let frames = null, framesLoading = false;
+  function ensureVideo() {
+    if (vid || vidFailed) return;
+    vid = document.createElement("video");
+    vid.muted = true; vid.preload = "metadata"; vid.playsInline = true;
+    vid.addEventListener("loadedmetadata", () => { vidReady = isFinite(vid.duration) && vid.duration > 0; });
+    vid.addEventListener("error", () => { vidFailed = true; vid.remove(); vid = null; ensureFrames(); });
+    vid.src = `/media/${f.id}`;
+    img.after(vid);
   }
-  el.addEventListener("mouseenter", ensure);
+  async function ensureFrames() {
+    if (frames || framesLoading) return;
+    if (state.keyframeCache.has(f.id)) { frames = state.keyframeCache.get(f.id); return; }
+    framesLoading = true;
+    frames = await api(`/api/file/${f.id}/keyframes`);
+    state.keyframeCache.set(f.id, frames); framesLoading = false;
+  }
+  el.addEventListener("mouseenter", () => { ensureVideo(); ensureFrames(); });
   el.addEventListener("mousemove", e => {
-    if (!frames || !frames.length) return;
     const r = el.getBoundingClientRect();
     const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-    const i = Math.min(frames.length - 1, Math.floor(x * frames.length));
-    img.src = frames[i].thumb;
     bar.style.width = (x * 100) + "%";
+    if (vid && vidReady) {
+      if (!vid.seeking) vid.currentTime = x * vid.duration;
+      img.style.visibility = "hidden";
+      vid.style.display = "block";
+      return;
+    }
+    if (frames && frames.length) {
+      const i = Math.min(frames.length - 1, Math.floor(x * frames.length));
+      img.src = frames[i].thumb;
+    }
   });
-  el.addEventListener("mouseleave", () => { img.src = base; bar.style.width = "0"; });
+  el.addEventListener("mouseleave", () => {
+    bar.style.width = "0";
+    if (vid) vid.style.display = "none";
+    img.style.visibility = "";
+    img.src = base;
+  });
 }
 
 /* ---------- selection / focus ---------- */
