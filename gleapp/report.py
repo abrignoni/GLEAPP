@@ -342,10 +342,17 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  header.rpt td{{padding:2px 14px 2px 0;vertical-align:top}}
  header.rpt td:first-child{{color:var(--mut);white-space:nowrap}}
  header.rpt .hnotes{{margin-top:8px;white-space:pre-wrap;max-width:70ch}}
- .summary{{margin:18px 0 6px}}
- .summary .cap{{font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
-   color:var(--mut);margin-bottom:9px}}
- .summary .sumrow{{display:flex;gap:32px;align-items:center;flex-wrap:wrap}}
+ .summary{{margin:18px 0 6px;border:1px solid var(--line);border-radius:8px;overflow:hidden}}
+ details.summary > summary.cap{{cursor:pointer;list-style:none;font-weight:700;font-size:14px;
+   padding:11px 14px;color:var(--ink);background:#f0f5ff;display:flex;align-items:center;
+   gap:9px;user-select:none;transition:background .12s}}
+ details.summary > summary.cap::-webkit-details-marker{{display:none}}
+ details.summary > summary.cap::before{{content:"\\25B8";color:#2f6fd8;font-size:13px}}
+ details.summary[open] > summary.cap::before{{content:"\\25BE"}}
+ details.summary > summary.cap:hover{{background:#dfe9ff}}
+ html.dark details.summary > summary.cap{{background:#1c2b4a}}
+ html.dark details.summary > summary.cap:hover{{background:#25396b}}
+ .summary .sumrow{{display:flex;gap:32px;align-items:center;flex-wrap:wrap;padding:14px}}
  .summary .chartcol{{flex:0 0 auto}}
  .summary .donut{{width:148px;height:148px;display:block}}
  .summary .donut circle.ring{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
@@ -501,6 +508,11 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
      text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}}
    details.overview > summary::before{{content:""}}
    details.overview > summary .hint{{display:none}}
+   details.summary{{border:none}}
+   details.summary > summary.cap{{background:none !important;padding:4px 0;font-size:12px;
+     text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}}
+   details.summary > summary.cap::before{{content:""}}
+   .summary .sumrow{{padding:0}}
    /* no hover on paper - show every clustered file fanned out, permanently */
    details.overview svg.ovsvg .petal{{opacity:1 !important;transform:none !important;
      pointer-events:auto}}
@@ -827,10 +839,10 @@ def _summary_html(case: Case, rows: list[dict], label: str) -> str:
     chartcol = f"<div class='chartcol'>{chart}</div>" if chart else ""
 
     scope = f" &mdash; {html.escape(label)}" if label else ""
-    return (f"<section class='summary'>"
-            f"<div class='cap'>Report contents{scope}</div>"
+    return (f"<details class='summary'>"
+            f"<summary class='cap'>Report contents{scope}</summary>"
             f"<div class='sumrow'>{chartcol}"
-            f"<div class='datacol'><table>{''.join(out)}</table></div></div></section>")
+            f"<div class='datacol'><table>{''.join(out)}</table></div></div></details>")
 
 
 def _donut_svg(case: Case, by_cat: Counter, codes: list[int], n: int) -> str:
@@ -1152,12 +1164,12 @@ _REPORT_JS = """
   var snap = [];
   window.addEventListener('beforeprint', function(){
     snap = [];
-    document.querySelectorAll('details.meta, details.kindsec, details.overview').forEach(function(d){
+    document.querySelectorAll('details.meta, details.kindsec, details.overview, details.summary').forEach(function(d){
       snap.push(d.open); d.open = true;
     });
   });
   window.addEventListener('afterprint', function(){
-    document.querySelectorAll('details.meta, details.kindsec, details.overview').forEach(function(d, i){
+    document.querySelectorAll('details.meta, details.kindsec, details.overview, details.summary').forEach(function(d, i){
       d.open = snap[i];
     });
   });
