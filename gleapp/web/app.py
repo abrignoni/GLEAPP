@@ -238,6 +238,19 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                     file_types=(
                         "Hash stash (*.gleapp;*.csv)", "All files (*.*)"),
                 )
+            elif kind == "casefile":
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=("GLEAPP case file (*.gleapp)", "All files (*.*)"),
+                )
+            elif kind == "ingestfile":
+                res = win.create_file_dialog(
+                    webview.OPEN_DIALOG,
+                    file_types=(
+                        "Evidence file (*.zip;*.tar;*.tgz;*.tar.gz;*.tbz2;*.tar.bz2;"
+                        "*.txz;*.tar.xz;*.E01;*.e01;*.json)",
+                        "All files (*.*)"),
+                )
             else:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
@@ -292,6 +305,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def case_open():
         data = request.get_json(force=True)
         path = Path(data["path"])
+        if path.is_file():
+            path = path.parent   # picked the case.gleapp file itself, not its folder
         if not (path / "case.gleapp").exists():
             abort(404, description=f"no case.gleapp in {path}")
         _close_current()

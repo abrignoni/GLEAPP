@@ -2917,7 +2917,10 @@ async function pick(kind, label) {
   }
   return prompt(label || ({ folder: "Folder path:",
     archive: "Path to the extraction archive or acquisition (zip, tar, tar.gz/bz2/xz, E01):",
-    basemap: "Path to a basemap file (.pmtiles or .mbtiles):" }[kind]
+    basemap: "Path to a basemap file (.pmtiles or .mbtiles):",
+    casefile: "Path to the case.gleapp file:",
+    ingestfile: "Path to the evidence file (extraction archive, E01 acquisition, or .json job/VIC file):"
+    }[kind]
     || "Path to .json job file:")) || null;
 }
 function renderSources() {
@@ -2983,6 +2986,7 @@ async function pollJob() {
   setTimeout(pollJob, 500);   // idle / starting / early ingest
 }
 $("#openBrowse").onclick = async () => { const p = await pick("folder"); if (p) $("#openPath").value = p; };
+$("#openBrowseFile").onclick = async () => { const p = await pick("casefile"); if (p) $("#openPath").value = p; };
 $("#openGo").onclick = () => $("#openPath").value && openCase($("#openPath").value.trim());
 $("#newBrowse").onclick = async () => { const p = await pick("folder"); if (p) $("#newPath").value = p; };
 const ARCHIVE_RE = /\.(zip|tar|tgz|tbz2?|txz|tar\.(gz|bz2|xz))$/i;
@@ -2994,8 +2998,7 @@ function addSource(p) {
   renderSources();
 }
 $("#addFolder").onclick = async () => addSource(await pick("folder"));
-$("#addArchive").onclick = async () => addSource(await pick("archive"));
-$("#addSpec").onclick = async () => addSource(await pick("file"));
+$("#addFile").onclick = async () => addSource(await pick("ingestfile"));
 $("#srcTypeAdd").onclick = () => { addSource($("#srcTypePath").value); $("#srcTypePath").value = ""; };
 $("#srcTypePath").addEventListener("keydown", e => {
   if (e.key === "Enter") { addSource($("#srcTypePath").value); $("#srcTypePath").value = ""; }
