@@ -1090,9 +1090,10 @@ async function categorize(ids, cat) {
   ids.forEach(id => { const f = state.files.find(x => x.id === id); if (f) f.category = cat; });
   refreshTiles(ids);
   toast(`${cat ? catName(cat) : "Uncategorized"} → ${ids.length} file(s)`);
-  // working the Uncategorized backlog: move the cursor on to the next file
-  // (the categorized tiles stay put until you hit Refresh)
-  if (cat !== 0 && $("#fcat").value === "0") advancePast(ids);
+  // move the cursor on to the next file under whatever filter is active
+  // (the categorized tiles stay put until you hit Refresh) - not just when
+  // working the Uncategorized backlog specifically
+  if (cat !== 0) advancePast(ids);
   else if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
 }
 
