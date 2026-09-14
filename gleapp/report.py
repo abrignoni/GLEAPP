@@ -984,8 +984,12 @@ def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
                          f"<span class='k'>{html.escape(lbl)}</span>"
                          f"<span class='v'>{html.escape(str(val))}</span></div>")
     # the locator map sits inside the metadata drop, not under the thumbnail,
-    # so it only renders once the examiner opens that file's details
-    locimg = (f"<img class='locmap' src='{html.escape(loc_map, quote=True)}' "
+    # so it only renders once the examiner opens that file's details. It reuses
+    # the same click-to-open-full-size wiring as the main thumbnail (openImage
+    # only ever reads data-full, never re-renders anything) - the "full size" is
+    # the same 360x240 render the card crops to 150px tall, opened uncropped.
+    locimg = (f"<img class='locmap openable' src='{html.escape(loc_map, quote=True)}' "
+              f"data-full='{html.escape(loc_map, quote=True)}' data-name='location of {name}' "
               f"alt='location of {name}' title='drawn on the imported offline basemap'>"
               if loc_map else "")
     return (f"<div class='card' id='file-{d['id']}'>{img}{catbar}"
