@@ -1252,7 +1252,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                             # the global reference store (NSRL etc.) isn't tied
                             # to a case, so it's reachable before opening one too
                             "known_hash": {"global_sets": hstore["sets"],
-                                           "global_entries": hstore["entries"]}})
+                                           "global_entries": hstore["entries"]},
+                            # the app-wide default report-header logo - see
+                            # /api/settings {agency_logo} and /api/report/prefs
+                            "agency_logo": appconfig.get_agency_logo()})
         try:
             return jsonify(_context_payload(case))
         except Exception:  # noqa: BLE001 - a broken stat query must not blank the UI
@@ -1624,6 +1627,18 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             case.db.audit_log(case.examiner, "set_use_stash",
                               "on" if on else f"off, {cleared} stash hit(s) cleared")
             return jsonify({"ok": True, "use_stash": on, "cleared": cleared})
+        if "agency_logo" in body:
+            # the app-wide default report-header logo (reachable pre-case, from
+            # the launcher's Settings menu) - every case's report uses it
+            # unless that case sets its own, from its own Export dialog
+            # (see _REPORT_HEADER_KEYS / /api/report/prefs)
+            logo = body.get("agency_logo")
+            if logo and not (isinstance(logo, str) and logo.startswith("data:image/")):
+                abort(400, description="agency_logo must be a data:image/... URI")
+            if isinstance(logo, str) and len(logo) > 4_000_000:
+                abort(400, description="logo too large - pick a smaller image")
+            appconfig.set_agency_logo(logo or None)
+            return jsonify({"ok": True, "agency_logo": appconfig.get_agency_logo()})
         return jsonify({"ok": True})
 
     def _scope_where(body: dict) -> tuple[str, str]:
@@ -1663,6 +1678,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             except ValueError:
                 header = {}
         header.setdefault("examiner", case.examiner)
+        if not header.get("logo"):
+            # this case has never set its own - fall back to the app-wide
+            # default (☰ Settings on the launcher); exporting as-is adopts it
+            # as this case's own from then on, same as any other edit here
+            header["logo"] = appconfig.get_agency_logo() or ""
         raw_f = case.db.get_meta("report_fields")
         try:
             fields = json.loads(raw_f) if raw_f else None

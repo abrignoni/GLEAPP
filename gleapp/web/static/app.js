@@ -2895,7 +2895,7 @@ $("#btnVic").onclick = async () => {
 };
 
 /* ---------- launcher ---------- */
-const Lr = { native: false, sources: [] };
+const Lr = { native: false, sources: [], logo: null };
 function fmtAgo(ts) {
   const s = (Date.now() / 1000) - ts;
   if (s < 3600) return Math.round(s / 60) + "m ago";
@@ -2953,7 +2953,56 @@ function showLauncher(ctx) {
     $("#recentList").querySelectorAll("button").forEach(b =>
       b.onclick = () => openCase(b.dataset.path));
   }
+  Lr.logo = ctx.agency_logo || null;
+  setSettingsLogoPreview(Lr.logo);
 }
+
+/* ---------- agency logo: app-wide default, set from ☰ Settings on the
+   launcher. It lives in appconfig (not any case) and goes on every case's
+   report header unless that case sets its own from its own Export dialog. */
+function setSettingsLogoPreview(uri) {
+  const prev = $("#logoPrev"), clr = $("#logoClear");
+  prev.style.display = clr.style.display = uri ? "" : "none";
+  if (uri) prev.src = uri;
+}
+function openLogoDlg() {
+  $("#logoFile").value = "";
+  setSettingsLogoPreview(Lr.logo);
+  $("#logoDlg").style.display = "block";
+}
+$("#btnLogoLauncher").onclick = openLogoDlg;
+$("#logoFile").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (f.size > 3_000_000) return toast("Logo too large — pick an image under 3 MB");
+  const rd = new FileReader();
+  rd.onload = async () => {
+    Lr.logo = rd.result;
+    setSettingsLogoPreview(Lr.logo);
+    const r = await api("/api/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agency_logo: Lr.logo })
+    }).catch(() => ({ error: true }));
+    if (r.error) return toast(r.message || "Could not save the logo");
+    toast("Agency logo saved — used on every case's report unless overridden");
+  };
+  rd.readAsDataURL(f);
+});
+$("#logoClear").onclick = async () => {
+  Lr.logo = null;
+  $("#logoFile").value = "";
+  setSettingsLogoPreview(null);
+  await api("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agency_logo: null })
+  });
+  toast("Agency logo cleared");
+};
+$("#logoClose").onclick = () => $("#logoDlg").style.display = "none";
+$("#logoDlg").addEventListener("click", e => {
+  if (e.target.id === "logoDlg") $("#logoDlg").style.display = "none";
+});
+
 async function openCase(path) {
   const r = await api("/api/case/open", {
     method: "POST", headers: { "Content-Type": "application/json" },

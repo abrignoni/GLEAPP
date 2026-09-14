@@ -239,7 +239,7 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
   #hashImportDlg .box,#refDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #hashImportDlg h2,#refDlg h2{margin:0 0 4px;font-size:15px}
   #hashImportDlg .field,#refDlg .field{margin-top:10px}
@@ -253,9 +253,9 @@
   #caseSets .cs .x:hover,#refList .cs .x:hover{color:var(--danger)}
   .linkish:hover{text-decoration:underline}
   #stashWipeDlg{z-index:101}   /* above #stashDlg (bumped to 100 for the launcher) since it nests inside it */
-  #snapDlg .box,#histDlg .box,#stashDlg .box,#mapsDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #snapDlg .box,#histDlg .box,#stashDlg .box,#mapsDlg .box,#logoDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #histDlg .box{width:min(720px,94vw)}
-  #snapDlg h2,#histDlg h2,#stashDlg h2,#mapsDlg h2{margin:0 0 8px;font-size:15px}
+  #snapDlg h2,#histDlg h2,#stashDlg h2,#mapsDlg h2,#logoDlg h2{margin:0 0 8px;font-size:15px}
   #histList .histrow{padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}
   #histList .histrow .htop{display:flex;gap:8px;align-items:baseline}
   #histList .histrow time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -296,7 +296,7 @@
   #reportDlg .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
   #reportDlg .rfields{display:grid;grid-template-columns:1fr 1fr;gap:1px 12px;border:1px solid var(--line);border-radius:6px;padding:8px;max-height:180px;overflow:auto}
   #reportDlg .rfields label{margin:2px 0;font-size:12px}
-  #helpDlg,#refDlg,#mapsDlg,#stashDlg{z-index:100}   /* above the launcher (z-index 95) so Help / Reference data / Maps / Hash stash work pre-case */
+  #helpDlg,#refDlg,#mapsDlg,#stashDlg,#logoDlg{z-index:100}   /* above the launcher (z-index 95) so Help / Reference data / Maps / Hash stash / Agency logo work pre-case */
   #helpDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,94vw);height:88vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   #helpDlg .box>header{display:flex;flex-direction:row;align-items:center;gap:10px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);position:static}
   #helpDlg .box>header h2{margin:0;font-size:15px;flex:1}
@@ -591,11 +591,12 @@
   <div class="lhead">
     <h1>GLEAPP</h1>
     <span style="flex:1"></span>
-    <button class="btn" id="btnRefMenuLauncher" title="Offline maps, hash stash, and NSRL reference data — usable before opening a case">☰ Menu</button>
+    <button class="btn" id="btnRefMenuLauncher" title="Offline maps, hash stash, NSRL reference data, and the agency logo — usable before opening a case">☰ Menu</button>
     <div id="refMenuLauncher" class="hdrmenu">
       <button id="btnMapsLauncher" title="Offline maps: import a basemap file and see geolocated files on it. Nothing is fetched from the internet.">Maps</button>
       <button id="btnStashLauncher" title="Save the MD5s of your category 1–3 files to the local hash stash, and re-use them in future cases">Hash stash</button>
       <button id="btnRefStoreLauncher" title="Add or manage the shared NSRL / reference-hash store">Reference data (NSRL)</button>
+      <button id="btnLogoLauncher" title="The default logo on every case's report header, unless that case sets its own">Agency logo</button>
     </div>
     <button class="btn" id="btnHelpLauncher" title="Manual — features, filters, categories, shortcuts">Help / Manual</button>
   </div>
@@ -919,6 +920,21 @@
     <button class="btn sm" id="mapViewClose">Close</button></div>
   <div id="mapViewMap"></div>
 </div>
+
+<div id="logoDlg"><div class="box">
+  <h2>Agency logo</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:10px">
+    Shown on every case's report header unless that case sets its own from
+    its own Export dialog.
+  </div>
+  <div class="row" style="align-items:center">
+    <input type="file" id="logoFile" accept="image/*" style="flex:1">
+    <img id="logoPrev" style="max-height:48px;max-width:160px;display:none">
+    <button type="button" class="btn sm" id="logoClear" style="display:none">Clear</button>
+  </div>
+  <div class="row" style="margin-top:14px"><span style="flex:1"></span>
+    <button class="btn" id="logoClose">Done</button></div>
+</div></div>
 
 <div id="stashDlg"><div class="box">
   <h2>Local hash stash</h2>
