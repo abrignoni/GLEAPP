@@ -1127,6 +1127,7 @@ function toggleMeta(force) {
   state.metaOpen = force ?? !state.metaOpen;
   try { localStorage.setItem("gleapp.meta", state.metaOpen ? "1" : "0"); } catch (e) {}
   $("#meta").classList.toggle("hidden", !state.metaOpen);
+  $("#metaRz").classList.toggle("hidden", !state.metaOpen);
   if (detailMap) setTimeout(() => detailMap.resize(), 60);   // it may have been sized while hidden
   $("#btnMeta").style.borderColor = state.metaOpen ? "var(--accent)" : "";
   if (state.metaOpen && state.focus != null) showMeta(state.focus);
@@ -3095,6 +3096,44 @@ $("#aeGo").onclick = async () => {
     setTimeout(() => location.reload(), 900);
   });
 };
+
+/* ---------- resizable sidebars (drag the shared border to widen/narrow) ---------- */
+function makePaneResizable(paneSel, handleSel, { min, max, side, storageKey }) {
+  const pane = $(paneSel), handle = $(handleSel);
+  if (!pane || !handle) return;
+  const clamp = w => Math.max(min, Math.min(max, w));
+  const applyWidth = w => { pane.style.width = w + "px"; pane.style.flex = `0 0 ${w}px`; };
+  try {
+    const saved = +localStorage.getItem(storageKey);
+    if (saved) applyWidth(clamp(saved));
+  } catch (e) {}
+  handle.addEventListener("mousedown", e => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = pane.getBoundingClientRect().width;
+    handle.classList.add("drag");
+    document.body.classList.add("colresize");
+    const move = ev => {
+      const delta = side === "left" ? startX - ev.clientX : ev.clientX - startX;
+      applyWidth(clamp(Math.round(startW + delta)));
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      handle.classList.remove("drag");
+      document.body.classList.remove("colresize");
+      try { localStorage.setItem(storageKey, parseInt(pane.style.width, 10)); } catch (e) {}
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+  handle.addEventListener("dblclick", () => {
+    pane.style.width = ""; pane.style.flex = "";
+    try { localStorage.removeItem(storageKey); } catch (e) {}
+  });
+}
+makePaneResizable("aside.filters", "#filtersRz", { min: 180, max: 480, side: "right", storageKey: "gleapp.sidebarw" });
+makePaneResizable("#meta", "#metaRz", { min: 260, max: 700, side: "left", storageKey: "gleapp.detailw" });
 
 /* ---------- launcher ---------- */
 const Lr = { native: false, sources: [], recent: [], recentExpanded: false, logo: null };
