@@ -799,14 +799,18 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
 
         def _job() -> None:
             j = state["job"]
+
+            def progress(d, t):
+                j.update(done=d, total=t)
+
             try:
                 from .. import dedupe
-                j.update(message="Stacking exact duplicates…")
-                red = dedupe.stack_exact(case.db)
-                j.update(message="Stacking visual matches…")
-                vs = dedupe.stack_visual(case.db)
-                j.update(message="Clustering near-duplicates…")
-                cl = dedupe.cluster_near(case.db, threshold=12)
+                j.update(message="Stacking exact duplicates…", done=0, total=0)
+                red = dedupe.stack_exact(case.db, progress=progress)
+                j.update(message="Stacking visual matches…", done=0, total=0)
+                vs = dedupe.stack_visual(case.db, progress=progress)
+                j.update(message="Clustering near-duplicates…", done=0, total=0)
+                cl = dedupe.cluster_near(case.db, threshold=12, progress=progress)
                 case.db.audit_log(case.examiner, "redup", json.dumps(
                     {"redundant_duplicates": red, "visual_stacks": vs, "clusters": cl}))
                 j.update(running=False, stage="done", message="Done",

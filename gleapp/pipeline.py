@@ -581,20 +581,25 @@ def process(
         f"ok: {stats.processed} processed, {stats.skipped} skipped, "
         f"{stats.errors} errored")
 
-    # Known-hash matching (needs all hashes present).
+    # Known-hash matching (needs all hashes present). Each of these stages
+    # reports its own done/total through the same `progress` callback the
+    # per-file loop above used - the caller resets to that stage's own scale,
+    # so the bar sweeps 0->100% again for each stage in turn rather than
+    # sitting still (or pegged at the previous stage's 100%) while it runs.
     stats.hashset_hits = run_stage(
         "hashset_match", "Matching known-hash lists…",
-        lambda: rematch_hashes(case)) or 0
+        lambda: rematch_hashes(case, progress=progress)) or 0
 
     stats.redundant_duplicates = run_stage(
         "stack_exact", "Stacking exact duplicates…",
-        lambda: dedupe.stack_exact(case.db)) or 0
+        lambda: dedupe.stack_exact(case.db, progress=progress)) or 0
     stats.visual_stacks = run_stage(
         "stack_visual", "Stacking visual matches…",
-        lambda: dedupe.stack_visual(case.db)) or 0
+        lambda: dedupe.stack_visual(case.db, progress=progress)) or 0
     stats.clusters = run_stage(
         "cluster_near", "Clustering near-duplicates…",
-        lambda: dedupe.cluster_near(case.db, threshold=phash_cluster_threshold)) or 0
+        lambda: dedupe.cluster_near(case.db, threshold=phash_cluster_threshold,
+                                    progress=progress)) or 0
 
     # screening ran inline with processing (screen=True) - record it so the UI
     # doesn't keep offering "Run screening" for a collection that's already done
