@@ -3421,9 +3421,11 @@ function renderSourcePanel(list) {
              : "Delete the copies and read from the archive on demand again. Refused unless the archive still holds every registered file."}">Drop copies</button>`
       : `<button class="btn sm" data-stage="${esc(s.name)}"${ok ? "" : " disabled"}
            title="Copy every registered file out of the archive into the case, so the case no longer needs it.">Copy into case</button>`;
-    return `<div style="margin:3px 0"><b title="${esc(s.path)}">${esc(s.name)}</b>
-      <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${origin}${state}
-      ${vols}<div style="margin-top:2px">${btn}</div></div>`;
+    return `<div style="margin:3px 0"><details class="srcd">
+      <summary><b title="${esc(s.path)}">${esc(s.name)}</b>
+        <span class="muted">· ${(s.files || 0).toLocaleString()} files · ${mode}</span>${state}</summary>
+      <div class="srcd-body">${origin}${vols}</div>
+      </details><div style="margin-top:2px">${btn}</div></div>`;
   }).join("");
   const post = (url, body) => api(url, {
     method: "POST", headers: { "Content-Type": "application/json" },

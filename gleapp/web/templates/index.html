@@ -71,6 +71,12 @@
   aside.filters .fck{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--fg);margin:7px 0 0}
   aside.filters .fnote{font-size:11px;color:var(--muted);margin-top:5px;word-break:break-word}
   aside.filters .fnote:empty{display:none}
+  aside.filters .srcd{margin:3px 0}
+  aside.filters .srcd > summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;flex-wrap:wrap;gap:4px}
+  aside.filters .srcd > summary::-webkit-details-marker{display:none}
+  aside.filters .srcd > summary::before{content:"\25b8";font-size:9px;color:var(--muted);transition:transform .12s;flex:none}
+  aside.filters .srcd[open] > summary::before{transform:rotate(90deg)}
+  aside.filters .srcd-body{padding:2px 0 0 13px}
   aside.filters .fbtns{display:flex;gap:5px;margin-top:8px}
   aside.filters .fbtns .btn{flex:1}
   aside.filters .btn.block{display:block;width:100%;margin-top:8px}
