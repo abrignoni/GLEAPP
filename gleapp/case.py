@@ -97,7 +97,19 @@ class Case:
         self.close()
 
 
-def open_case(path: str | Path, *, create: bool = False, examiner: str = "examiner") -> Case:
+def open_case(path: str | Path, *, create: bool = False, examiner: str | None = None) -> Case:
+    """Open (or create) the case at ``path``.
+
+    ``examiner`` is only ever *written* when the caller explicitly supplies
+    one - at creation (the name typed into the New Case form / ``--examiner``)
+    or a future "change examiner" action. Every other open - the launcher,
+    recent cases, restoring a snapshot, a CLI command with no ``--examiner`` -
+    passes nothing and gets back whatever name is already stored, instead of
+    silently resetting it to the literal placeholder "examiner". That silent
+    reset was the actual bug behind audit-log entries alternating between the
+    examiner's real name and the word "examiner": almost every re-open path
+    never supplied one, so it clobbered the stored name on every open.
+    """
     root = Path(path).resolve()
     db_path = root / CASE_DB
     if not db_path.exists() and not create:
@@ -108,7 +120,10 @@ def open_case(path: str | Path, *, create: bool = False, examiner: str = "examin
     db = CaseDB(db_path)
     if create and db.get_meta("case_name") is None:
         db.set_meta("case_name", root.name)
-    db.set_meta("examiner", examiner)
+    if examiner:
+        db.set_meta("examiner", examiner)
+    else:
+        examiner = db.get_meta("examiner") or "examiner"
     return Case(root=root, db=db, examiner=examiner)
 
 

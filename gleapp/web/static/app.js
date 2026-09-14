@@ -2676,12 +2676,40 @@ $("#btnSnapshot").onclick = openSnapDlg;
 // Actions written by a background run, vs. an examiner edit. Anything not listed
 // here is treated as an edit for the "Show" filter.
 const HIST_RUN_ACTIONS = new Set([
-  "ingest", "ingest-archive", "process", "screen_pass", "rematch_hashes",
+  "ingest", "ingest-archive", "process", "screen_pass", "rematch_hashes", "redup",
   "hashset_import", "hashset_remove", "import_vic", "export_vic",
   "carve-source", "stage-source", "unstage-source", "relink-source",
   "snapshot", "restore_snapshot",
 ]);
+// GLEAPP-triggered actions (a timer, a close-time save) read this exact actor
+// string from the backend (gleapp.db.TOOL_ACTOR) - anything else is a name an
+// examiner typed at some point, however long ago.
+const HIST_TOOL_ACTOR = "GLEAPP (automatic)";
+// Action code -> a name worth reading, rather than the internal code.
+const ACTION_LABELS = {
+  ingest: "Ingest", "ingest-archive": "Ingest (archive)", process: "Process",
+  screen_pass: "Face / skin screening", rematch_hashes: "Re-checked known hashes",
+  hashset_import: "Hash set imported", hashset_remove: "Hash set removed",
+  import_vic: "Project VIC imported", export_vic: "Project VIC exported",
+  "carve-source": "Carved for deleted media", "stage-source": "Copied into case",
+  "unstage-source": "Copies dropped", "relink-source": "Source relinked",
+  "recover-deleted": "Recovered deleted records", "expand-archives": "Archives expanded",
+  basemap: "Basemap set", snapshot: "Snapshot", restore_snapshot: "Snapshot restored",
+  categorize: "Categorized", category_add: "Category added",
+  category_update: "Category updated", category_delete: "Category deleted",
+  category_reorder: "Categories reordered", redup: "Re-scanned for duplicates",
+  set_timezone: "Timezone changed", set_use_stash: "Hash stash matching toggled",
+  stash_add: "Added to hash stash", stash_clear: "Hash stash cleared",
+  stash_merge: "Hash stash merged",
+};
+// process()'s "scope" -> a name worth reading, rather than the internal reason.
+const PROCESS_SCOPE_LABELS = {
+  ingest: "Initial processing", "retry-errors": "Retried failed files",
+  "expand-archives": "Processed files from expanded archives",
+  "carve-source": "Processed recovered/carved files",
+};
 // A Python dict repr (single quotes, None/True/False) -> object, best effort.
+// Only still needed for "process" rows logged before it switched to real JSON.
 function _parsePyRepr(s) {
   if (typeof s !== "string" || s[0] !== "{") return null;
   try {
@@ -2690,9 +2718,23 @@ function _parsePyRepr(s) {
       .replace(/\bTrue\b/g, "true").replace(/\bFalse\b/g, "false"));
   } catch (_e) { return null; }
 }
+// A snapshot filename embeds the moment it was taken: case-YYYYMMDD-HHMMSS-mmm[-tag].gleapp
+function _snapWhen(name) {
+  const m = /^case-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name || "");
+  if (!m) return null;
+  const [, Y, Mo, D, H, Mi, S] = m.map(Number);
+  const d = new Date(Y, Mo - 1, D, H, Mi, S);
+  return isNaN(d) ? null : d.toLocaleString();
+}
+const SNAP_REASONS = {
+  auto: "automatic, timed", close: "automatic, on closing the case",
+  "pre-restore": "automatic, safety copy before a restore", manual: "manual",
+};
 function _histDetail(e) {
-  const d = _parsePyRepr(e.detail);
+  let d = null;
+  try { d = e.detail ? JSON.parse(e.detail) : null; } catch (_e) { d = _parsePyRepr(e.detail); }
   if (e.action === "process" && d) {
+    const scopeLabel = PROCESS_SCOPE_LABELS[d.scope] || null;
     const bits = [
       `${d.discovered ?? "?"} files`,
       `${d.processed ?? 0} processed`,
@@ -2702,8 +2744,9 @@ function _histDetail(e) {
       d.redundant_duplicates ? `${d.redundant_duplicates} exact dups` : null,
       d.visual_stacks ? `${d.visual_stacks} visual stacks` : null,
       d.clusters ? `${d.clusters} clusters` : null,
+      d.screened === false ? "screening skipped" : null,
     ].filter(Boolean);
-    let html = `<div class="hdetail">${esc(bits.join(" · "))}</div>`;
+    let html = `<div class="hdetail">${scopeLabel ? `<b>${esc(scopeLabel)}</b> — ` : ""}${esc(bits.join(" · "))}</div>`;
     const stages = d.stages || {};
     const keys = Object.keys(stages);
     if (keys.length) {
@@ -2715,6 +2758,63 @@ function _histDetail(e) {
       }).join("") + `</div>`;
     }
     return html;
+  }
+  if (e.action === "snapshot" && d) {
+    const when = _snapWhen(d.name);
+    const bits = [fmtSize(d.size) || null, SNAP_REASONS[d.reason] || null,
+      d.label ? `labeled "${d.label}"` : null].filter(Boolean);
+    return `<div class="hdetail">${esc((when ? "Saved " + when : d.name) +
+      (bits.length ? " · " + bits.join(", ") : ""))}</div>`;
+  }
+  if (e.action === "restore_snapshot" && d) {
+    const when = _snapWhen(d.name);
+    return `<div class="hdetail">${esc("Restored the " +
+      (when ? when + " " : "") + "snapshot")}</div>`;
+  }
+  if (e.action === "categorize" && d) {
+    return `<div class="hdetail" title="${esc((d.ids || []).join(", "))}">`
+      + `${esc(`Categorized ${d.count ?? (d.ids || []).length} file(s) as ${d.label ?? d.category}`)}</div>`;
+  }
+  if (e.action === "category_add" && d) {
+    return `<div class="hdetail">${esc(`Added category "${d.name}" (code ${d.code})`)}</div>`;
+  }
+  if (e.action === "category_update" && d) {
+    const changed = Object.keys(d.changed || {});
+    return `<div class="hdetail">${esc(`Updated category "${d.name}"`
+      + (changed.length ? " — " + changed.join(", ") + " changed" : ""))}</div>`;
+  }
+  if (e.action === "category_delete" && d) {
+    return `<div class="hdetail">${esc(`Deleted category "${d.name}"`
+      + (d.reassigned_to_uncategorized ? " (its files moved to Uncategorized)" : ""))}</div>`;
+  }
+  if (e.action === "category_reorder" && d) {
+    return `<div class="hdetail">${esc("New order: " + (d.order || []).join(" → "))}</div>`;
+  }
+  if (e.action === "ingest" && d) {
+    const srcs = (d.sources || []).map(s => `${s.name} (${s.kind})`).join(", ");
+    return `<div class="hdetail">${esc(`${d.count ?? "?"} file(s) from `
+      + `${(d.sources || []).length} source(s)` + (srcs ? " — " + srcs : ""))}</div>`;
+  }
+  if (e.action === "redup" && d) {
+    const bits = [
+      d.redundant_duplicates ? `${d.redundant_duplicates} exact dups` : null,
+      d.visual_stacks ? `${d.visual_stacks} visual stacks` : null,
+      d.clusters ? `${d.clusters} clusters` : null,
+    ].filter(Boolean);
+    return `<div class="hdetail">${esc(bits.length ? bits.join(" · ") : "No duplicates found")}</div>`;
+  }
+  if (e.action === "hashset_import" && d) {
+    const bits = [`${d.added ?? 0} entries`, d.source ? `from ${d.source}` : null,
+      d.photodna ? `${d.photodna} PhotoDNA (not matched)` : null].filter(Boolean);
+    return `<div class="hdetail">${esc(`Imported "${d.name}" (${d.kind}) — ${bits.join(", ")}`)}</div>`;
+  }
+  if (e.action === "hashset_remove" && d) {
+    return `<div class="hdetail">${esc(`Removed "${d.name}" (${d.kind}) — `
+      + `${d.files_unflagged ?? 0} file(s) unflagged`)}</div>`;
+  }
+  if (e.action === "screen_pass" && d) {
+    return `<div class="hdetail">${esc(`Screened ${d.count ?? "?"} file(s) for `
+      + `faces / skin tone (${d.backend || "?"}) — run on demand`)}</div>`;
   }
   return e.detail ? `<div class="hdetail">${esc(e.detail)}</div>` : "";
 }
@@ -2731,14 +2831,20 @@ async function refreshHistList() {
   const f = $("#histFilter").value;
   const shown = rows.filter(e => _histMatch(e, f));
   if (!shown.length) { box.textContent = rows.length ? "Nothing matches this filter." : "No history recorded yet."; return; }
-  box.innerHTML = shown.map(e => `<div class="histrow">
+  box.innerHTML = shown.map(e => {
+    const auto = e.actor === HIST_TOOL_ACTOR;
+    const actorHtml = auto
+      ? `<span class="hactor auto" title="GLEAPP did this on its own - not a click">⚙ automatic</span>`
+      : `<span class="hactor">${esc(e.actor || "")}</span>`;
+    return `<div class="histrow">
     <div class="htop">
       <time>${esc(fmtEpoch(e.ts))}</time>
-      <span class="hact">${esc(e.action)}</span>
-      <span class="hactor">${esc(e.actor || "")}</span>
+      <span class="hact">${esc(ACTION_LABELS[e.action] || e.action)}</span>
+      ${actorHtml}
     </div>
     ${_histDetail(e)}
-  </div>`).join("");
+  </div>`;
+  }).join("");
 }
 function openHistDlg() {
   $("#histDlg").style.display = "block";
@@ -2883,16 +2989,93 @@ $("#btnClose").onclick = async () => {
   if (r && r.error) { setSaveState("saved"); return toast(r.message || "Could not close the case"); }
   location.reload();   // boot() sees no case -> shows the launcher
 };
-$("#btnVic").onclick = async () => {
-  const only = confirm(
-    "OK  = export ALL media (categorized + not)\n" +
-    "Cancel = export only the media you have categorized");
+async function runVicExport(onlyCategorized) {
+  $("#vicExportDlg").style.display = "none";
   const r = await api("/api/report", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ format: ["vic"], only_categorized: !only })
+    body: JSON.stringify({ format: ["vic"], only_categorized: onlyCategorized })
   });
   if (r.error) toast(r.message || "VIC export failed");
   else toast("Project VIC file written: " + (r.written[0] || r.dir));
+}
+$("#btnVic").onclick = () => { $("#vicExportDlg").style.display = "block"; };
+$("#vicExportAll").onclick = () => runVicExport(false);
+$("#vicExportCatOnly").onclick = () => runVicExport(true);
+$("#vicExportCancel").onclick = () => $("#vicExportDlg").style.display = "none";
+$("#vicExportDlg").addEventListener("click", e => {
+  if (e.target.id === "vicExportDlg") $("#vicExportDlg").style.display = "none";
+});
+
+/* ---------- add evidence to an already-open case ---------- */
+// Same source kinds/options as the launcher's "New case" screen, but posted
+// straight to the already-open case's /api/case/ingest (that endpoint has
+// always accepted an ingest on a case with files in it already - only the
+// launcher exposed a way to call it). Kept as its own small state object
+// rather than reusing Lr.sources, which belongs to the case-less launcher.
+const AE = { sources: [] };
+function aeAddSource(p) {
+  p = (p || "").trim().replace(/^["']|["']$/g, "");
+  if (!p) return;
+  const kind = /\.json$/i.test(p) ? "spec" : ARCHIVE_RE.test(p) ? "archive" : "folder";
+  if (!AE.sources.some(s => s.path === p)) AE.sources.push({ kind, path: p });
+  aeRenderSources();
+}
+function aeRenderSources() {
+  const icon = { spec: "\u{1F4C4} ", archive: "\u{1F4E6} " };   // 📄  📦  📁
+  $("#aeList").innerHTML = AE.sources.map((s, i) =>
+    `<div class="s"><span>${icon[s.kind] || "\u{1F4C1} "}${esc(s.path)}</span>
+     <b data-rm="${i}" style="cursor:pointer;color:var(--danger)">×</b></div>`).join("");
+  $("#aeList").querySelectorAll("[data-rm]").forEach(b =>
+    b.onclick = () => { AE.sources.splice(+b.dataset.rm, 1); aeRenderSources(); });
+}
+$("#aeAddFolder").onclick = async () => aeAddSource(await pick("folder"));
+$("#aeAddFile").onclick = async () => aeAddSource(await pick("ingestfile"));
+$("#aeAdd").onclick = () => { aeAddSource($("#aeTypePath").value); $("#aeTypePath").value = ""; };
+$("#aeTypePath").addEventListener("keydown", e => {
+  if (e.key === "Enter") { aeAddSource($("#aeTypePath").value); $("#aeTypePath").value = ""; }
+});
+$("#aeKf").addEventListener("input", () => $("#aeKfv").textContent = $("#aeKf").value);
+$("#btnAddEvidence").onclick = () => {
+  AE.sources = [];
+  aeRenderSources();
+  $("#aeTypePath").value = "";
+  $("#aeScreen").checked = true;
+  $("#aeStage").checked = false;
+  $("#aeCarve").checked = false;
+  $("#aeKf").value = 6; $("#aeKfv").textContent = "6";
+  $("#aeGo").disabled = false;
+  $("#addEvDlg").style.display = "block";
+};
+$("#aeCancel").onclick = () => $("#addEvDlg").style.display = "none";
+$("#addEvDlg").addEventListener("click", e => {
+  if (e.target.id === "addEvDlg") $("#addEvDlg").style.display = "none";
+});
+$("#aeGo").onclick = async () => {
+  if (!AE.sources.length) return toast("Add at least one folder, archive, E01, or JSON file first");
+  const specs = AE.sources.filter(s => s.kind === "spec").map(s => s.path);
+  // folders and archives both go through parse_source_spec server-side, which
+  // detects an archive (or E01) from its bytes and ingests it as one.
+  const folders = AE.sources.filter(s => s.kind === "folder" || s.kind === "archive")
+    .map(s => ({ name: s.path.split(/[\\/]/).filter(Boolean).pop(), path: s.path }));
+  $("#aeGo").disabled = true;
+  const ing = await api("/api/case/ingest", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      spec: specs[0] || null, sources: folders,
+      options: { screen: $("#aeScreen").checked, keyframes: +$("#aeKf").value,
+                 stage: $("#aeStage").checked, carve: $("#aeCarve").checked }
+    })
+  }).catch(() => ({ error: true, message: "request failed" }));
+  if (ing.error) { $("#aeGo").disabled = false; return toast(ing.message || "Could not start ingest"); }
+  $("#addEvDlg").style.display = "none";
+  toast(`Ingesting ${ing.sources.length} source(s)…`);
+  trackJob("#aeInfo", "#taskProg", "Adding evidence", (ok, j) => {
+    if (!ok) return;
+    const added = j.stats?.discovered ?? 0;
+    $("#aeInfo").textContent = "";
+    toast(`Added evidence — ${added.toLocaleString()} file(s) processed. Reloading…`);
+    setTimeout(() => location.reload(), 900);
+  });
 };
 
 /* ---------- add evidence to an already-open case ---------- */

@@ -134,7 +134,7 @@ def cmd_hashset(args: argparse.Namespace) -> int:
     else:
         case = open_case(args.case, create=True, examiner=args.examiner)
         hs_id, added = hashdb.import_hashset(
-            case.db, src, name=name, kind=args.kind)
+            case.db, src, name=name, kind=args.kind, actor=case.examiner)
         _p(f"Imported hash set '{name}' into the case: {added:,} entries.")
         note = hashdb.photodna_note(hashdb.algo_counts(case.db.conn, hs_id))
         case.close()
@@ -430,7 +430,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="gleapp", description="GLEAPP media forensics toolkit")
     ap.add_argument("--version", action="version", version=f"GLEAPP {__version__}")
     ap.add_argument("-c", "--case", default="case", help="case directory (default: ./case)")
-    ap.add_argument("--examiner", default="examiner", help="examiner name for the audit log")
+    ap.add_argument("--examiner", default=None,
+                    help="examiner name for the audit log (default: keep the case's "
+                         "stored name, or 'examiner' for a brand-new case)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("init", help="create an empty case")

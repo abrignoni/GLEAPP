@@ -141,6 +141,7 @@ def import_hashset(
     *,
     name: str | None = None,
     kind: str = "known",
+    actor: str = "examiner",
 ) -> tuple[int, int]:
     """Import a hash list into the case. Returns (hashset_id, entries_added)."""
     path = Path(path)
@@ -156,7 +157,7 @@ def import_hashset(
 
     added = db.add_hashset_entries(hs_id, entries)
     note = photodna_note(algo_counts(db.conn, hs_id))
-    db.audit_log("system", "import_hashset",
+    db.audit_log(actor, "import_hashset",
                  f"{name}: {added} entries from {path.name}"
                  + (f". {note}" if note else ""))
     return hs_id, added

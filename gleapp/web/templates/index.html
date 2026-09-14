@@ -239,10 +239,10 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#addEvDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
-  #hashImportDlg .box,#refDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #hashImportDlg .box,#refDlg .box,#vicExportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #addEvDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
-  #hashImportDlg h2,#refDlg h2,#addEvDlg h2{margin:0 0 4px;font-size:15px}
+  #hashImportDlg h2,#refDlg h2,#vicExportDlg h2,#addEvDlg h2{margin:0 0 4px;font-size:15px}
   #hashImportDlg .field,#refDlg .field,#addEvDlg .field{margin-top:10px}
   #hashImportDlg .field label,#refDlg .field>label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
   #hashImportDlg input[type=text],#refDlg input[type=text],#addEvDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
@@ -263,6 +263,7 @@
   #histList .histrow time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   #histList .histrow .hact{font-weight:600}
   #histList .histrow .hactor{color:var(--muted)}
+  #histList .histrow .hactor.auto{color:var(--accent);font-style:italic}
   #histList .histrow .hdetail{margin-top:3px;color:var(--fg);word-break:break-word}
   #histList .histrow .hstages{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px}
   #histList .hpill{padding:1px 7px;border-radius:9px;font-size:10px;border:1px solid var(--line);background:var(--panel2)}
@@ -839,6 +840,21 @@
     <span style="flex:1"></span>
     <button class="btn" id="aeCancel">Cancel</button>
     <button class="btn" id="aeGo" style="border-color:var(--accent)">Add &amp; process</button>
+  </div>
+</div></div>
+
+<div id="vicExportDlg"><div class="box">
+  <h2>Export Project VIC</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:12px">
+    Writes your categories back into the original Project VIC JSON.
+  </div>
+  <div class="field" style="display:flex;flex-direction:column;gap:6px">
+    <button class="btn" id="vicExportAll" style="border-color:var(--accent)">Export all media (categorized + not)</button>
+    <button class="btn" id="vicExportCatOnly">Export only the media you have categorized</button>
+  </div>
+  <div class="row" style="margin-top:14px;display:flex;gap:6px">
+    <span style="flex:1"></span>
+    <button class="btn" id="vicExportCancel">Cancel</button>
   </div>
 </div></div>
 
