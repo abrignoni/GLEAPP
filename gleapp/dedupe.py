@@ -25,18 +25,22 @@ def _write_col(db: CaseDB, col: str, pairs: list[tuple[int | None, int]]) -> Non
         db.conn.commit()
 
 
-def stack_exact(db: CaseDB) -> int:
+def stack_exact(db: CaseDB, *, progress=None) -> int:
     """Group files with identical SHA-256 (fall back to MD5) into stacks.
 
     ``stack_id`` is set to the lowest ``files.id`` in the group (the "stack
     head").  Returns the number of redundant duplicates found.
     """
+    where = "sha256 IS NOT NULL OR md5 IS NOT NULL"
+    total = db.conn.execute(f"SELECT COUNT(*) n FROM files WHERE {where}").fetchone()["n"]
     groups: dict[str, list[int]] = defaultdict(list)
-    for r in db.conn.execute(
-        "SELECT id, sha256, md5 FROM files WHERE sha256 IS NOT NULL OR md5 IS NOT NULL"
-    ):
+    for i, r in enumerate(db.conn.execute(
+        f"SELECT id, sha256, md5 FROM files WHERE {where}"
+    ), 1):
         key = r["sha256"] or f"md5:{r['md5']}"
         groups[key].append(r["id"])
+        if progress and (i % 500 == 0 or i == total):
+            progress(i, total)
 
     updates: list[tuple[int, int]] = []
     redundant = 0
@@ -59,7 +63,7 @@ def _rows_for_grouping(db: CaseDB) -> list:
     ).fetchall()
 
 
-def _perceptual_groups(rows, threshold: int) -> dict[int, list[int]]:
+def _perceptual_groups(rows, threshold: int, *, progress=None) -> dict[int, list[int]]:
     """Union-find over perceptual similarity, via LSH banding on the pHash.
 
     A pair only merges when **both** pHash and dHash are within ``threshold``
@@ -111,15 +115,19 @@ def _perceptual_groups(rows, threshold: int) -> dict[int, list[int]]:
         for bi in range(_BANDS):
             buckets[(bi, hx[bi * 2:bi * 2 + 2])].append(fid)
 
-    for ids in buckets.values():
-        if len(ids) < 2 or len(ids) > _MAX_BUCKET:
-            continue
-        for i in range(len(ids)):
-            a = ids[i]
-            for j in range(i + 1, len(ids)):
-                b = ids[j]
-                if find(a) != find(b) and close(a, b):
-                    union(a, b)
+    # the pairwise comparisons below are where the time actually goes on a
+    # large case, so progress is reported per-bucket rather than per-row
+    total_buckets = len(buckets)
+    for bi, ids in enumerate(buckets.values(), 1):
+        if len(ids) >= 2 and len(ids) <= _MAX_BUCKET:
+            for i in range(len(ids)):
+                a = ids[i]
+                for j in range(i + 1, len(ids)):
+                    b = ids[j]
+                    if find(a) != find(b) and close(a, b):
+                        union(a, b)
+        if progress:
+            progress(bi, total_buckets)
 
     out: dict[int, list[int]] = defaultdict(list)
     for fid in parent:
@@ -127,9 +135,9 @@ def _perceptual_groups(rows, threshold: int) -> dict[int, list[int]]:
     return out
 
 
-def cluster_near(db: CaseDB, *, threshold: int = 10) -> int:
+def cluster_near(db: CaseDB, *, threshold: int = 10, progress=None) -> int:
     """Looser near-duplicate clusters (browsable via the cluster filter)."""
-    groups = _perceptual_groups(_rows_for_grouping(db), threshold)
+    groups = _perceptual_groups(_rows_for_grouping(db), threshold, progress=progress)
 
     updates: list[tuple[int | None, int]] = []
     propagate: list[tuple[int, int]] = []
@@ -152,7 +160,7 @@ def cluster_near(db: CaseDB, *, threshold: int = 10) -> int:
     return n
 
 
-def stack_visual(db: CaseDB, *, threshold: int = 6) -> int:
+def stack_visual(db: CaseDB, *, threshold: int = 6, progress=None) -> int:
     """Tight "same picture to the eye" stacks.
 
     Groups exact-stack heads (and unstacked files) whose pHash differs by at most
@@ -161,7 +169,7 @@ def stack_visual(db: CaseDB, *, threshold: int = 6) -> int:
     ``vstack_id`` is set on every member (including files exact-stacked under a
     head).  Returns the number of visual stacks that merge >1 distinct image.
     """
-    groups = _perceptual_groups(_rows_for_grouping(db), threshold)
+    groups = _perceptual_groups(_rows_for_grouping(db), threshold, progress=progress)
 
     updates: list[tuple[int | None, int]] = []
     propagate: list[tuple[int, int]] = []
