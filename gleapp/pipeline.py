@@ -10,6 +10,7 @@ fully processed are skipped unless ``force=True``.
 from __future__ import annotations
 
 import base64
+import json
 import struct
 import threading
 import time
@@ -26,6 +27,12 @@ from .hashing import crypto_hashes, perceptual_hashes
 from .ingest import scan, sniff_kind
 from .media import extract_video_isolated, make_image_thumb
 from .metadata import extract_image
+
+# process()'s "reason" values, purely to label its audit-log entry so the
+# processing-history panel can tell an ingest-time run apart from a scoped
+# rerun over the same case. The default "" (an empty/unscoped `where`) means
+# a normal ingest-time run and is shown as "ingest".
+PROCESS_REASONS = ("retry-errors", "expand-archives", "carve-source")
 
 
 @dataclass
@@ -92,8 +99,13 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
                 if progress:
                     progress(n)
     case.db.commit()
-    case.db.audit_log(case.examiner, "ingest",
-                      f"{n} files from {len(sources)} source(s)")
+    case.db.audit_log(case.examiner, "ingest", json.dumps({
+        "count": n,
+        # the source's own declared name only - never its path or basename,
+        # which is the evidence folder/file's real name on the examiner's own
+        # disk (this is also written into the LAVA export; see test_export_paths)
+        "sources": [{"name": s.name, "kind": s.kind} for s in sources],
+    }))
 
     # A .zip / .tar / .gz sitting inside a source is registered as a container;
     # open it now so its media is processed in the same pass.
@@ -292,8 +304,8 @@ def screen_pass(case: Case, *, workers: int = 4, progress=None) -> int:
                     progress(n[0], total)
     case.db.commit()
     case.db.set_meta("screened_at", str(time.time()))
-    case.db.audit_log(case.examiner, "screen_pass",
-                      f"{n[0]} files, backend={detect.face_backend()}")
+    case.db.audit_log(case.examiner, "screen_pass", json.dumps(
+        {"count": n[0], "backend": detect.face_backend()}))
     return n[0]
 
 
@@ -483,6 +495,7 @@ def process(
     where: str = "",
     progress=None,
     stage_cb=None,
+    reason: str = "",   # why this run happened, for the audit log - see PROCESS_REASONS
 ) -> RunStats:
     stats = RunStats()
 
@@ -589,5 +602,8 @@ def process(
         case.db.set_meta("screened_at", str(time.time()))
 
     case.db.set_meta("last_run", str(time.time()))
-    case.db.audit_log(case.examiner, "process", str(stats.as_dict()))
+    detail = stats.as_dict()
+    detail["scope"] = reason or "ingest"
+    detail["screened"] = screen
+    case.db.audit_log(case.examiner, "process", json.dumps(detail))
     return stats

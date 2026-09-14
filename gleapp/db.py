@@ -16,6 +16,13 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 16
 
+# audit_log actor for anything the app itself triggered - a background
+# timer, a close-time save, a safety-net copy before a restore - as opposed
+# to an examiner's own click. Never used for an action an examiner asked for
+# directly, even if GLEAPP carries it out on their behalf (e.g. a manual
+# snapshot, or restoring one).
+TOOL_ACTOR = "GLEAPP (automatic)"
+
 # Perceptual / robust hash algorithms that can appear in ``hashset_entries.algo``.
 #
 # ``phash`` is GLEAPP's own perceptual hash (imagehash's 64-bit pHash, 16 hex
@@ -698,9 +705,12 @@ class CaseDB:
             self.conn.commit()
 
     def iter_audit(self, limit: int | None = None) -> list[dict[str, Any]]:
-        """The examiner-action log, newest first. Each row is
-        ``{ts, actor, action, detail}``; ``detail`` is free text, and for a
-        ``process`` run it is the ``RunStats`` dict repr."""
+        """The processing-history log, newest first. Each row is
+        ``{ts, actor, action, detail}``. ``actor`` is either the examiner's
+        name or ``TOOL_ACTOR`` for something GLEAPP did on its own (a timed
+        auto-snapshot, a close-time save). ``detail`` is a JSON object for
+        the actions the history panel renders specially (see app.js
+        _histDetail) and free text for everything else."""
         sql = "SELECT ts, actor, action, detail FROM audit ORDER BY ts DESC, id DESC"
         if limit is not None:
             sql += f" LIMIT {int(limit)}"

@@ -395,6 +395,12 @@ def test_hashset_import_endpoint_flags_and_removes(tmp_path):
             break
         time.sleep(0.02)
 
+    import_detail = json.loads(next(
+        row["detail"] for row in cl.get("/api/audit").get_json()
+        if row["action"] == "hashset_import"))
+    assert import_detail == {"name": "CyberTip 9999", "kind": "known", "added": 2,
+                             "source": lst.name, "photodna": 0}
+
     rows = {x["rel_path"]: dict(x) for x in c.db.iter_files()}
     assert rows["hit.jpg"]["hashset_hit"] == "CyberTip 9999"
     assert rows["hit.jpg"]["hashset_kind"] == "known"
@@ -419,6 +425,11 @@ def test_hashset_import_endpoint_flags_and_removes(tmp_path):
     assert rr.status_code == 200 and rr.get_json()["rematched"] is False
     assert dict(c.db.iter_files("rel_path='hit.jpg'")[0])["hashset_hit"] is None
     assert cl.get("/api/hashsets/case").get_json() == []
+
+    remove_detail = json.loads(next(
+        row["detail"] for row in cl.get("/api/audit").get_json()
+        if row["action"] == "hashset_remove"))
+    assert remove_detail == {"name": "CyberTip 9999", "kind": "known", "files_unflagged": 1}
 
 
 def test_local_hash_stash(tmp_path):
@@ -1501,6 +1512,283 @@ def test_webapp_snapshot_endpoint(tmp_path, evidence):
     assert r["ok"] and Path(r["path"]).exists()
     listed = client.get("/api/snapshots").get_json()
     assert any("manual-test" in s["name"] for s in listed)
+
+
+def test_examiner_name_survives_reopening_a_case(tmp_path):
+    """open_case() used to overwrite the stored examiner with its own default
+    ("examiner") on every call that didn't repeat the name - which is every
+    re-open except the initial create. That made audit-log entries flip
+    between the real name and the literal word "examiner" depending on
+    nothing the examiner did."""
+    path = tmp_path / "case"
+    c = open_case(path, create=True, examiner="H. Charpentier")
+    assert c.examiner == "H. Charpentier"
+    c.close()
+
+    # re-open with no examiner argument at all - the common path (launcher,
+    # recent cases, restarting straight into a case)
+    c2 = open_case(path)
+    assert c2.examiner == "H. Charpentier"
+    c2.close()
+
+    # a name explicitly supplied still wins and is persisted
+    c3 = open_case(path, examiner="New Examiner")
+    assert c3.examiner == "New Examiner"
+    c3.close()
+    c4 = open_case(path)
+    assert c4.examiner == "New Examiner"
+    c4.close()
+
+
+def test_examiner_name_survives_opening_from_the_launcher(tmp_path, evidence):  # pylint: disable=redefined-outer-name
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    client.post("/api/case/create", json={
+        "path": str(tmp_path / "case"), "name": "C", "examiner": "H. Charpentier"})
+    client.post("/api/case/ingest", json={
+        "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = client.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    client.post("/api/categorize", json={"ids": [], "category": 0})
+    client.post("/api/case/close")
+
+    client.post("/api/case/open", json={"path": str(tmp_path / "case")})
+    assert client.get("/api/context").get_json()["examiner"] == "H. Charpentier"
+    client.post("/api/categorize", json={"ids": [], "category": 0})
+    rows = client.get("/api/audit").get_json()
+    categorize_rows = [r for r in rows if r["action"] == "categorize"]
+    assert categorize_rows and all(
+        r["actor"] == "H. Charpentier" for r in categorize_rows)
+
+
+def test_an_automatic_snapshot_is_attributed_to_the_tool_not_the_examiner(tmp_path, evidence):  # pylint: disable=redefined-outer-name
+    from gleapp.db import TOOL_ACTOR
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    client.post("/api/case/create", json={
+        "path": str(tmp_path / "case"), "name": "C", "examiner": "H. Charpentier"})
+    client.post("/api/case/ingest", json={
+        "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = client.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    fid = client.get("/api/files?per_page=1").get_json()["files"][0]["id"]
+    client.post("/api/categorize", json={"ids": [fid], "category": 1})  # dirty
+    client.post("/api/case/close")   # _close_current() snapshots because dirty
+
+    client.post("/api/case/open", json={"path": str(tmp_path / "case")})
+    rows = client.get("/api/audit").get_json()
+    snaps = [r for r in rows if r["action"] == "snapshot"]
+    assert snaps, "the close-time auto-snapshot was not logged"
+    assert snaps[0]["actor"] == TOOL_ACTOR
+    detail = json.loads(snaps[0]["detail"])
+    assert detail["reason"] == "close"
+
+
+def test_a_manual_snapshot_is_attributed_to_the_examiner(tmp_path):
+    from gleapp.db import TOOL_ACTOR
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    client.post("/api/case/create", json={
+        "path": str(tmp_path / "case"), "name": "C", "examiner": "H. Charpentier"})
+    r = client.post("/api/snapshot", json={"label": "before re-process"})
+    assert r.status_code == 200
+    rows = client.get("/api/audit").get_json()
+    snaps = [r for r in rows if r["action"] == "snapshot"]
+    assert snaps[0]["actor"] == "H. Charpentier"
+    assert snaps[0]["actor"] != TOOL_ACTOR
+    detail = json.loads(snaps[0]["detail"])
+    assert detail["reason"] == "manual" and detail["label"] == "before re-process"
+
+
+def test_categorize_audit_detail_is_structured(tmp_path, evidence):  # pylint: disable=redefined-outer-name
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    client.post("/api/case/create", json={"path": str(tmp_path / "case"), "name": "C"})
+    client.post("/api/case/ingest", json={
+        "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = client.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+    ids = [f["id"] for f in client.get("/api/files?per_page=2").get_json()["files"][:2]]
+    client.post("/api/categorize", json={"ids": ids, "category": 1})
+
+    rows = client.get("/api/audit").get_json()
+    row = next(r for r in rows if r["action"] == "categorize")
+    detail = json.loads(row["detail"])
+    assert detail["category"] == 1
+    assert detail["count"] == len(ids)
+    assert sorted(detail["ids"]) == sorted(ids)
+    assert detail["label"]  # a real category name, not just the bare code
+
+
+def test_category_editor_audit_details_name_the_category(tmp_path):
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    client.post("/api/case/create", json={"path": str(tmp_path / "case"), "name": "C"})
+
+    added = client.post("/api/categories", json={"name": "Persons of interest"}).get_json()
+    code = added["code"]
+    client.patch(f"/api/categories/{code}", json={"color": "#123456"})
+    client.delete(f"/api/categories/{code}?reassign=1")
+
+    rows = {r["action"]: json.loads(r["detail"]) for r in
+            reversed(client.get("/api/audit").get_json())
+            if r["action"].startswith("category_")}
+    assert rows["category_add"]["name"] == "Persons of interest"
+    assert rows["category_update"]["name"] == "Persons of interest"
+    assert "color" in rows["category_update"]["changed"]
+    assert rows["category_delete"]["name"] == "Persons of interest"
+    assert rows["category_delete"]["reassigned_to_uncategorized"] is True
+
+
+def test_import_hashset_actor_is_whoever_imported_it(tmp_path):
+    """It used to always say "system", even though only an examiner (from the
+    sidebar or the CLI) ever triggers an import - never a background job."""
+    c = open_case(tmp_path / "case", create=True, examiner="H. Charpentier")
+    try:
+        src = tmp_path / "list.txt"
+        src.write_text("a" * 32 + "\n", encoding="utf-8")
+        hashdb.import_hashset(c.db, src, name="List", actor=c.examiner)
+        row = c.db.conn.execute(
+            "SELECT actor FROM audit WHERE action='import_hashset'").fetchone()
+        assert row["actor"] == "H. Charpentier"
+    finally:
+        c.close()
+
+
+def test_category_reorder_is_audited(tmp_path):
+    """Reordering categories used to leave no trace at all."""
+    from gleapp.web.app import create_app
+
+    cl = create_app(None).test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "case"), "name": "C"})
+    cats = cl.get("/api/categories").get_json()
+    names_by_code = {c["code"]: c["name"] for c in cats}
+    new_order = list(reversed([c["code"] for c in cats]))
+    cl.post("/api/categories/reorder", json={"codes": new_order})
+
+    row = next(r for r in cl.get("/api/audit").get_json()
+              if r["action"] == "category_reorder")
+    detail = json.loads(row["detail"])
+    assert detail["order"] == [names_by_code[c] for c in new_order]
+
+
+def test_redup_is_audited(tmp_path, evidence):  # pylint: disable=redefined-outer-name
+    """Re-scanning for duplicates used to leave no trace at all."""
+    from gleapp.web.app import create_app
+
+    cl = create_app(None).test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "case"), "name": "C"})
+    cl.post("/api/case/ingest", json={
+        "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = cl.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+
+    cl.post("/api/redup")
+    for _ in range(60):
+        if not cl.get("/api/job").get_json()["running"]:
+            break
+        time.sleep(0.2)
+
+    row = next(r for r in cl.get("/api/audit").get_json() if r["action"] == "redup")
+    detail = json.loads(row["detail"])
+    assert set(detail) == {"redundant_duplicates", "visual_stacks", "clusters"}
+
+
+def test_process_scope_distinguishes_a_scoped_rerun_from_ingest(tmp_path, evidence):  # pylint: disable=redefined-outer-name
+    """Every process() run used to log identically, so a "Retry failed files"
+    run was indistinguishable in history from the original ingest-time run."""
+    from gleapp.web.app import create_app
+
+    cl = create_app(None).test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "case"), "name": "C"})
+    cl.post("/api/case/ingest", json={
+        "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = cl.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+
+    cl.post("/api/reprocess-errors")
+    for _ in range(60):
+        if not cl.get("/api/job").get_json()["running"]:
+            break
+        time.sleep(0.2)
+
+    rows = [r for r in cl.get("/api/audit").get_json() if r["action"] == "process"]
+    scopes = [json.loads(r["detail"])["scope"] for r in rows]
+    assert "ingest" in scopes
+    assert "retry-errors" in scopes
+
+
+def test_ingest_audit_names_the_source_but_never_its_local_path(tmp_path, evidence):  # pylint: disable=redefined-outer-name
+    """The source's own label and kind are useful history; the evidence
+    folder's real name on the examiner's disk is not something any export -
+    including LAVA, which reads the audit log - should carry off the machine."""
+    from gleapp.web.app import create_app
+
+    cl = create_app(None).test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "case"), "name": "C"})
+    cl.post("/api/case/ingest", json={
+        "sources": [{"name": "My USB Drive", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = cl.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+
+    row = next(r for r in cl.get("/api/audit").get_json() if r["action"] == "ingest")
+    detail = json.loads(row["detail"])
+    assert detail["sources"] == [{"name": "My USB Drive", "kind": "folder"}]
+    assert "usb1" not in row["detail"]
+
+
+def test_screen_pass_audit_detail_is_structured(tmp_path, evidence):  # pylint: disable=redefined-outer-name
+    from gleapp.web.app import create_app
+
+    cl = create_app(None).test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "case"), "name": "C"})
+    cl.post("/api/case/ingest", json={
+        "sources": [{"name": "USB", "path": str(evidence / "usb1")}],
+        "options": {"keyframes": 0, "screen": False}})
+    for _ in range(120):
+        job = cl.get("/api/job").get_json()
+        if not job["running"] and job["stage"] in ("done", "error"):
+            break
+        time.sleep(0.5)
+
+    cl.post("/api/screen")
+    for _ in range(60):
+        if not cl.get("/api/job").get_json()["running"]:
+            break
+        time.sleep(0.2)
+
+    row = next(r for r in cl.get("/api/audit").get_json() if r["action"] == "screen_pass")
+    detail = json.loads(row["detail"])
+    assert set(detail) == {"count", "backend"}
 
 
 def _make_vic(tmp_path, evidence):

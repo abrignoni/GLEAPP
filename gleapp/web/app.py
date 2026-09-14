@@ -27,7 +27,7 @@ from werkzeug.exceptions import HTTPException
 
 from .. import appconfig, archive, backup, basemaps, categories, lava, report
 from ..case import open_case, parse_source_spec
-from ..db import ORIGINS
+from ..db import ORIGINS, TOOL_ACTOR
 from ..facematch import find_matching_faces
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
@@ -130,7 +130,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             quiet = time.time() - case.db.last_write >= 20  # let edits settle
             if due and quiet:
                 try:
-                    backup.snapshot(case, auto=True)
+                    snap = backup.snapshot(case, auto=True)
+                    case.db.audit_log(TOOL_ACTOR, "snapshot", json.dumps(
+                        {"name": snap.name, "size": snap.size, "reason": "auto"}))
                     state["last_backup"] = time.time()
                 except Exception:  # noqa: BLE001 - never kill the daemon
                     pass
@@ -286,7 +288,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             return
         try:
             if getattr(cur.db, "dirty", False):
-                backup.snapshot(cur, auto=True)
+                snap = backup.snapshot(cur, auto=True)
+                cur.db.audit_log(TOOL_ACTOR, "snapshot", json.dumps(
+                    {"name": snap.name, "size": snap.size, "reason": "close"}))
         except Exception:  # noqa: BLE001
             pass
         cur.close()
@@ -443,7 +447,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             try:
                 from ..pipeline import process
                 st = process(case, where="error IS NOT NULL", force=True,
-                             screen=False,
+                             screen=False, reason="retry-errors",
                              progress=lambda d, t: j.update(done=d, total=t),
                              stage_cb=lambda m: j.update(message=m))
                 fixed = n - case.db.conn.execute(
@@ -486,7 +490,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 if added:
                     j.update(stage="process", done=0, total=added,
                              message=f"Processing {added:,} extracted file(s)…")
-                    process(case, where="md5 IS NULL",
+                    process(case, where="md5 IS NULL", reason="expand-archives",
                             progress=lambda d, t: j.update(done=d, total=t),
                             stage_cb=lambda m: j.update(message=m))
                 j.update(running=False, stage="done",
@@ -558,14 +562,16 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         try:
             from .. import hashdb
             hs_id, added = hashdb.import_hashset(
-                case.db, raw, name=name, kind=kind)
+                case.db, raw, name=name, kind=kind, actor=case.examiner)
             counts = hashdb.algo_counts(case.db.conn, hs_id)
         except (OSError, ValueError, sqlite3.Error) as exc:
             abort(400, description=f"could not read hash list: {exc}")
         note = hashdb.photodna_note(counts)
-        case.db.audit_log(case.examiner, "hashset_import",
-                          f"{name!r} ({kind}): {added} entries from {Path(raw).name}"
-                          + (f". {note}" if note else ""))
+        case.db.audit_log(case.examiner, "hashset_import", json.dumps({
+            "name": name, "kind": kind, "added": added,
+            "source": Path(raw).name,  # basename only - never the full local path
+            "photodna": counts.get(hashdb.PHOTODNA_ALGO, 0),
+        }))
         _rematch_job(case, f"Flagging files against {name}…")
         return jsonify({"ok": True, "id": hs_id, "name": name,
                         "kind": kind, "entries": added,
@@ -578,11 +584,17 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             abort(409, description="no case open")
         case = state["case"]
         hs_id = int((request.get_json(force=True) or {}).get("id", 0))
+        row = case.db.conn.execute(
+            "SELECT name, kind FROM hashsets WHERE id=?", (hs_id,)).fetchone()
+        if row is None:
+            abort(404, description="no such hash set")
+        affected = case.db.conn.execute(
+            "SELECT COUNT(*) n FROM files WHERE hashset_hit=?", (row["name"],)
+        ).fetchone()["n"]
         # the delete + flag-clear is instant, so it's fine even mid-job
         removed = case.db.delete_hashset(hs_id)
-        if removed is None:
-            abort(404, description="no such hash set")
-        case.db.audit_log(case.examiner, "hashset_remove", f"{removed!r} (id {hs_id})")
+        case.db.audit_log(case.examiner, "hashset_remove", json.dumps(
+            {"name": removed, "kind": row["kind"], "files_unflagged": affected}))
         # re-evaluate the now-unflagged files against the *remaining* sets so an
         # overlap (e.g. NSRL) re-flags them - unless a job is already running
         rematched = False
@@ -789,6 +801,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 vs = dedupe.stack_visual(case.db)
                 j.update(message="Clustering near-duplicates…")
                 cl = dedupe.cluster_near(case.db, threshold=12)
+                case.db.audit_log(case.examiner, "redup", json.dumps(
+                    {"redundant_duplicates": red, "visual_stacks": vs, "clusters": cl}))
                 j.update(running=False, stage="done", message="Done",
                          stats={"redundant_duplicates": red, "visual_stacks": vs,
                                 "clusters": cl})
@@ -1136,9 +1150,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def categories_add():
         case = C()
         data = request.get_json(silent=True) or {}
-        code = case.db.add_category(str(data.get("name", "")),
-                                    notable=bool(data.get("notable", True)))
-        case.db.audit_log(case.examiner, "category_add", f"code={code}")
+        name = str(data.get("name", ""))
+        code = case.db.add_category(name, notable=bool(data.get("notable", True)))
+        case.db.audit_log(case.examiner, "category_add",
+                          json.dumps({"code": code, "name": name}))
         return jsonify(categories.catmap(case.db)[code])
 
     @app.patch("/api/categories/<int:code>")
@@ -1155,26 +1170,31 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             case.db.update_category(code, **fields)
         except ValueError as exc:
             abort(400, description=str(exc))
-        case.db.audit_log(case.examiner, "category_update", f"code={code} {fields}")
+        case.db.audit_log(case.examiner, "category_update", json.dumps(
+            {"code": code, "name": categories.label(case.db, code), "changed": fields}))
         return jsonify(categories.catmap(case.db).get(code, {}))
 
     @app.delete("/api/categories/<int:code>")
     def categories_delete(code: int):
         case = C()
         reassign = request.args.get("reassign") == "1"
+        name = categories.label(case.db, code)  # before it's gone
         try:
             case.db.delete_category(code, reassign=reassign)
         except ValueError as exc:
             abort(400, description=str(exc))
-        case.db.audit_log(case.examiner, "category_delete",
-                          f"code={code} reassign={reassign}")
+        case.db.audit_log(case.examiner, "category_delete", json.dumps(
+            {"code": code, "name": name, "reassigned_to_uncategorized": reassign}))
         return jsonify({"ok": True})
 
     @app.post("/api/categories/reorder")
     def categories_reorder():
         case = C()
         data = request.get_json(force=True)
-        case.db.reorder_categories([int(c) for c in data["codes"]])
+        codes = [int(c) for c in data["codes"]]
+        case.db.reorder_categories(codes)
+        order = [categories.label(case.db, c) for c in codes]
+        case.db.audit_log(case.examiner, "category_reorder", json.dumps({"order": order}))
         return jsonify(list(categories.catmap(case.db).values()))
 
     # ---- mutations ------------------------------------------
@@ -1183,9 +1203,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         case = C()
         data = request.get_json(force=True)
         cat = int(data["category"])
-        for fid in data["ids"]:
-            case.db.update_file(int(fid), category=cat)
-        case.db.audit_log(case.examiner, "categorize", f"cat={cat} ids={data['ids']}")
+        ids = [int(fid) for fid in data["ids"]]
+        for fid in ids:
+            case.db.update_file(fid, category=cat)
+        case.db.audit_log(case.examiner, "categorize", json.dumps(
+            {"category": cat, "label": categories.label(case.db, cat),
+             "count": len(ids), "ids": ids}))
         case.db.commit()
         return jsonify({"ok": True, "category": cat,
                         "label": categories.label(case.db, cat),
@@ -1555,7 +1578,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 if total_new:
                     j.update(stage="process", done=0, total=total_new,
                              message=f"Processing {total_new:,} recovered file(s)…")
-                    process(case, where="md5 IS NULL",
+                    process(case, where="md5 IS NULL", reason="carve-source",
                             progress=lambda d, t: j.update(done=d, total=t),
                             stage_cb=lambda m: j.update(message=m))
                 parts = []
@@ -1812,7 +1835,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         label = (request.get_json(silent=True) or {}).get("label") or None
         snap = backup.snapshot(case, label)
         state["last_backup"] = time.time()
-        case.db.audit_log(case.examiner, "snapshot", snap.name)
+        case.db.audit_log(case.examiner, "snapshot", json.dumps(
+            {"name": snap.name, "size": snap.size, "reason": "manual", "label": label}))
         return jsonify({"ok": True, **snap.__dict__})
 
     @app.post("/api/snapshot/restore")
@@ -1829,7 +1853,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         root = case.root
         # 1. safety net - the current state becomes a snapshot, so this is undoable
         try:
-            backup.snapshot(case, "pre-restore")
+            pre = backup.snapshot(case, "pre-restore")
+            case.db.audit_log(TOOL_ACTOR, "snapshot", json.dumps(
+                {"name": pre.name, "size": pre.size, "reason": "pre-restore"}))
         except Exception:  # noqa: BLE001
             pass
         # 2. close the live DB, swap the file in, reopen
@@ -1845,7 +1871,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         state["case"] = open_case(root)
         state["last_backup"] = 0.0
         state["case"].db.audit_log(state["case"].examiner,
-                                   "restore_snapshot", name)
+                                   "restore_snapshot", json.dumps({"name": name}))
         return jsonify({"ok": True, "restored": name})
 
     return app

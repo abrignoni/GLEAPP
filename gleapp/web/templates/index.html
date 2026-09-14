@@ -239,12 +239,14 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
-  #hashImportDlg .box,#refDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
-  #hashImportDlg h2,#refDlg h2{margin:0 0 4px;font-size:15px}
-  #hashImportDlg .field,#refDlg .field{margin-top:10px}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #hashImportDlg .box,#refDlg .box,#vicExportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #addEvDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #hashImportDlg h2,#refDlg h2,#vicExportDlg h2,#addEvDlg h2{margin:0 0 4px;font-size:15px}
+  #hashImportDlg .field,#refDlg .field,#addEvDlg .field{margin-top:10px}
   #hashImportDlg .field label,#refDlg .field>label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
-  #hashImportDlg input[type=text],#refDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
+  #hashImportDlg input[type=text],#refDlg input[type=text],#addEvDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
+  #addEvDlg label{display:block;font-size:12px;color:var(--fg);margin:8px 0}
   #hashImportDlg .kindrow label,#refDlg .refmode label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);margin:3px 0}
   #refDlg select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
   #caseSets .cs,#refList .cs{display:flex;align-items:center;gap:5px;padding:3px 0}
@@ -261,6 +263,7 @@
   #histList .histrow time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   #histList .histrow .hact{font-weight:600}
   #histList .histrow .hactor{color:var(--muted)}
+  #histList .histrow .hactor.auto{color:var(--accent);font-style:italic}
   #histList .histrow .hdetail{margin-top:3px;color:var(--fg);word-break:break-word}
   #histList .histrow .hstages{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px}
   #histList .hpill{padding:1px 7px;border-radius:9px;font-size:10px;border:1px solid var(--line);background:var(--panel2)}
@@ -430,6 +433,8 @@
       <button data-help="manual">Manual</button>
       <button data-help="history">Processing history</button>
     </div>
+    <button class="btn" id="btnAddEvidence" title="Ingest another folder, extraction archive, E01 acquisition, or Project VIC/job JSON into this case">+ Add evidence…</button>
+    <span class="stat" id="aeInfo"></span>
     <button class="btn" id="btnClose" title="Snapshot, close this case, and pick another">⇤ Close case</button>
     <span style="flex:1"></span>
     <button class="btn" id="btnRefresh" title="Re-run the current filter — files that no longer match (e.g. ones you just categorized) drop out of view">↻ Refresh</button>
@@ -798,6 +803,53 @@
     <span style="flex:1"></span>
     <button class="btn" id="hiCancel">Cancel</button>
     <button class="btn" id="hiGo">Import &amp; flag</button>
+  </div>
+</div></div>
+
+<div id="addEvDlg"><div class="box">
+  <h2>Add evidence to this case</h2>
+  <div class="muted" style="font-size:12px">
+    Ingest another folder, extraction archive (<code>.zip</code>/<code>.tar</code>), E01 acquisition,
+    or Project&nbsp;VIC/job <code>.json</code> into this case. New files are hashed, thumbnailed and
+    checked for duplicates against everything already here; files already processed are left alone.
+  </div>
+  <div class="field">
+    <label>Source</label>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" id="aeTypePath" style="flex:1" placeholder="paste a folder or file path, then Add">
+      <button class="btn sm" id="aeAddFile">Browse to file…</button>
+      <button class="btn sm" id="aeAddFolder">Browse to folder…</button>
+      <button class="btn sm" id="aeAdd">Add</button>
+    </div>
+  </div>
+  <div class="muted" style="font-size:11px;margin:2px 0 6px">
+    Add as many sources as you need &mdash; they all ingest together in one run.
+  </div>
+  <div class="srclist" id="aeList"></div>
+  <label><input type="checkbox" id="aeScreen" checked> Face / skin tone pre-processing</label>
+  <label title="Off, an extraction archive or acquisition is read in place; on, the media is copied out so the case stands alone. A compressed tar is always copied out."><input type="checkbox" id="aeStage"> Copy media out of extraction archives into the case</label>
+  <label title="E01 acquisitions only. After walking the filesystems, recover deleted media from deleted records and by carving unclaimed space. You can also run this later from the Source panel."><input type="checkbox" id="aeCarve"> Recover deleted media (E01 sources only)</label>
+  <label>Video preview key frames: <span id="aeKfv">6</span>
+    <input type="range" id="aeKf" min="2" max="16" step="1" value="6" style="width:100%"></label>
+  <div class="row" style="margin-top:14px;display:flex;gap:6px">
+    <span style="flex:1"></span>
+    <button class="btn" id="aeCancel">Cancel</button>
+    <button class="btn" id="aeGo" style="border-color:var(--accent)">Add &amp; process</button>
+  </div>
+</div></div>
+
+<div id="vicExportDlg"><div class="box">
+  <h2>Export Project VIC</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:12px">
+    Writes your categories back into the original Project VIC JSON.
+  </div>
+  <div class="field" style="display:flex;flex-direction:column;gap:6px">
+    <button class="btn" id="vicExportAll" style="border-color:var(--accent)">Export all media (categorized + not)</button>
+    <button class="btn" id="vicExportCatOnly">Export only the media you have categorized</button>
+  </div>
+  <div class="row" style="margin-top:14px;display:flex;gap:6px">
+    <span style="flex:1"></span>
+    <button class="btn" id="vicExportCancel">Cancel</button>
   </div>
 </div></div>
 
