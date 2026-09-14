@@ -1681,7 +1681,7 @@ def test_recent_cases_hides_empty_and_annotates(tmp_path, evidence):
     assert recent[0]["files"] > 0
 
 
-def test_the_launcher_can_see_more_than_three_recent_cases(tmp_path, evidence):
+def test_the_launcher_can_see_more_than_three_recent_cases(tmp_path, evidence):  # pylint: disable=redefined-outer-name
     """The launcher only shows 3 until "Show more" - but the server has to
     actually hand it more than 3 for that button to have anything to reveal."""
     from gleapp.web.app import create_app
@@ -1704,7 +1704,7 @@ def test_the_launcher_can_see_more_than_three_recent_cases(tmp_path, evidence):
     assert len(ctx["recent"]) == 5, "the pre-case /api/context capped recent at 3"
 
 
-def test_clearing_recent_cases_empties_the_list_but_not_the_cases(tmp_path, evidence):
+def test_clearing_recent_cases_empties_the_list_but_not_the_cases(tmp_path, evidence):  # pylint: disable=redefined-outer-name
     from gleapp import appconfig
     from gleapp.web.app import create_app
 
