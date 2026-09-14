@@ -163,7 +163,7 @@ function filterParams() {
   if ($("#ferr").checked) p.set("error", "1");
   if (state.vstack) p.set("vstack", state.vstack);
   if (state.stack) p.set("stack", state.stack);
-  if (+$("#fskin").value > 0) p.set("min_skin", $("#fskin").value);
+  if (+$("#fskin").value > 0) p.set("min_skin", (+$("#fskin").value / 100).toFixed(2));
   // the list view always shows every row, duplicates included - collapsing is a
   // grid-only convenience
   if ($("#fcollapse").checked && state.view !== "list") p.set("dupes", "collapse");
@@ -1758,6 +1758,12 @@ document.addEventListener("keydown", e => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
+// live percentage readout while dragging - "change" above (fires on release)
+// still drives the actual reload, so dragging doesn't requery on every pixel
+$("#fskin").addEventListener("input", () => {
+  const v = +$("#fskin").value;
+  $("#fskinv").textContent = v > 0 ? `${v}% or more` : "Any";
+});
 
 /* ---------- collapsible feature sections ---------- */
 const SEC_ACTIVE = {
@@ -1806,8 +1812,8 @@ const FILTER_DEFS = [
     label: () => "Has faces",
     clear: () => { $("#ffaces").checked = false; } },
   { active: () => +$("#fskin").value > 0,
-    label: () => `Skin-tone ratio: ${esc($("#fskin").selectedOptions[0].textContent)}`,
-    clear: () => { $("#fskin").value = "0"; } },
+    label: () => `Skin-tone ratio: ${$("#fskin").value}% or more`,
+    clear: () => { $("#fskin").value = "0"; $("#fskinv").textContent = "Any"; } },
   { active: () => $("#ferr").checked,
     label: () => "Processing error / no preview",
     clear: () => { $("#ferr").checked = false; } },
@@ -2021,7 +2027,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fhashset").value = "";
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
   $("#fcollapse").checked = true;
-  $("#fskin").value = "0";
+  $("#fskin").value = "0"; $("#fskinv").textContent = "Any";
   state.sortCol = "name"; state.sortDir = "asc";
   reflectGridSort();
   state.vstack = null; state.stack = null; state.similarOf = null;

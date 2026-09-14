@@ -66,6 +66,8 @@
   .fbody{padding:2px 0 8px}
   aside.filters .flabel{display:block;margin:8px 0 0;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
   aside.filters .flabel select{margin-top:3px}
+  aside.filters .flabel input[type=range]{margin-top:5px;display:block}
+  aside.filters .flabel .fval{text-transform:none;color:var(--fg);font-weight:600}
   aside.filters .fck{display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--fg);margin:7px 0 0}
   aside.filters .fnote{font-size:11px;color:var(--muted);margin-top:5px;word-break:break-word}
   aside.filters .fnote:empty{display:none}
@@ -518,13 +520,8 @@
       <summary>Faces &amp; skin <span class="fdot"></span></summary>
       <div class="fbody">
         <label class="fck"><input type="checkbox" id="ffaces"> Has faces</label>
-        <label class="flabel">Skin-tone ratio
-          <select id="fskin">
-            <option value="0">Any</option>
-            <option value="0.1">10% or more</option>
-            <option value="0.3">30% or more</option>
-            <option value="0.5">50% or more</option>
-          </select></label>
+        <label class="flabel">Skin-tone ratio <span class="fval" id="fskinv">Any</span>
+          <input type="range" id="fskin" min="0" max="100" step="5" value="0"></label>
         <button class="btn sm block" id="btnScreen" style="display:none">Run face / skin screening</button>
         <div id="screenInfo" class="fnote"></div>
       </div>
