@@ -3422,38 +3422,46 @@ $("#mapViewClose").onclick = closeMapView;
   catch (e) { c = {}; }
   Lr.native = !!c.native;          // so pick() uses the OS file dialog even when
                                    // GLEAPP boots straight into an existing case
-  if (c.needs_case) { showLauncher(c); return; }
-  $("#launcher").style.display = "none";
-  $("#main").style.display = "";
-  $("#caseName").textContent = "GLEAPP — " + (c.case || "case");
-  document.title = "GLEAPP — " + (c.case || "");
-  if (c.vic) $("#btnVic").style.display = "";
-  updateScreenInfo(c.screening);
-  updateArchInfo(c.archives);
-  updateKnownHash(c.known_hash);
-  if (c.errors > 0) {
-    $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
-    $("#btnRetryErr").style.display = "";
-    $("#btnRetryErr").textContent = `Retry ${c.errors.toLocaleString()} failed files`;
-  }
-  state.cats = c.categories || [];
-  state.sources = c.sources || [];
-  state.basemap = c.basemap || null;
-  showSourceStatus(c.archive_sources);
-  setupTz(c);
-  try { await refreshCats(); } catch (e) {}
-  (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+  if (c.needs_case) { showLauncher(c); $("#bootLoad").style.display = "none"; return; }
   try {
-    if (localStorage.getItem("gleapp.meta") === "1") toggleMeta(true);
-    const ps = localStorage.getItem("gleapp.pagesize");
-    if (ps) { state.pageSize = +ps; $("#fpagesize").value = ps; }
-    const tl = localStorage.getItem("gleapp.tile");
-    if (tl) { $("#ftile").value = tl;
-      document.documentElement.style.setProperty("--tile", tl + "px"); }
-  } catch (e) {}
-  restoreListPrefs();
-  reflectGridSort();          // mirror the restored sort onto the grid dropdown
-  await load();
+    $("#launcher").style.display = "none";
+    $("#main").style.display = "";
+    $("#bootLoadMsg").textContent = "Opening case…";
+    $("#caseName").textContent = "GLEAPP — " + (c.case || "case");
+    document.title = "GLEAPP — " + (c.case || "");
+    if (c.vic) $("#btnVic").style.display = "";
+    updateScreenInfo(c.screening);
+    updateArchInfo(c.archives);
+    updateKnownHash(c.known_hash);
+    if (c.errors > 0) {
+      $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
+      $("#btnRetryErr").style.display = "";
+      $("#btnRetryErr").textContent = `Retry ${c.errors.toLocaleString()} failed files`;
+    }
+    state.cats = c.categories || [];
+    state.sources = c.sources || [];
+    state.basemap = c.basemap || null;
+    showSourceStatus(c.archive_sources);
+    setupTz(c);
+    try { await refreshCats(); } catch (e) {}
+    (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+    try {
+      if (localStorage.getItem("gleapp.meta") === "1") toggleMeta(true);
+      const ps = localStorage.getItem("gleapp.pagesize");
+      if (ps) { state.pageSize = +ps; $("#fpagesize").value = ps; }
+      const tl = localStorage.getItem("gleapp.tile");
+      if (tl) { $("#ftile").value = tl;
+        document.documentElement.style.setProperty("--tile", tl + "px"); }
+    } catch (e) {}
+    restoreListPrefs();
+    reflectGridSort();          // mirror the restored sort onto the grid dropdown
+    $("#bootLoadMsg").textContent = "Loading files…";
+    await load();
+  } finally {
+    // always lifts, even if something above threw - a stuck overlay reading
+    // "Loading files…" forever would be a worse failure than a bare page
+    $("#bootLoad").style.display = "none";
+  }
 
   // a processing job is still running (we entered the gallery early) — show the
   // live bottom bar and refresh the grid as thumbnails land
