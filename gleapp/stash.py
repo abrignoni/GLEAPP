@@ -15,7 +15,13 @@ the code kept per hash.
 Location, in priority order:
   1. ``$GLEAPP_STASH_PATH``
   2. ``stash_path`` in the app config (``config.json``)
-  3. ``<data_dir>/hashsets/stash.gleapp``  (default)
+  3. ``<data_dir>/hashsets/stash.hstash``  (default)
+
+The stash's own extension is deliberately not ``.gleapp`` - a case's own file
+is ``case.gleapp``, and the two are easy to mix up on disk otherwise. An
+existing default-location ``stash.gleapp`` from before this change is
+renamed in place the first time ``default_path()`` runs (see there); a
+stash at a location the examiner chose explicitly is never touched.
 
 File format (deliberately simple so any tool can read it):
     stash(md5 TEXT PRIMARY KEY, category INTEGER, added_at REAL, source TEXT)
@@ -60,7 +66,22 @@ _EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
 def default_path() -> Path:
     d = appconfig.data_dir() / "hashsets"
     d.mkdir(parents=True, exist_ok=True)
-    return d / "stash.gleapp"
+    new = d / "stash.hstash"
+    old = d / "stash.gleapp"
+    if not new.exists() and old.exists():
+        # one-time: separate the stash's extension from a case's case.gleapp.
+        # Rename the real file in place rather than starting a fresh empty
+        # stash at the new name; if the rename can't happen right now (e.g.
+        # the old file is open elsewhere), keep using it and try again later.
+        try:
+            old.rename(new)
+            for suffix in ("-wal", "-shm"):
+                o = old.with_name(old.name + suffix)
+                if o.exists():
+                    o.rename(new.with_name(new.name + suffix))
+        except OSError:
+            return old
+    return new
 
 
 def stash_path() -> Path:
@@ -89,7 +110,7 @@ def set_path(new: str | None) -> Path:
     if new:
         p = Path(new)
         if p.is_dir():
-            p = p / "stash.gleapp"
+            p = p / "stash.hstash"
         cfg["stash_path"] = str(p)
     else:
         cfg.pop("stash_path", None)

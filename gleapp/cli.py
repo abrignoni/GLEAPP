@@ -503,9 +503,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="add the current case's category 1-3 MD5s to the stash")
     s.add_argument("--clear", action="store_true", help="erase the entire stash")
     s.add_argument("--export", metavar="FILE",
-                   help="write the stash to FILE (.csv = hash list, else a portable .gleapp copy)")
+                   help="write the stash to FILE (.csv = hash list, else a portable .hstash copy)")
     s.add_argument("--merge", metavar="FILE",
-                   help="fold another examiner's stash (.csv or .gleapp) into yours")
+                   help="fold another examiner's stash (.csv, .hstash, or .gleapp) into yours")
     s.add_argument("--set-path", metavar="PATH", default=None,
                    help="use a different stash file (e.g. on a shared drive); "
                         "pass '' to reset to the per-user default")

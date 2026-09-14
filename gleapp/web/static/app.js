@@ -2843,7 +2843,7 @@ async function stashExport(format) {
 $("#stashExportDb").onclick = () => stashExport("db");
 $("#stashExportCsv").onclick = () => stashExport("csv");
 $("#stashMerge").onclick = async () => {
-  const p = await pick("stashfile", "Path to the external hash stash file (.gleapp or .csv):");
+  const p = await pick("stashfile", "Path to the external hash stash file (.hstash or .csv):");
   if (!p) return;
   const r = await api("/api/stash/merge", {
     method: "POST", headers: { "Content-Type": "application/json" },

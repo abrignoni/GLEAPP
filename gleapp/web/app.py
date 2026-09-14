@@ -236,7 +236,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
                     file_types=(
-                        "Hash stash (*.gleapp;*.csv)", "All files (*.*)"),
+                        # .gleapp still accepted so an older exported stash
+                        # (from before the .hstash rename) can be merged in
+                        "Hash stash (*.hstash;*.gleapp;*.csv)", "All files (*.*)"),
                 )
             elif kind == "casefile":
                 res = win.create_file_dialog(
@@ -740,7 +742,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         out_dir = appconfig.data_dir() / "hashsets"
         out_dir.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        dest = out_dir / (f"hash-stash-{stamp}." + ("csv" if fmt == "csv" else "gleapp"))
+        dest = out_dir / (f"hash-stash-{stamp}." + ("csv" if fmt == "csv" else "hstash"))
         try:
             stash.export(dest)
         except OSError as exc:

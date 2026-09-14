@@ -438,7 +438,7 @@ def test_local_hash_stash(tmp_path):
             for r in c.db.conn.execute("SELECT md5, category FROM files"))
         assert res["submitted"] == 2 and res["added"] == 2 and res["total"] == 2
         assert res["by_category"] == {1: 1, 3: 1}
-        assert res["shared"] is False and res["path"].endswith("stash.gleapp")
+        assert res["shared"] is False and res["path"].endswith("stash.hstash")
 
         # re-stashing the same hash under a MORE severe category wins
         stash.add([("b" * 32, 2)])
@@ -506,7 +506,7 @@ def test_stash_separate_file_and_shared_path(tmp_path):
     assert not any(s["name"] == stash.STASH_NAME for s in hashstore.sets())
 
     # point at a shared location
-    shared = tmp_path / "team" / "stash.gleapp"
+    shared = tmp_path / "team" / "stash.hstash"
     stash.set_path(str(shared))
     assert stash.is_shared() and stash.summary()["total"] == 0   # fresh file
     stash.add([("b" * 32, 2)])
@@ -514,6 +514,47 @@ def test_stash_separate_file_and_shared_path(tmp_path):
     stash.set_path("")                    # back to default
     assert not stash.is_shared()
     assert stash.summary()["by_category"] == {1: 1}              # original data intact
+
+
+def test_default_path_migrates_an_old_stash_gleapp_in_place(tmp_path, monkeypatch):
+    """The stash used to share case.gleapp's extension - an existing
+    default-location file must not be silently orphaned by the rename."""
+    from gleapp import stash
+
+    monkeypatch.setenv("GLEAPP_CONFIG_DIR", str(tmp_path))
+    stash.close()
+    try:
+        d = tmp_path / "hashsets"
+        d.mkdir(parents=True)
+        old = d / "stash.gleapp"
+        old.write_bytes(b"pretend this is the real sqlite file")
+
+        new = stash.default_path()
+        assert new.name == "stash.hstash"
+        assert new.exists() and not old.exists()
+        assert new.read_bytes() == b"pretend this is the real sqlite file"
+    finally:
+        stash.close()
+
+
+def test_default_path_leaves_an_existing_new_file_alone(tmp_path, monkeypatch):
+    """A stash.hstash already there wins - the migration is one-time and must
+    never overwrite data that's already at the new name."""
+    from gleapp import stash
+
+    monkeypatch.setenv("GLEAPP_CONFIG_DIR", str(tmp_path))
+    stash.close()
+    try:
+        d = tmp_path / "hashsets"
+        d.mkdir(parents=True)
+        (d / "stash.gleapp").write_bytes(b"old")
+        (d / "stash.hstash").write_bytes(b"new")
+
+        new = stash.default_path()
+        assert new.read_bytes() == b"new"
+        assert (d / "stash.gleapp").read_bytes() == b"old"   # left alone
+    finally:
+        stash.close()
 
 
 def test_stash_endpoints(tmp_path):
