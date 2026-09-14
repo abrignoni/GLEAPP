@@ -1906,6 +1906,13 @@ $("#mainMenu").addEventListener("click", e => {
   if (e.target.tagName === "BUTTON") $("#mainMenu").style.display = "none";
 });
 $("#btnHelpLauncher").onclick = openHelp;      // same manual, from the launcher
+$("#helpPdf").onclick = async () => {
+  // No PDF library is bundled - this hands off to the browser/OS print dialog,
+  // scoped to just the manual by the @media print rules on #helpDlg, with
+  // "Save as PDF" as the destination the examiner picks.
+  if (!helpLoaded) await openHelp();
+  window.print();
+};
 $("#helpClose").onclick = () => $("#helpDlg").style.display = "none";
 $("#helpDlg").addEventListener("click", e => {
   if (e.target.id === "helpDlg") $("#helpDlg").style.display = "none";
@@ -2760,18 +2767,24 @@ function stashRows(byCat, catList) {
 }
 let stashLastTotal = 0;
 async function refreshStashDlg() {
-  $("#stashCase").innerHTML = "<div class='muted'>Loading…</div><div></div>";
+  // "This case" only means something with a case open - hide it on the launcher.
+  const hasCase = $("#launcher").style.display !== "block";
+  $("#stashCaseSection").style.display = hasCase ? "" : "none";
+  if (hasCase) $("#stashCase").innerHTML = "<div class='muted'>Loading…</div><div></div>";
   const d = await api("/api/stash").catch(() => null);
-  if (!d) { $("#stashCase").innerHTML = "<div>Couldn't read the stash.</div><div></div>"; return; }
+  if (!d) {
+    if (hasCase) $("#stashCase").innerHTML = "<div>Couldn't read the stash.</div><div></div>";
+    return;
+  }
   stashLastTotal = d.stash.total || 0;
-  $("#stashCase").innerHTML = stashRows(d.case.by_category, d.case.categories);
   $("#stashTotal").innerHTML = stashRows(d.stash.by_category, d.case.categories);
-  $("#stashAdd").disabled = !d.case.eligible;
-  $("#stashAdd").textContent = d.case.eligible
-    ? `Add this case's ${d.case.eligible.toLocaleString()} hash(es) to the stash`
-    : ($("#launcher").style.display === "block"
-       ? "Open a case to add its category 1–3 hashes"
-       : "No category 1–3 files in this case yet");
+  if (hasCase) {
+    $("#stashCase").innerHTML = stashRows(d.case.by_category, d.case.categories);
+    $("#stashAdd").disabled = !d.case.eligible;
+    $("#stashAdd").textContent = d.case.eligible
+      ? `Add this case's ${d.case.eligible.toLocaleString()} hash(es) to the stash`
+      : "No category 1–3 files in this case yet";
+  }
   $("#stashClear").disabled = !d.stash.total;
   $("#stashUpdated").textContent = d.stash.updated
     ? "Stash last updated " + fmtEpoch(d.stash.updated)
@@ -2830,7 +2843,7 @@ async function stashExport(format) {
 $("#stashExportDb").onclick = () => stashExport("db");
 $("#stashExportCsv").onclick = () => stashExport("csv");
 $("#stashMerge").onclick = async () => {
-  const p = await pick("stashfile", "Path to a colleague's stash file (.gleapp or .csv):");
+  const p = await pick("stashfile", "Path to the external hash stash file (.hstash or .csv):");
   if (!p) return;
   const r = await api("/api/stash/merge", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -2882,7 +2895,7 @@ $("#btnVic").onclick = async () => {
 };
 
 /* ---------- launcher ---------- */
-const Lr = { native: false, sources: [], recent: [], recentExpanded: false };
+const Lr = { native: false, sources: [], recent: [], recentExpanded: false, logo: null };
 function fmtAgo(ts) {
   const s = (Date.now() / 1000) - ts;
   if (s < 3600) return Math.round(s / 60) + "m ago";
@@ -2904,7 +2917,10 @@ async function pick(kind, label) {
   }
   return prompt(label || ({ folder: "Folder path:",
     archive: "Path to the extraction archive or acquisition (zip, tar, tar.gz/bz2/xz, E01):",
-    basemap: "Path to a basemap file (.pmtiles or .mbtiles):" }[kind]
+    basemap: "Path to a basemap file (.pmtiles or .mbtiles):",
+    casefile: "Path to the case.gleapp file:",
+    ingestfile: "Path to the evidence file (extraction archive, E01 acquisition, or .json job/VIC file):"
+    }[kind]
     || "Path to .json job file:")) || null;
 }
 function renderSources() {
@@ -2929,6 +2945,8 @@ function showLauncher(ctx) {
   Lr.recentExpanded = false;
   $("#recentCard").style.display = Lr.recent.length ? "block" : "none";
   renderRecent();
+  Lr.logo = ctx.agency_logo || null;
+  setSettingsLogoPreview(Lr.logo);
 }
 const RECENT_SHOWN = 3;
 function renderRecent() {
@@ -2955,6 +2973,52 @@ $("#recentClear").onclick = async () => {
   $("#recentCard").style.display = "none";
   $("#recentList").innerHTML = "";
 };
+
+/* ---------- agency logo: app-wide default, set from ☰ Settings on the
+   launcher. It lives in appconfig (not any case) and goes on every case's
+   report header unless that case sets its own from its own Export dialog. */
+function setSettingsLogoPreview(uri) {
+  const prev = $("#logoPrev"), clr = $("#logoClear");
+  prev.style.display = clr.style.display = uri ? "" : "none";
+  if (uri) prev.src = uri;
+}
+function openLogoDlg() {
+  $("#logoFile").value = "";
+  setSettingsLogoPreview(Lr.logo);
+  $("#logoDlg").style.display = "block";
+}
+$("#btnLogoLauncher").onclick = openLogoDlg;
+$("#logoFile").addEventListener("change", e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (f.size > 3_000_000) return toast("Logo too large — pick an image under 3 MB");
+  const rd = new FileReader();
+  rd.onload = async () => {
+    Lr.logo = rd.result;
+    setSettingsLogoPreview(Lr.logo);
+    const r = await api("/api/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agency_logo: Lr.logo })
+    }).catch(() => ({ error: true }));
+    if (r.error) return toast(r.message || "Could not save the logo");
+    toast("Agency logo saved — used on every case's report unless overridden");
+  };
+  rd.readAsDataURL(f);
+});
+$("#logoClear").onclick = async () => {
+  Lr.logo = null;
+  $("#logoFile").value = "";
+  setSettingsLogoPreview(null);
+  await api("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agency_logo: null })
+  });
+  toast("Agency logo cleared");
+};
+$("#logoClose").onclick = () => $("#logoDlg").style.display = "none";
+$("#logoDlg").addEventListener("click", e => {
+  if (e.target.id === "logoDlg") $("#logoDlg").style.display = "none";
+});
 
 async function openCase(path) {
   const r = await api("/api/case/open", {
@@ -2988,6 +3052,7 @@ async function pollJob() {
   setTimeout(pollJob, 500);   // idle / starting / early ingest
 }
 $("#openBrowse").onclick = async () => { const p = await pick("folder"); if (p) $("#openPath").value = p; };
+$("#openBrowseFile").onclick = async () => { const p = await pick("casefile"); if (p) $("#openPath").value = p; };
 $("#openGo").onclick = () => $("#openPath").value && openCase($("#openPath").value.trim());
 $("#newBrowse").onclick = async () => { const p = await pick("folder"); if (p) $("#newPath").value = p; };
 const ARCHIVE_RE = /\.(zip|tar|tgz|tbz2?|txz|tar\.(gz|bz2|xz))$/i;
@@ -2999,8 +3064,7 @@ function addSource(p) {
   renderSources();
 }
 $("#addFolder").onclick = async () => addSource(await pick("folder"));
-$("#addArchive").onclick = async () => addSource(await pick("archive"));
-$("#addSpec").onclick = async () => addSource(await pick("file"));
+$("#addFile").onclick = async () => addSource(await pick("ingestfile"));
 $("#srcTypeAdd").onclick = () => { addSource($("#srcTypePath").value); $("#srcTypePath").value = ""; };
 $("#srcTypePath").addEventListener("keydown", e => {
   if (e.key === "Enter") { addSource($("#srcTypePath").value); $("#srcTypePath").value = ""; }
@@ -3375,38 +3439,46 @@ $("#mapViewClose").onclick = closeMapView;
   catch (e) { c = {}; }
   Lr.native = !!c.native;          // so pick() uses the OS file dialog even when
                                    // GLEAPP boots straight into an existing case
-  if (c.needs_case) { showLauncher(c); return; }
-  $("#launcher").style.display = "none";
-  $("#main").style.display = "";
-  $("#caseName").textContent = "GLEAPP — " + (c.case || "case");
-  document.title = "GLEAPP — " + (c.case || "");
-  if (c.vic) $("#btnVic").style.display = "";
-  updateScreenInfo(c.screening);
-  updateArchInfo(c.archives);
-  updateKnownHash(c.known_hash);
-  if (c.errors > 0) {
-    $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
-    $("#btnRetryErr").style.display = "";
-    $("#btnRetryErr").textContent = `Retry ${c.errors.toLocaleString()} failed files`;
-  }
-  state.cats = c.categories || [];
-  state.sources = c.sources || [];
-  state.basemap = c.basemap || null;
-  showSourceStatus(c.archive_sources);
-  setupTz(c);
-  try { await refreshCats(); } catch (e) {}
-  (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+  if (c.needs_case) { showLauncher(c); $("#bootLoad").style.display = "none"; return; }
   try {
-    if (localStorage.getItem("gleapp.meta") === "1") toggleMeta(true);
-    const ps = localStorage.getItem("gleapp.pagesize");
-    if (ps) { state.pageSize = +ps; $("#fpagesize").value = ps; }
-    const tl = localStorage.getItem("gleapp.tile");
-    if (tl) { $("#ftile").value = tl;
-      document.documentElement.style.setProperty("--tile", tl + "px"); }
-  } catch (e) {}
-  restoreListPrefs();
-  reflectGridSort();          // mirror the restored sort onto the grid dropdown
-  await load();
+    $("#launcher").style.display = "none";
+    $("#main").style.display = "";
+    $("#bootLoadMsg").textContent = "Opening case…";
+    $("#caseName").textContent = "GLEAPP — " + (c.case || "case");
+    document.title = "GLEAPP — " + (c.case || "");
+    if (c.vic) $("#btnVic").style.display = "";
+    updateScreenInfo(c.screening);
+    updateArchInfo(c.archives);
+    updateKnownHash(c.known_hash);
+    if (c.errors > 0) {
+      $("#errCount").textContent = `(${c.errors.toLocaleString()})`;
+      $("#btnRetryErr").style.display = "";
+      $("#btnRetryErr").textContent = `Retry ${c.errors.toLocaleString()} failed files`;
+    }
+    state.cats = c.categories || [];
+    state.sources = c.sources || [];
+    state.basemap = c.basemap || null;
+    showSourceStatus(c.archive_sources);
+    setupTz(c);
+    try { await refreshCats(); } catch (e) {}
+    (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
+    try {
+      if (localStorage.getItem("gleapp.meta") === "1") toggleMeta(true);
+      const ps = localStorage.getItem("gleapp.pagesize");
+      if (ps) { state.pageSize = +ps; $("#fpagesize").value = ps; }
+      const tl = localStorage.getItem("gleapp.tile");
+      if (tl) { $("#ftile").value = tl;
+        document.documentElement.style.setProperty("--tile", tl + "px"); }
+    } catch (e) {}
+    restoreListPrefs();
+    reflectGridSort();          // mirror the restored sort onto the grid dropdown
+    $("#bootLoadMsg").textContent = "Loading files…";
+    await load();
+  } finally {
+    // always lifts, even if something above threw - a stuck overlay reading
+    // "Loading files…" forever would be a worse failure than a bare page
+    $("#bootLoad").style.display = "none";
+  }
 
   // a processing job is still running (we entered the gallery early) — show the
   // live bottom bar and refresh the grid as thumbnails land

@@ -239,7 +239,7 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
   #hashImportDlg .box,#refDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #hashImportDlg h2,#refDlg h2{margin:0 0 4px;font-size:15px}
   #hashImportDlg .field,#refDlg .field{margin-top:10px}
@@ -253,9 +253,9 @@
   #caseSets .cs .x:hover,#refList .cs .x:hover{color:var(--danger)}
   .linkish:hover{text-decoration:underline}
   #stashWipeDlg{z-index:101}   /* above #stashDlg (bumped to 100 for the launcher) since it nests inside it */
-  #snapDlg .box,#histDlg .box,#stashDlg .box,#mapsDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #snapDlg .box,#histDlg .box,#stashDlg .box,#mapsDlg .box,#logoDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #histDlg .box{width:min(720px,94vw)}
-  #snapDlg h2,#histDlg h2,#stashDlg h2,#mapsDlg h2{margin:0 0 8px;font-size:15px}
+  #snapDlg h2,#histDlg h2,#stashDlg h2,#mapsDlg h2,#logoDlg h2{margin:0 0 8px;font-size:15px}
   #histList .histrow{padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}
   #histList .histrow .htop{display:flex;gap:8px;align-items:baseline}
   #histList .histrow time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -296,9 +296,9 @@
   #reportDlg .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
   #reportDlg .rfields{display:grid;grid-template-columns:1fr 1fr;gap:1px 12px;border:1px solid var(--line);border-radius:6px;padding:8px;max-height:180px;overflow:auto}
   #reportDlg .rfields label{margin:2px 0;font-size:12px}
-  #helpDlg,#refDlg,#mapsDlg,#stashDlg{z-index:100}   /* above the launcher (z-index 95) so Help / Reference data / Maps / Hash stash work pre-case */
+  #helpDlg,#refDlg,#mapsDlg,#stashDlg,#logoDlg{z-index:100}   /* above the launcher (z-index 95) so Help / Reference data / Maps / Hash stash / Agency logo work pre-case */
   #helpDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,94vw);height:88vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  #helpDlg .box>header{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);position:static}
+  #helpDlg .box>header{display:flex;flex-direction:row;align-items:center;gap:10px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);position:static}
   #helpDlg .box>header h2{margin:0;font-size:15px;flex:1}
   #helpDoc{flex:1;overflow:auto;padding:18px 26px;line-height:1.6}
   #helpDoc h2{font-size:17px;margin:26px 0 8px;padding-top:10px;border-top:1px solid var(--line);color:var(--fg)}
@@ -314,6 +314,26 @@
   #helpDoc .tag{display:inline-block;border-radius:4px;padding:0 6px;font-size:11px;font-weight:700;color:#fff}
   #helpDoc .toc{columns:2;font-size:12.5px;margin:4px 0 8px}
   #helpDoc kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px;font-family:inherit}
+  /* "Download as PDF" is the browser/OS print dialog with "Save as PDF" as the
+     destination - no PDF library is bundled. This scopes printing to just the
+     manual, un-fixes it so it flows across pages, and forces a light page. */
+  @media print{
+    body *{visibility:hidden}
+    #helpDlg,#helpDlg *{visibility:visible}
+    #helpDlg{position:absolute;inset:auto;left:0;top:0;width:100%;margin:0;background:#fff}
+    /* the on-screen rule below also sets left:50%/top:50%/transform:translate(-50%,-50%)
+       to center the dialog; transform still applies to a statically positioned
+       element, so all three must be cancelled here or the printed page is
+       shifted off by half the box's own (now full-page) size and clipped. */
+    #helpDlg .box{position:static;left:auto;top:auto;transform:none;width:100%;max-width:none;height:auto;overflow:visible;display:block;background:#fff;color:#000;border:0;box-shadow:none;border-radius:0}
+    #helpDlg .box>header{display:none}
+    #helpDoc{overflow:visible;padding:0;color:#000}
+    #helpDoc h2,#helpDoc h3,#helpDoc p,#helpDoc li{color:#000}
+    #helpDoc h2{border-top-color:#ccc}
+    #helpDoc code,#helpDoc pre{background:#f5f5f5;border-color:#ccc;color:#000}
+    #helpDoc th{background:#f0f0f0}
+    #helpDoc td,#helpDoc th{border-color:#999}
+  }
   #hexDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
   #hexDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(820px,96vw);height:86vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   #hexDlg header{display:flex;flex-direction:row;align-items:center;gap:8px;padding:8px 12px;background:var(--panel2);border-bottom:1px solid var(--line)}
@@ -357,6 +377,25 @@
   .prog{height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;margin:10px 0}
   .prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
   .prog.jobbar{height:6px;margin:4px 0 2px}
+  /* covers the page while boot() figures out launcher vs. case and, for a
+     case, while it fetches context/stats and the first page of files - a
+     large case's stats queries take real time (they scale with file count),
+     and a blank screen for a couple of seconds reads as "did this hang?"
+     without this. The bar is indeterminate (no known percent to show), so it
+     slides rather than fills, and the message changes as boot() moves
+     through its stages so it's visibly still working, not stuck. */
+  #bootLoad{position:fixed;inset:0;z-index:200;background:var(--bg);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+  #bootLoad .bar{width:240px;height:6px;background:var(--panel2);border-radius:5px;
+    overflow:hidden;position:relative}
+  #bootLoad .bar i{position:absolute;top:0;height:100%;width:35%;left:-35%;
+    background:var(--accent);border-radius:5px;animation:bootSlide 1.1s ease-in-out infinite}
+  #bootLoad .msg{color:var(--muted);font-size:13px}
+  @keyframes bootSlide{
+    0%{left:-35%}
+    60%{left:100%}
+    100%{left:100%}
+  }
   /* live processing bar (bottom of the window while a job runs) */
   #procBar{flex:none;display:none;align-items:center;gap:12px;background:var(--panel);
     border-top:2px solid var(--accent);padding:7px 14px;font-size:12px}
@@ -567,19 +606,25 @@
   <button class="btn sm" id="selClear">Deselect</button>
 </div>
 
+<div id="bootLoad">
+  <div class="bar"><i></i></div>
+  <div class="msg" id="bootLoadMsg">Loading…</div>
+</div>
+
 <div id="launcher"><div class="wrap">
   <div class="lhead">
     <h1>GLEAPP</h1>
     <span style="flex:1"></span>
-    <button class="btn" id="btnRefMenuLauncher" title="Offline maps, hash stash, and NSRL reference data — usable before opening a case">☰ Menu</button>
+    <button class="btn" id="btnRefMenuLauncher" title="Offline maps, hash stash, NSRL reference data, and the agency logo — usable before opening a case">☰ Menu</button>
     <div id="refMenuLauncher" class="hdrmenu">
       <button id="btnMapsLauncher" title="Offline maps: import a basemap file and see geolocated files on it. Nothing is fetched from the internet.">Maps</button>
       <button id="btnStashLauncher" title="Save the MD5s of your category 1–3 files to the local hash stash, and re-use them in future cases">Hash stash</button>
       <button id="btnRefStoreLauncher" title="Add or manage the shared NSRL / reference-hash store">Reference data (NSRL)</button>
+      <button id="btnLogoLauncher" title="The default logo on every case's report header, unless that case sets its own">Agency logo</button>
     </div>
     <button class="btn" id="btnHelpLauncher" title="Manual — features, filters, categories, shortcuts">Help / Manual</button>
   </div>
-  <div class="muted">Graphics · Logs · Examination · Automated Processing · Parsing — open a case to begin.</div>
+  <div class="muted">Graphics · Logs · Examination · Automated Processing · Parsing</div>
 
   <div class="card" id="recentCard" style="display:none">
     <h2>Recent cases</h2>
@@ -595,7 +640,8 @@
     <h2>Open existing case</h2>
     <div class="field">
       <input type="text" id="openPath" placeholder="path to case folder (contains case.gleapp)">
-      <button class="btn" id="openBrowse">Browse…</button>
+      <button class="btn" id="openBrowseFile">Browse to file…</button>
+      <button class="btn" id="openBrowse">Browse to folder…</button>
       <button class="btn" id="openGo">Open</button>
     </div>
   </div>
@@ -606,33 +652,33 @@
     <input type="text" id="newName" placeholder="Operation Example">
     <label>Case folder (created if missing)</label>
     <div class="field">
-      <input type="text" id="newPath" placeholder="C:\cases\operation-example">
+      <input type="text" id="newPath" placeholder="path to case folder">
       <button class="btn" id="newBrowse">Browse…</button>
     </div>
     <label>Examiner</label>
     <input type="text" id="newExaminer" placeholder="your name">
 
     <h2 style="margin-top:16px">Evidence to ingest</h2>
-    <div class="srclist" id="srcList"></div>
-    <div class="field">
-      <input type="text" id="srcTypePath" placeholder="paste a folder, .json or archive path, then Add">
-      <button class="btn" id="srcTypeAdd">Add</button>
-    </div>
-    <div class="field">
-      <button class="btn" id="addArchive">+ Browse for extraction or acquisition</button>
-      <button class="btn" id="addSpec">+ Browse for JSON (job or Project VIC)</button>
-      <button class="btn" id="addFolder">+ Browse for folder</button>
-    </div>
-    <div class="muted" style="font-size:11px;margin-top:2px">
+    <div class="muted" style="font-size:11px;margin:2px 0 6px">
       Accepts a folder, <code>.zip</code>/<code>.tar</code> (<code>.gz</code>/<code>.bz2</code>/<code>.xz</code>),
       <code>.E01</code>, or <code>.json</code> &mdash; see <b>Help / Manual</b> above for details.
       <span id="fsList" hidden></span>
     </div>
-    <label style="margin-top:10px"><input type="checkbox" id="optScreen" checked> Face / skin screening</label>
-    <label title="Match this case's files against your hash stash (category 1-3 hashes from past cases). Turn off for a case that isn't CSAM / Project VIC related, so an old stashed hit can't re-flag unrelated media. Changeable later from the Known hashes section."><input type="checkbox" id="optStash" checked> Match against my hash stash</label>
+    <div class="field">
+      <input type="text" id="srcTypePath" placeholder="paste a folder or file path, then Add">
+      <button class="btn" id="addFile">Browse to file…</button>
+      <button class="btn" id="addFolder">Browse to folder…</button>
+      <button class="btn" id="srcTypeAdd">Add</button>
+    </div>
+    <div class="muted" style="font-size:11px;margin:2px 0 6px">
+      Add as many sources as you need &mdash; every one you list here ingests together into this one case.
+    </div>
+    <div class="srclist" id="srcList"></div>
+    <label style="margin-top:10px"><input type="checkbox" id="optScreen" checked> Face / skin tone pre-processing</label>
+    <label title="Match this case's files against your hash stash (category 1-3 hashes from past cases). Turn off for a case that isn't CSAM / Project VIC related, so an old stashed hit can't re-flag unrelated media. Changeable later from the Known hashes section."><input type="checkbox" id="optStash" checked> Enable hash stash matching</label>
     <label title="Off, an extraction archive or acquisition is read in place and the case stays small; the file must stay where it is. On, the media is copied out so the case stands alone. A compressed tar is always copied out."><input type="checkbox" id="optStage"> Copy media out of extraction archives into the case</label>
-    <label title="E01 acquisitions only. After walking the filesystems, recover deleted media: first from deleted records (NTFS MFT, FAT32 and exFAT directory entries), which brings a deleted file back with its real name and reaches resident NTFS files a carve cannot, then by carving the space no volume claims for signatures (a carved file has no name, path or date of its own). Carving reads the whole free area, so it adds time. You can also run this later from the Source panel."><input type="checkbox" id="optCarve"> Recover deleted media from an E01 (deleted records and carving)</label>
-    <label>Video key frames per clip: <span id="kfv">6</span>
+    <label title="E01 acquisitions only. After walking the filesystems, recover deleted media: first from deleted records (NTFS MFT, FAT32 and exFAT directory entries), which brings a deleted file back with its real name and reaches resident NTFS files a carve cannot, then by carving the space no volume claims for signatures (a carved file has no name, path or date of its own). Carving reads the whole free area, so it adds time. You can also run this later from the Source panel."><input type="checkbox" id="optCarve"> Recover media (filesystem records and carving)</label>
+    <label>Video preview key frames: <span id="kfv">6</span>
       <input type="range" id="optKf" min="2" max="16" step="1" value="6" style="width:100%"></label>
 
     <div class="prog" id="jobProg" style="display:none"><i></i></div>
@@ -722,6 +768,7 @@
 <div id="helpDlg"><div class="box">
   <header>
     <h2>GLEAPP manual</h2>
+    <button class="btn sm" id="helpPdf" title="Opens your browser/OS print dialog - choose &quot;Save as PDF&quot; as the destination">Download as PDF</button>
     <button class="btn sm" id="helpClose">Close</button>
   </header>
   <div id="helpDoc"><p class="muted">Loading…</p></div>
@@ -903,6 +950,21 @@
   <div id="mapViewMap"></div>
 </div>
 
+<div id="logoDlg"><div class="box">
+  <h2>Agency logo</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:10px">
+    Shown on every case's report header unless that case sets its own from
+    its own Export dialog.
+  </div>
+  <div class="row" style="align-items:center">
+    <input type="file" id="logoFile" accept="image/*" style="flex:1">
+    <img id="logoPrev" style="max-height:48px;max-width:160px;display:none">
+    <button type="button" class="btn sm" id="logoClear" style="display:none">Clear</button>
+  </div>
+  <div class="row" style="margin-top:14px"><span style="flex:1"></span>
+    <button class="btn" id="logoClose">Done</button></div>
+</div></div>
+
 <div id="stashDlg"><div class="box">
   <h2>Local hash stash</h2>
   <p class="note">
@@ -914,9 +976,11 @@
     always confirm the final call.
   </p>
 
-  <div style="font-weight:600;font-size:12px;margin-top:12px">This case</div>
-  <div class="statgrid" id="stashCase"></div>
-  <button class="btn" id="stashAdd" style="border-color:var(--accent)">Add this case's hashes to the stash</button>
+  <div id="stashCaseSection">
+    <div style="font-weight:600;font-size:12px;margin-top:12px">This case</div>
+    <div class="statgrid" id="stashCase"></div>
+    <button class="btn" id="stashAdd" style="border-color:var(--accent)">Add this case's hashes to the stash</button>
+  </div>
 
   <div style="font-weight:600;font-size:12px;margin-top:16px">Stash total</div>
   <div class="statgrid" id="stashTotal"></div>
@@ -930,10 +994,10 @@
     <span id="stashPath"></span> <span id="stashShared"></span>
   </div>
   <div class="row" style="gap:6px">
-    <button class="btn sm" id="stashExportDb">Export a copy…</button>
+    <button class="btn sm" id="stashExportDb">Export a backup…</button>
     <button class="btn sm" id="stashExportCsv">Export CSV…</button>
-    <button class="btn sm" id="stashMerge">Merge a colleague's stash…</button>
-    <button class="btn sm" id="stashSetPath">Use a shared file…</button>
+    <button class="btn sm" id="stashMerge">Merge external hash stash…</button>
+    <button class="btn sm" id="stashSetPath">Use a shared hash stash…</button>
     <button class="btn sm" id="stashResetPath" style="display:none">Back to my own</button>
   </div>
 

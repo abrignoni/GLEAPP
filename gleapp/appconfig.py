@@ -80,6 +80,23 @@ def set_timezone(name: str | None) -> None:
     save(cfg)
 
 
+def get_agency_logo() -> str | None:
+    """The default agency logo (a data:image/... URI) that goes on every
+    case's report header unless that case sets its own from its own Export
+    dialog."""
+    v = load().get("agency_logo")
+    return v if isinstance(v, str) and v.startswith("data:image/") else None
+
+
+def set_agency_logo(data_uri: str | None) -> None:
+    cfg = load()
+    if data_uri:
+        cfg["agency_logo"] = data_uri
+    else:
+        cfg.pop("agency_logo", None)
+    save(cfg)
+
+
 def _case_summary(case_dir: Path) -> dict | None:
     """(files, name) for a case dir, or None if it isn't a real GLEAPP case."""
     db = case_dir / "case.gleapp"
