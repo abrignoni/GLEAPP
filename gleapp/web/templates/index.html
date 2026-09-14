@@ -26,6 +26,14 @@
   #saveState::before{content:"● "}
   .layout{display:flex;flex:1 1 auto;min-height:0}
   aside.filters{width:225px;flex:0 0 225px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  /* drag-to-resize grab strips between the sidebars and <main>. Own flex
+     items, not children of aside.filters/#meta - showMeta() replaces #meta's
+     whole innerHTML on every file click, which would silently delete a
+     handle placed inside it. */
+  .paneRz{flex:0 0 6px;position:relative;cursor:col-resize;z-index:6;user-select:none;touch-action:none}
+  .paneRz::before{content:"";position:absolute;top:0;bottom:0;left:2px;width:2px;background:var(--line)}
+  .paneRz:hover::before,.paneRz.drag::before{background:var(--accent)}
+  .paneRz.hidden{display:none}
   aside.filters .fscroll{flex:1 1 auto;min-height:0;overflow:auto;padding:12px}
   aside.filters h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
   aside.filters label{display:block;margin:3px 0}
@@ -582,6 +590,7 @@
       <div class="track"><i></i></div>
     </div>
   </aside>
+  <div class="paneRz" id="filtersRz" title="Drag to resize"></div>
   <main id="main">
     <div class="viewbar">
       <span class="vtoggle">
@@ -618,6 +627,7 @@
     <div class="pager" id="pagerBot"></div>
     <div id="colMenu"></div>
   </main>
+  <div class="paneRz hidden" id="metaRz" title="Drag to resize"></div>
   <aside class="meta hidden" id="meta">
     <div class="empty">Click a file to see its details.</div>
   </aside>
