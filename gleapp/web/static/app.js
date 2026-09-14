@@ -2309,13 +2309,24 @@ function updateScreenInfo(scr) {
   }
 }
 /* Poll the shared background job and mirror its progress into a
-   section-local status line + mini bar, so each action reports where it
-   lives: "Retry failed files" under Other, "Re-scan for duplicates" under
-   Display, screening under Screening. */
+   section-local status line (so each action reports where it lives: "Retry
+   failed files" under Other, "Re-scan for duplicates" under Display,
+   screening under Screening) plus the one shared bar pinned to the bottom of
+   the sidebar (#taskProg) - its own label and percentage, not just a moving
+   fill, and its own footer strip so it never reads as part of whatever
+   filter section happens to be open above it. */
 function trackJob(infoSel, barSel, label, done) {
   const info = $(infoSel);
   const bar = barSel ? $(barSel) : null;
-  if (bar) { bar.style.display = "block"; bar.querySelector("i").style.width = "0"; }
+  const barTxt = bar ? bar.querySelector(".jbtxt") : null;
+  const barPct = bar ? bar.querySelector(".jbpct") : null;
+  if (bar) {
+    bar.classList.remove("err");
+    bar.style.display = "block";
+    bar.querySelector("i").style.width = "0";
+    if (barTxt) barTxt.textContent = label;
+    if (barPct) barPct.textContent = "";
+  }
   const finish = (ok, j) => {
     if (bar) bar.style.display = "none";
     if (done) done(ok, j || {});
@@ -2326,6 +2337,7 @@ function trackJob(infoSel, barSel, label, done) {
     catch (e) { return setTimeout(poll, 900); }
     if (j.stage === "error") {
       info.textContent = `${label} failed: ${j.error || "unknown error"}`;
+      if (bar) { bar.classList.add("err"); if (barTxt) barTxt.textContent = `${label} failed`; }
       return finish(false, j);
     }
     if (j.stage === "done" || !j.running) return finish(true, j);
@@ -2334,6 +2346,8 @@ function trackJob(infoSel, barSel, label, done) {
       ? `${j.message || label} — ${j.done.toLocaleString()}/${j.total.toLocaleString()} (${pct}%)`
       : `${j.message || label}…`;
     if (bar) bar.querySelector("i").style.width = (j.total ? pct : 12) + "%";
+    if (barTxt) barTxt.textContent = j.message || label;
+    if (barPct) barPct.textContent = j.total ? `${pct}% · ${j.done.toLocaleString()}/${j.total.toLocaleString()}` : "";
     setTimeout(poll, 900);
   };
   poll();

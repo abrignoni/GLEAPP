@@ -25,7 +25,8 @@
   #saveState.error{color:var(--danger);cursor:pointer}
   #saveState::before{content:"● "}
   .layout{display:flex;flex:1 1 auto;min-height:0}
-  aside.filters{width:225px;flex:0 0 225px;background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px}
+  aside.filters{width:225px;flex:0 0 225px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  aside.filters .fscroll{flex:1 1 auto;min-height:0;overflow:auto;padding:12px}
   aside.filters h3{margin:14px 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
   aside.filters label{display:block;margin:3px 0}
   aside.filters select,aside.filters input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
@@ -379,7 +380,21 @@
   .srclist .s span{flex:1;word-break:break-all}
   .prog{height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;margin:10px 0}
   .prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
-  .prog.jobbar{height:6px;margin:4px 0 2px}
+  /* the one shared background-job bar, pinned to the bottom of the sidebar -
+     its own footer strip (border-top + padding), never inline with whatever
+     filter section happens to be last, so it never reads as part of it */
+  aside.filters .jobbar{flex:none;display:none;background:var(--panel2);
+    border-top:2px solid var(--accent);padding:8px 12px}
+  aside.filters .jobbar.err{border-top-color:var(--danger)}
+  aside.filters .jobbar .jbrow{display:flex;align-items:baseline;gap:8px;
+    margin-bottom:5px;font-size:11px}
+  aside.filters .jobbar .jbtxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;color:var(--fg);font-weight:600}
+  aside.filters .jobbar.err .jbtxt{color:var(--danger)}
+  aside.filters .jobbar .jbpct{white-space:nowrap;color:var(--muted)}
+  aside.filters .jobbar .track{height:8px;background:var(--panel);border-radius:5px;overflow:hidden}
+  aside.filters .jobbar .track i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+  aside.filters .jobbar.err .track i{background:var(--danger)}
   /* covers the page while boot() figures out launcher vs. case and, for a
      case, while it fetches context/stats and the first page of files - a
      large case's stats queries take real time (they scale with file count),
@@ -446,6 +461,7 @@
 </header>
 <div class="layout">
   <aside class="filters">
+    <div class="fscroll">
     <div class="fbar" id="fbar" hidden>
       <div class="fbarhead">
         <span id="fbarN">0 filters</span>
@@ -553,8 +569,12 @@
         <div id="archInfo" class="fnote"></div>
       </div>
     </details>
+    </div>
 
-    <div class="prog jobbar" id="taskProg" style="display:none"><i></i></div>
+    <div class="jobbar" id="taskProg" style="display:none">
+      <div class="jbrow"><span class="jbtxt"></span><span class="jbpct"></span></div>
+      <div class="track"><i></i></div>
+    </div>
   </aside>
   <main id="main">
     <div class="viewbar">
