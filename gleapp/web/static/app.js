@@ -1144,13 +1144,31 @@ function advancePast(justDone) {
   state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
   document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
-async function tagIds(ids, preset) {
-  const t = preset ?? prompt("Add tag(s), comma separated:");
-  if (!t) return;
+// Add-tag dialog: a plain browser prompt() shows as "<host> says", which reads
+// like a security warning and carries no case/app branding, so this is its own
+// small dialog instead - same pattern as every other single-field prompt here.
+let tagDlgIds = [];
+async function tagIds(ids) {
+  if (!ids.length) return;
+  tagDlgIds = ids;
+  $("#tagInput").value = "";
+  $("#tagDlg").style.display = "block";
+  $("#tagInput").focus();
+}
+async function _applyTag(t) {
+  const ids = tagDlgIds;
+  if (!t || !ids.length) return;
   await save("/api/tag", { ids, add: t.split(",").map(s => s.trim()).filter(Boolean) });
   if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
   toast("Tagged " + ids.length);
 }
+function closeTagDlg() { $("#tagDlg").style.display = "none"; }
+$("#tagGo").onclick = () => { const t = $("#tagInput").value.trim(); closeTagDlg(); _applyTag(t); };
+$("#tagCancel").onclick = closeTagDlg;
+$("#tagInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("#tagGo").click(); }
+});
+$("#tagDlg").addEventListener("click", e => { if (e.target.id === "tagDlg") closeTagDlg(); });
 
 /* ---------- metadata pane ---------- */
 function toggleMeta(force) {
@@ -1741,7 +1759,7 @@ document.addEventListener("keydown", e => {
     $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
     $("#stashWipeDlg").style.display = "none"; $("#hashImportDlg").style.display = "none";
     $("#refDlg").style.display = "none"; $("#histDlg").style.display = "none";
-    $("#addEvDlg").style.display = "none";
+    $("#addEvDlg").style.display = "none"; $("#tagDlg").style.display = "none";
     $("#mainMenu").style.display = "none"; $("#notifyMenu").style.display = "none";
     return;
   }
