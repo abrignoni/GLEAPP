@@ -1630,17 +1630,28 @@ $("#ctx").addEventListener("click", e => {
 function renderCatEd() {
   const rows = state.cats.filter(c => c.code !== 0).sort((a, b) => a.position - b.position);
   const custom = rows.filter(c => !c.locked);
+  // the keyboard shortcut is a category's position among ACTIVE categories
+  // (activeCats()[+e.key - 1]), which is not the same number as its fixed VIC
+  // code - showing "VIC 3" here read as a hotkey and wasn't one. Only the
+  // first 9 active categories have a key; the rest (including any hidden one)
+  // show no badge rather than a made-up one.
+  const acts = activeCats();
+  const keyBadge = code => {
+    const i = acts.findIndex(c => c.code === code);
+    return i >= 0 && i < 9 ? `<span class="vcode">⌨ <b>${i + 1}</b></span>` : "";
+  };
   $("#catRows").innerHTML = rows.map(c => c.locked ? `
     <div class="cat locked" data-code="${c.code}">
       <span class="grip" title="Project VIC preset — locked">🔒</span>
       <span class="dot" style="background:${c.color}"></span>
       <span class="lockname">${esc(c.name)}</span>
-      <span class="muted vcode">VIC ${c.code}</span>
+      ${keyBadge(c.code)}
     </div>` : `
     <div class="cat" draggable="true" data-code="${c.code}">
       <span class="grip">☰</span>
       <input type="color" value="${esc(c.color || "#8b93a3")}" title="Category color">
       <input type="text" value="${esc(c.name)}" placeholder="Category ${c.code} (unnamed)">
+      ${keyBadge(c.code)}
       <button class="btn sm" data-del="${c.code}">Delete</button>
     </div>`).join("");
 
