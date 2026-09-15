@@ -68,3 +68,21 @@ jobs:
 
       - name: Run test suite on Windows
         run: python -m pytest tests -v
+
+      # The desktop window is pywebview over Edge WebView2. requirements.txt installs
+      # pywebview and pythonnet; the runner image ships Edge but not the WebView2
+      # runtime, so it goes on here, the way pywebview's own CI installs it.
+      - name: Install the WebView2 runtime
+        run: choco install webview2-runtime --no-progress -y
+
+      # Opens the real window on the runner's desktop session, waits for the launcher
+      # to load, reads its title through the webview, and closes it. That is what a
+      # user gets from `python gleappGUI.py` after `pip install -r requirements.txt`:
+      # the pywebview import, pythonnet loading .NET, the WebView2 control, and Flask
+      # serving the page into it. Exit status 1 if any of that did not happen, and the
+      # step's own timeout if the window opens and never loads.
+      - name: Open the desktop window and close it
+        env:
+          GLEAPP_DESKTOP_SMOKE: "1"
+        timeout-minutes: 5
+        run: python gleappGUI.py
