@@ -255,7 +255,7 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg,#tagDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
   #hashImportDlg .box,#refDlg .box,#vicExportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #addEvDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #hashImportDlg h2,#refDlg h2,#vicExportDlg h2,#addEvDlg h2{margin:0 0 4px;font-size:15px}
@@ -307,9 +307,10 @@
   #snapList .snaprow b{font-size:12px}
   #snapList .tagauto{display:inline-block;padding:1px 7px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);font-size:10px;vertical-align:1px}
   #snapList button[data-snap]{white-space:nowrap}
-  #catEd .box,#reportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:440px;max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #catEd .box,#reportDlg .box,#tagDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:440px;max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #reportDlg .box{width:520px}
-  #catEd h2,#reportDlg h2{margin:0 0 10px;font-size:15px}
+  #catEd h2,#reportDlg h2,#tagDlg h2{margin:0 0 10px;font-size:15px}
+  #tagDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px;font:inherit}
   #reportDlg label{display:block;margin:4px 0}
   #reportDlg input[type=text],#reportDlg textarea{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px;font:inherit;margin-top:2px}
   #reportDlg .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
@@ -1111,6 +1112,15 @@
       <button class="btn" id="wipeCancel">Cancel</button>
       <button class="btn wipe" id="wipeGo" disabled>Erase everything</button>
     </div>
+  </div>
+</div></div>
+
+<div id="tagDlg"><div class="box">
+  <h2>Add tag</h2>
+  <input type="text" id="tagInput" placeholder="tag1, tag2, …" autocomplete="off">
+  <div class="row" style="margin-top:12px"><span style="flex:1"></span>
+    <button class="btn" id="tagCancel">Cancel</button>
+    <button class="btn" id="tagGo">Add</button>
   </div>
 </div></div>
 
