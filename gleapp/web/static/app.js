@@ -139,10 +139,12 @@ async function refreshCats() {
     sel.insertAdjacentHTML("beforeend",
       `<option value="${c.code}">${esc(c.name)}${c.active ? "" : " (hidden)"}</option>`));
   sel.value = cur || "any";
-  // selection bar buttons
+  // selection bar buttons - only the first 9 have a number key, same as the
+  // keydown handler's activeCats()[+e.key - 1]
   $("#selCats").innerHTML = activeCats().map((c, i) =>
-    `<button class="btn sm" data-cat="${c.code}" title="key ${i + 1}"
-      style="border-color:${c.color}">${esc(c.name || "Category " + c.code)}</button>`).join("");
+    `<button class="btn sm" data-cat="${c.code}"${i < 9 ? ` title="key ${i + 1}"` : ""}
+      style="border-color:${c.color}">${esc(c.name || "Category " + c.code)}${
+        i < 9 ? ` <span class="muted">${i + 1}</span>` : ""}</button>`).join("");
 }
 
 /* ---------- filters ---------- */
@@ -2086,8 +2088,6 @@ $("#selbar").addEventListener("click", e => {
   const b = e.target.closest("[data-cat]");
   if (b) categorize([...state.sel], +b.dataset.cat);
 });
-$("#selTag").onclick = () => tagIds([...state.sel]);
-$("#selClear").onclick = () => { state.sel.clear(); syncSel(); };
 /* ---------- export / report dialog ---------- */
 let rptLogo = null;   // data: URI of the chosen agency logo, or null
 
@@ -2215,7 +2215,6 @@ async function exportMd5(ids) {
   if (r.error) return toast(r.message || "MD5 export failed");
   toast(`${r.count} MD5 hash(es) → ${r.path}`);
 }
-$("#selMd5").onclick = () => exportMd5([...state.sel]);
 
 /* ---------- display timezone ---------- */
 const OTHER_TZ = "__other__";

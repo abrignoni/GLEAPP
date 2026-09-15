@@ -87,8 +87,6 @@
   .viewbar label{display:flex;align-items:center;gap:5px}
   .viewbar select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:3px 6px;font:inherit}
   .viewbar input[type=range]{width:110px}
-  .viewbar .keyhint{font-size:11px;line-height:1.5}
-  .viewbar .keyhint b{color:var(--fg);font-weight:600}
   .banner{background:var(--panel2);border:1px solid var(--accent);border-radius:6px;padding:6px 10px;margin-bottom:8px;display:flex;gap:10px;align-items:center}
   .pager{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 2px;font-size:12px;color:var(--muted)}
   .pager.hidden{display:none}
@@ -377,7 +375,7 @@
   #toast.clickable{cursor:pointer}
   #toast.clickable:hover{background:var(--accent);color:#fff}
   .muted{color:var(--muted)}
-  .selbar{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:6px 10px;display:none;gap:6px;align-items:center;flex-wrap:wrap}
+  .selbar{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 10px;display:none;gap:6px;align-items:center;flex-wrap:wrap}
   /* launcher */
   #launcher{position:fixed;inset:0;background:var(--bg);z-index:95;display:none;overflow:auto}
   #launcher .wrap{max-width:720px;margin:5vh auto;padding:0 20px}
@@ -620,7 +618,11 @@
       <label title="Timezone for filesystem / ingest times shown in the list and details pane. Does NOT change Captured (EXIF) times.">Timezone
         <select id="ftz"></select>
       </label>
-      <span class="keyhint"><b>1&ndash;9</b> categorize &middot; <b>0</b> clear &middot; <b>F</b> find similar &middot; <b>H</b> hex &middot; <b>I</b> details &middot; <b>A</b> select all &middot; <b>&larr;&uarr;&darr;&rarr;</b> move &middot; <b>PgUp/PgDn</b> page &middot; <b>Esc</b> close</span>
+      <div class="selbar" id="selbar">
+        <b id="selCount">0</b> selected
+        <span id="selCats"></span>
+        <button class="btn sm" data-cat="0">Clear cat</button>
+      </div>
     </div>
     <div class="banner" id="simBanner" style="display:none">
       <span>Showing <b id="simId"></b></span>
@@ -641,14 +643,6 @@
   <span class="track"><i id="procFill"></i></span>
   <span class="pct" id="procPct"></span>
   <button class="btn sm" id="procDismiss" style="display:none">Dismiss</button>
-</div>
-<div class="selbar" id="selbar">
-  <b id="selCount">0</b> selected
-  <span id="selCats"></span>
-  <button class="btn sm" data-cat="0">Clear cat</button>
-  <button class="btn sm" id="selTag">Tag…</button>
-  <button class="btn sm" id="selMd5">Export MD5s</button>
-  <button class="btn sm" id="selClear">Deselect</button>
 </div>
 
 <div id="bootLoad">
