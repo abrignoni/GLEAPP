@@ -28,3 +28,11 @@ numpy>=1.24
 opencv-python-headless>=4.8
 Flask>=3.0
 tzdata>=2024.1
+# The native desktop window (gleappGUI.py, `gleapp desktop`). The package is
+# pywebview and the module it installs is `webview`; PyPI's package named `webview`
+# is a different project with no wheels, so never install that one. pip brings
+# the platform bindings with it, pythonnet on Windows and PyObjC on macOS, all as
+# wheels for CPython 3.10 to 3.14 (PyPI metadata, 2026-09-15). One dependency,
+# proxy_tools, is pure Python and published only as a source archive, so pip builds
+# it with no compiler. Linux needs a GUI toolkit on top: README, "Desktop app".
+pywebview>=5.0

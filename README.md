@@ -57,30 +57,44 @@ pip install -r requirements.txt
 python gleapp.py web              # opens the review gallery in your browser
 ```
 
-`python gleappGUI.py` opens the native desktop window instead; that needs the
-desktop extra, `pip install -e .[desktop]`. Python 3.10 or newer. No external
-binaries are required, OpenCV handles video.
+`python gleappGUI.py` opens the same interface in a native desktop window
+instead of a browser tab; `requirements.txt` installs what that needs on Windows
+and macOS. Python 3.10 or newer. No external binaries are required, OpenCV
+handles video.
 
 Everything installs from prebuilt wheels on Windows x64 with Python 3.10 through
-3.14, and on macOS with Python 3.10 through 3.13. One dependency, `pyliblzfse`,
-has no prebuilt wheel for Linux, for Windows on ARM, or for Python 3.14 on macOS,
-so those setups need a C compiler on the machine and pip builds it from source on
-its own. It decodes Apple's LZFSE-compressed GPU textures and is reached only for
-that format. Its Windows x64 wheels are vendored in `whl_files/` so Windows never
+3.14, and on macOS with Python 3.10 through 3.13, except `proxy_tools`, a small
+pure-Python package pywebview depends on, which pip builds from its source
+archive with no compiler involved. One dependency, `pyliblzfse`, has no prebuilt
+wheel for Linux, for Windows on ARM, or for Python 3.14 on macOS, so those setups
+need a C compiler on the machine and pip builds it from source on its own. It
+decodes Apple's LZFSE-compressed GPU textures and is reached only for that
+format. Its Windows x64 wheels are vendored in `whl_files/` so Windows never
 needs a compiler.
 
 ## Desktop app (offline, no browser)
 
-GLEAPP ships a native-window build — same UI, no browser, fully offline. The
-window is the OS webview (Edge **WebView2** on Windows, present by default on
-Windows 10 21H2+ and Windows 11); Flask runs in-process on a random localhost
-port.
+GLEAPP also runs as a native window: the same interface, no browser, fully
+offline. The window is the OS webview (Edge **WebView2** on Windows, present by
+default on Windows 10 21H2+ and Windows 11; WebKit on macOS); Flask runs
+in-process on a random localhost port.
 
 ```bash
-pip install -e .[desktop]
-gleapp-desktop                     # opens the launcher window
-gleapp -c mycase desktop           # open straight into a case
+python gleappGUI.py                 # opens the launcher window
+python gleapp.py -c mycase desktop  # open straight into a case
 ```
+
+`requirements.txt` carries pywebview, the library that opens the window, and pip
+brings its platform bindings with it (pythonnet on Windows, PyObjC on macOS).
+Do not install the PyPI package named `webview`: that is a different project,
+with no prebuilt wheels, and it is not what GLEAPP uses. On Linux pywebview needs
+a GUI toolkit that pip does not install by default: either
+`pip install "pywebview[qt]"` (Qt wheels, about 200 MB), or the distribution's
+PyGObject and WebKitGTK packages, which pywebview's installation guide lists.
+Without one, `python gleappGUI.py` says so and exits, and `python gleapp.py web`
+runs the same interface in a browser.
+
+`pip install -e .` adds the `gleapp` and `gleapp-desktop` console commands.
 
 ### Building the executables
 

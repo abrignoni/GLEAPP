@@ -29,8 +29,10 @@ If anything here contradicts the code or a workflow file, the code wins and this
 
 The same steps as the other LEAPPs: clone, venv, `pip install -r requirements.txt`, then
 `python gleapp.py web` for the browser gallery or `python gleappGUI.py` for the native
-window, which needs `pip install -e .[desktop]`. The README's Install section says which
-setups need a C compiler and why.
+window. `requirements.txt` carries pywebview, the window's library (imported as `webview`;
+PyPI's package named `webview` is a different project), with its Windows and macOS
+bindings; Linux needs a GUI toolkit on top, see the README's Desktop app section. The
+README's Install section says which setups need a C compiler and why.
 
 ## Tests
 
