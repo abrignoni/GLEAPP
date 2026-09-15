@@ -161,7 +161,10 @@ def start(func=None, args=None):
 
 
 def _stub_webview(tmp_path, monkeypatch, *, loaded=True, title="GLEAPP Review",
-                  renderer="wkwebview", start_raises=None):
+                  renderer="edgechromium", start_raises=None):
+    # The stub's renderer is WebView2's name because the smoke requires that one on
+    # Windows and accepts any elsewhere, and this suite runs on Windows in CI. The
+    # per-platform rule itself is pinned by test_smoke_requires_webview2_on_windows_only.
     source = (_STUB_WEBVIEW
               .replace("LOADED", repr(loaded))
               .replace("TITLE", repr(title))

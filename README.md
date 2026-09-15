@@ -63,14 +63,18 @@ and macOS. Python 3.10 or newer. No external binaries are required, OpenCV
 handles video.
 
 Everything installs from prebuilt wheels on Windows x64 with Python 3.10 through
-3.14, and on macOS with Python 3.10 through 3.13, except `proxy_tools`, a small
-pure-Python package pywebview depends on, which pip builds from its source
-archive with no compiler involved. One dependency, `pyliblzfse`, has no prebuilt
-wheel for Linux, for Windows on ARM, or for Python 3.14 on macOS, so those setups
-need a C compiler on the machine and pip builds it from source on its own. It
-decodes Apple's LZFSE-compressed GPU textures and is reached only for that
-format. Its Windows x64 wheels are vendored in `whl_files/` so Windows never
-needs a compiler.
+3.14, and on macOS with Python 3.10 through 3.13 (macOS 13 or newer on Apple
+silicon, 14 or newer on Intel, which is where OpenCV's wheels start), with two
+exceptions. `proxy_tools`, a small pure-Python package pywebview depends on, is
+published only as a source archive, and pip builds it with no compiler involved.
+`pyliblzfse` has no prebuilt wheel for Linux or for Python 3.14 on macOS, so
+those setups need a C compiler on the machine and pip builds it from source on
+its own; it decodes Apple's LZFSE-compressed GPU textures and is reached only for
+that format, and its Windows x64 wheels are vendored in `whl_files/` so Windows
+x64 never needs a compiler. Windows on ARM is a different case: on every one of
+these Python versions `opencv-python-headless`, `brotli` and `pyliblzfse` have no
+wheel for it (and more packages on 3.10 and 3.11), so it needs a full build
+toolchain and builds them from source. Measured against PyPI on 2026-09-15.
 
 ## Desktop app (offline, no browser)
 
