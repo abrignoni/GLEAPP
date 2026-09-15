@@ -1274,7 +1274,6 @@ async function showMeta(id) {
       <div>Category:
         <span class="catnow" style="background:${catColor(f.category)}">
           ${esc(catName(f.category))}</span></div>
-      <div class="row" id="mCats"></div>
       <div class="row">
         <button class="btn sm" id="mSim">Find similar</button>
         <button class="btn sm" id="mTag">Add tag</button>
@@ -1307,12 +1306,6 @@ async function showMeta(id) {
         <div class="row"><button class="btn sm" id="mVstack">Show only this group</button></div>` : ""}
     </div>`;
 
-  $("#mCats").innerHTML = activeCats().map((c, i) =>
-    `<button class="btn sm" data-c="${c.code}" style="border-color:${c.color}"
-      title="key ${i + 1}">${esc(c.name || "Cat " + c.code)}</button>`).join("")
-    + `<button class="btn sm" data-c="0">Clear</button>`;
-  $("#mCats").querySelectorAll("[data-c]").forEach(b =>
-    b.onclick = () => categorize([id], +b.dataset.c));
   renderDetailMap(f);
   if ($("#mGpsCopy")) $("#mGpsCopy").onclick = async () => {
     try { await navigator.clipboard.writeText(`${f.gps_lat}, ${f.gps_lon}`); toast("Coordinates copied"); }
