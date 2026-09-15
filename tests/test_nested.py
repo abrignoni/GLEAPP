@@ -216,6 +216,82 @@ def test_re_running_expand_adds_nothing(tmp_path):
     assert len(case.db.iter_files()) == before
 
 
+# ---- the expansion message has to outlive the processing pass ----------------
+#
+# An ingest expands the containers and then processes every row, containers
+# included. Processing a container only hashes it, and until 2026-09-15 its success
+# cleared the error column, which is where the expansion pass had just written why
+# the members are not in the case. Measured: the RAR explanation and "could not
+# expand archive" were there after ingest_sources and gone after process.
+
+# Typed out rather than imported from nested.py, so the test cannot pass by reading
+# the expected text from the code it checks.
+_RAR_MESSAGE = ("RAR archive - GLEAPP has no RAR reader; extract it with another tool "
+                "and add the files as a folder")
+
+
+def _rar_and_a_cut_7z(ev):
+    import py7zr                                        # pylint: disable=import-outside-toplevel
+    with zipfile.ZipFile(ev / "good.zip", "w") as zf:
+        zf.writestr("fine.jpg", _jpg((3, 3, 3)))
+    # a RAR5 signature over junk: registered as an archive, and there is no reader
+    (ev / "evidence.rar").write_bytes(b"Rar!\x1a\x07\x01\x00" + bytes(range(256)) * 4)
+    with py7zr.SevenZipFile(ev / "whole.7z", "w") as z:
+        z.writestr(_jpg((4, 4, 4)), "shot.jpg")
+    (ev / "cut.7z").write_bytes((ev / "whole.7z").read_bytes()[:200])
+    (ev / "whole.7z").unlink()
+
+
+def test_the_expansion_message_survives_the_processing_pass(tmp_path):
+    case, _ = _ingest_folder(tmp_path, _rar_and_a_cut_7z)
+    rows = _rows(case)
+    assert rows["evidence.rar"]["error"] == _RAR_MESSAGE
+    assert (rows["cut.7z"]["error"] or "").startswith("could not expand archive: ")
+    assert rows["good.zip"]["error"] is None
+    assert rows["good.zip/fine.jpg"]["kind"] == "image"
+
+    st = process(case, workers=1, keyframes=0, screen=False)
+    rows = _rows(case)
+    assert st.errors == 0                                  # hashing the containers went fine
+    assert rows["evidence.rar"]["md5"] and rows["cut.7z"]["md5"]
+    assert rows["evidence.rar"]["error"] == _RAR_MESSAGE
+    assert (rows["cut.7z"]["error"] or "").startswith("could not expand archive: ")
+    assert rows["good.zip"]["error"] is None
+
+
+def test_a_codec_missing_at_run_time_is_named_on_the_container_row(tmp_path, monkeypatch):
+    """A frozen build with a codec package left out of its bundle: py7zr cannot import,
+    every 7z stays unexpanded, and the row has to say so once the whole job is done."""
+    import py7zr                                        # pylint: disable=import-outside-toplevel
+    ev = tmp_path / "ev"
+    ev.mkdir()
+    with py7zr.SevenZipFile(ev / "shots.7z", "w") as z:
+        z.writestr(_jpg((6, 6, 6)), "clip.jpg")
+    monkeypatch.setitem(sys.modules, "py7zr", None)     # `import py7zr` now raises ImportError
+
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    ingest_sources(case, [Source(kind="folder", path=str(ev), name="ev")])
+    process(case, workers=1, keyframes=0, screen=False)
+    rows = _rows(case)
+    assert [r for r in rows.values() if r["container_id"]] == []
+    assert (rows["shots.7z"]["error"] or "").startswith("could not expand archive: ")
+
+
+def test_a_container_that_opens_on_a_forced_re_run_loses_its_old_message(tmp_path):
+    def build(ev):
+        (ev / "late.zip").write_bytes(b"PK\x03\x04" + b"\x00" * 400)   # unreadable for now
+
+    case, _ = _ingest_folder(tmp_path, build)
+    assert (_rows(case)["late.zip"]["error"] or "").startswith("could not expand archive: ")
+    with zipfile.ZipFile(tmp_path / "ev" / "late.zip", "w") as zf:      # a real zip now
+        zf.writestr("a.jpg", _jpg((2, 2, 2)))
+
+    assert nested.expand_containers(case, force=True) == 1
+    rows = _rows(case)
+    assert rows["late.zip"]["error"] is None
+    assert rows["late.zip/a.jpg"]["kind"] == "image"
+
+
 # ---- E01 ------------------------------------------------------------------
 
 def test_expand_archives_endpoint_and_context(tmp_path):

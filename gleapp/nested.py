@@ -42,6 +42,20 @@ EXTRACT_DIR = "extracted"
 
 _ZIP_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 
+# What this pass writes in ``files.error`` on a container row. The processing pass
+# that follows an ingest hashes the container as well, and hashing it succeeding says
+# nothing about why its members are not in the case, so ``pipeline._process_one_at``
+# leaves a message of one of these shapes alone. A forced re-expansion that opens the
+# container clears it (see ``_expand_one``).
+RAR_ERROR = ("RAR archive - GLEAPP has no RAR reader; extract it with another tool "
+             "and add the files as a folder")
+EXPANSION_ERROR_PREFIXES = ("could not expand archive: ", "archive unavailable: ", RAR_ERROR)
+
+
+def is_expansion_error(text: str | None) -> bool:
+    """True when ``text`` is a message ``expand_containers`` wrote on a container row."""
+    return bool(text) and str(text).startswith(EXPANSION_ERROR_PREFIXES)
+
 
 class _Member:
     """One file inside a container: its archive-relative name, size, timestamps
@@ -230,10 +244,7 @@ def _expand_one(case, row, *, include_other: bool, tally: dict) -> list[int]:
             if fmt in (None, "rar"):
                 if fmt == "rar":
                     tally["unsupported"] += 1
-                    case.db.update_file(
-                        row["id"],
-                        error="RAR archive - GLEAPP has no RAR reader; extract "
-                              "it with another tool and add the files as a folder")
+                    case.db.update_file(row["id"], error=RAR_ERROR)
                 return []
             written = 0
             for m in _members(Path(local), fmt):
@@ -282,6 +293,9 @@ def _expand_one(case, row, *, include_other: bool, tally: dict) -> list[int]:
                 tally["added"] += 1
                 if kind == "archive":
                     new_archives.append(fid)
+            if is_expansion_error(row["error"] if "error" in row.keys() else None):
+                # it would not open on an earlier pass and has opened now
+                case.db.update_file(row["id"], error=None)
             case.db.commit()
     except archive.ArchiveUnavailable as exc:
         case.db.update_file(row["id"],

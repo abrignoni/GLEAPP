@@ -21,7 +21,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import archive, dedupe, detect, hashdb, imaging, lzc  # noqa: F401  (imaging: decoder setup)
+from . import archive, dedupe, detect, hashdb, imaging, lzc, nested  # noqa: F401  (imaging: decoder setup)
 from .case import Case, Source
 from .hashing import crypto_hashes, perceptual_hashes
 from .ingest import scan, sniff_kind
@@ -109,7 +109,6 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
 
     # A .zip / .tar / .gz sitting inside a source is registered as a container;
     # open it now so its media is processed in the same pass.
-    from . import nested
     added = nested.expand_containers(
         case, progress=(lambda k: progress(n + k)) if progress else None,
         include_other=any(getattr(s, "include_other", False) for s in sources))
@@ -189,7 +188,12 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
             # A real .zip / .tar / .gz container: its media members were pulled
             # out and registered separately (gleapp/nested.py). Nothing here to
             # decode - keep the hashes computed above and leave it as a container.
-            upd["error"] = None
+            # Its error column belongs to that expansion pass: a message there says
+            # why the members are not in the case, and hashing the container here
+            # has no bearing on that, so it stays. Only this pass's own earlier
+            # message (the source archive unavailable last time) is cleared.
+            if not nested.is_expansion_error(row["error"]):
+                upd["error"] = None
             return {"id": fid, "status": "ok", "fields": upd, "keyframes": []}
 
         # A Project VIC import (or an app image cache) can hand us an

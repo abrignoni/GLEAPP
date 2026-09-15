@@ -53,11 +53,12 @@ from its sdist. `py7zr==1.x` dropped the in-memory `read()`, so `_sevenzip_membe
 extracts to a `TemporaryDirectory` and reads back from disk. 7-Zip is standard in
 evidence; RAR is not handled (its readers need an external `unrar`/`bsdtar` binary, which
 a self-contained build cannot carry). `nested.py` writes that explanation on the container
-row, and "could not expand archive: ..." on one it cannot read, but the processing pass
-that follows in the same ingest sets `error=None` on every archive row it processes
-(`pipeline._process_one_at`), so neither message survives a fresh ingest. Measured
-2026-09-15 with a fake RAR, a truncated 7z and py7zr's zstd import blocked: the rows
-carried the messages after `ingest_sources` and `None` after `process`.
+row, and "could not expand archive: ..." on one it cannot read; the processing pass that
+follows keeps both (its archive branch clears only its own earlier message, decided by
+`nested.is_expansion_error`), and a forced re-expansion that opens the container clears
+them. Until 2026-09-15 that pass set `error=None` on every archive row it touched, so
+neither message survived a fresh ingest: measured with a fake RAR, a truncated 7z and
+py7zr's zstd import blocked, and now pinned by three tests in `tests/test_nested.py`.
 
 The PyInstaller spec's `collect_all` list names py7zr and its codecs, and two entries do
 less than they read: `pybcj` is the distribution name (the module is `bcj`) and collects
