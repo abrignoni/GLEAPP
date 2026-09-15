@@ -239,7 +239,7 @@ def test_report_embeds_overview_and_per_file_maps(tmp_path):
     c.close()
     assert "class='overview'" in html
     assert "2 geolocated file(s)" in html
-    assert html.count("class='locmap'") == 2                    # the two GPS files, not c.jpg
+    assert html.count("class='locmap openable'") == 2            # the two GPS files, not c.jpg
     assert "Basemap used in review: base" in html                # provenance recorded by the render
     import hashlib
     assert hashlib.sha256(FIXTURE.read_bytes()).hexdigest() not in html   # name only, no hash
@@ -255,7 +255,7 @@ def test_report_embeds_overview_and_per_file_maps(tmp_path):
     c2 = open_case(tmp_path / "case")
     html2 = report.export_html(c2, tmp_path / "r2.html", maps=False).read_text(encoding="utf-8")
     c2.close()
-    assert "class='overview'" not in html2 and "class='locmap'" not in html2
+    assert "class='overview'" not in html2 and "class='locmap openable'" not in html2
 
 
 # ---- what the report does with a file the basemap cannot draw --------------
@@ -324,7 +324,7 @@ def test_the_report_draws_no_locator_for_a_file_outside_the_basemap(tmp_path,
                                                                     monkeypatch):
     _half_world(monkeypatch)
     doc = _report(tmp_path, [WEST, EAST])
-    assert doc.count("class='locmap'") == 1, "the uncovered file still got a locator"
+    assert doc.count("class='locmap openable'") == 1, "the uncovered file still got a locator"
     assert "2 geolocated file(s): 1 drawn on the imported offline basemap" in _note(doc)
     assert "1 outside the basemap" in _note(doc)
 
@@ -376,7 +376,7 @@ def test_nothing_covered_leaves_the_note_without_a_map(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
     doc = _report(tmp_path, [WEST, EAST])
-    assert "class='overview'" in doc and "class='locmap'" not in doc
+    assert "class='overview'" in doc and "class='locmap openable'" not in doc
     assert "<img" not in _note(doc) and "data:image/png" not in doc
     assert "2 geolocated file(s): 0 drawn" in _note(doc)
     assert "2 outside the basemap" in _note(doc)
@@ -399,7 +399,7 @@ def test_the_html_report_and_the_lava_export_map_the_same_files(tmp_path, monkey
         c.close()
     html_mapped = {
         re.search(r"<summary>(.*?)</summary>", card).group(1)
-        for card in doc.split("<div class='card' id=")[1:] if "class='locmap'" in card}
+        for card in doc.split("<div class='card' id=")[1:] if "class='locmap openable'" in card}
 
     manifest = json.loads((tmp_path / "lava" / "_lava_data.lava").read_text(
         encoding="utf-8"))
