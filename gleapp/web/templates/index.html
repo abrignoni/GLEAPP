@@ -205,7 +205,7 @@
   #ctx .sep{height:1px;background:var(--line);margin:4px 2px}
   #ctx .dot{width:10px;height:10px;border-radius:3px;flex:0 0 10px}
   /* right metadata pane */
-  aside.meta{width:340px;flex:0 0 340px;background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:0}
+  aside.meta{width:340px;flex:0 0 340px;background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;overflow-x:hidden;padding:0}
   aside.meta.hidden{display:none}
   .meta .preview{width:100%;height:230px;background:#000;display:flex;align-items:center;justify-content:center;position:relative}
   .meta .preview img,.meta .preview video{max-width:100%;max-height:100%;object-fit:contain}
@@ -213,10 +213,10 @@
   .meta .body{padding:12px 14px}
   .meta h2{font-size:13px;margin:0 0 2px;word-break:break-all}
   .meta .path{color:var(--muted);font-size:11px;word-break:break-all;margin-bottom:8px}
-  .meta table{width:100%;border-collapse:collapse;margin-top:6px}
-  .meta td{padding:3px 4px;vertical-align:top;border-bottom:1px solid var(--line);font-size:12px}
+  .meta table{width:100%;border-collapse:collapse;margin-top:6px;table-layout:fixed}
+  .meta td{padding:3px 4px;vertical-align:top;border-bottom:1px solid var(--line);font-size:12px;overflow-wrap:anywhere}
   .meta td:first-child{color:var(--muted);width:34%}
-  .meta td.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px;word-break:break-all}
+  .meta td.mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}
   .meta .catnow{display:inline-block;padding:2px 9px;border-radius:5px;color:#fff;font-weight:600;font-size:12px}
   .meta .empty{color:var(--muted);padding:24px 14px;text-align:center}
   .film{position:relative;display:flex;gap:4px;overflow-x:auto;padding:6px 0}
