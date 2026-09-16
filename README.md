@@ -37,8 +37,9 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | **Visual screening** | **YuNet** DNN face detection + broad **skin-tone ratio** as triage aids (pluggable — swap in another model behind the same functions) |
 | **Similarity search** | *Right-click → Find similar* across stills **and** video key frames; also on the CLI |
 | **Categories** | Locked **Project VIC 2.0 (US)** presets (codes 0–5) in every case; examiner adds their own (code 6+ — rename / delete / reorder, auto colors); shown as a color bar + name on every tile |
+| **Flags** | Independent of category — a file can carry any number (Evidence, Bondage, whatever the case calls for); examiner-defined, none preseeded or locked; searchable, filterable, and shown as colored labels in every report |
 | **Saving** | Every action commits to `case.gleapp` immediately (SQLite WAL); notes autosave; header shows save status; timestamped snapshots in `<case>/backups/` on a timer, on close, and on demand |
-| **Review workflow** | Filter to Uncategorized and work the backlog — categorizing *is* the review step, cursor auto-advances, ↻ Refresh clears done files; free-form tags, per-file notes, audit log of every action |
+| **Review workflow** | Filter to Uncategorized and work the backlog — categorizing *is* the review step, cursor auto-advances, ↻ Refresh clears done files; flags, per-file notes, audit log of every action |
 | **Reporting** | HTML contact-sheet, CSV, JSON, **KMZ** of geolocated media (thumbnails embedded, for Google Earth), MD5 list, Project VIC round-trip, and a **LAVA** project the LEAPP family's viewer opens |
 | **Web gallery** | Filter sidebar, multi-select, keyboard categorization, docked metadata pane (single-click), filmstrip + duplicate stack, one-click export, built-in manual |
 
@@ -192,7 +193,7 @@ Re-running `ingest` / `process` skips already-processed files; add `--force` to 
 
 ### Saving
 
-Nothing needs an explicit save. Every categorize / tag / rename commits
+Nothing needs an explicit save. Every categorize / flag / rename commits
 to `case.gleapp` the instant you do it (SQLite in WAL mode — survives a hard
 kill), and notes autosave a second after you stop typing. The header shows
 **"All changes saved · HH:MM"**, or **"Saving…"** / **"⚠ Save failed"**.
@@ -250,7 +251,7 @@ error flag so the counts still line up for export.
 
 Each file carries its VIC MD5 (processing trusts it, skips re-hashing), MediaID,
 original filename and device path, MIME type, victim/offender/distributed flags,
-and the Series and Tags the record carried, kept apart from the examiner's own tags. Existing `Category` values are imported; GLEAPP category codes map 1:1 to
+and the Series and Tags the record carried, kept apart from the examiner's own flags. Existing `Category` values are imported; GLEAPP category codes map 1:1 to
 VIC codes (0 = uncategorized = `null`) — the codes 1–5 GLEAPP seeds *are* the
 Project VIC scheme, so an imported category lands on the matching locked preset.
 
@@ -479,7 +480,7 @@ folders / a JSON job, then watch processing progress — no CLI needed.
 | Snapshot | **Save snapshot** button → timestamped copy in `<case>/backups/` |
 | Switch case | **⇤ Close case** button → snapshots, closes, returns to the launcher (recent / open / new) |
 | Pages | **Thumbnails per page** in the sidebar (50–1500); pager bar has First/Prev/Next/Last and a jump-to-page box; `PageUp`/`PageDown` keys, `Ctrl+Home`/`Ctrl+End` |
-| Search | sidebar box — matches file name, path, original device path/name, MD5/SHA/pHash (partial ok), capture date, camera, MIME, source, notes, tags. Space-separated words all have to match |
+| Search | sidebar box — matches file name, path, original device path/name, MD5/SHA/pHash (partial ok), capture date, camera, MIME, source, notes, flags. Space-separated words all have to match |
 | Filters | sidebar: **Clear all filters**; search, type, category, source, cluster, **duplicates** (any / exact / visual / near-dup), has-faces, min skin ratio, has-GPS, known-hash hit, **hide known-NSRL**, processing error, collapse duplicates. Sort / per-page / tile-size live on the grid's top bar |
 | Export | **Export report** button → dialog: pick scope (All / **Categorized only** / **Uncategorized only** / Selected) and formats (HTML, CSV, JSON, KMZ, **MD5 list**, Project VIC). Scoped files get a suffixed name (`report_categorized.csv`) |
 | Manual | **? Help** in the header, or press `?` |
@@ -491,7 +492,7 @@ group gets a layered-page shadow and a corner badge: **⬚ N** grey = N byte-ide
 copies; **≈ N** blue = N visually-matching files (hover says "visually similar").
 The details pane shows a
 preview, filename, full path, source, size, dimensions, dates, camera, GPS (with
-map link), every hash, category, tags, editable notes, and duplicate-stack /
+map link), every hash, category, flags, editable notes, and duplicate-stack /
 cluster info.
 
 ---
