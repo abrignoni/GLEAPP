@@ -1507,11 +1507,11 @@ def test_report_groups_flags_within_each_category(tmp_path):
     db.add_file_flag(b, ev)
     db.commit()
 
-    case = Case(p.parent, db)
+    c = Case(p.parent, db)
     try:
-        doc = report.export_html(case, tmp_path / "r.html").read_text(encoding="utf-8")
+        doc = report.export_html(c, tmp_path / "r.html").read_text(encoding="utf-8")
     finally:
-        case.close()
+        c.close()
 
     cat1_html = doc[doc.index("id='cat-1'"):doc.index("id='cat-2'")]
     cat2_html = doc[doc.index("id='cat-2'"):]
@@ -1548,14 +1548,14 @@ def test_flags_only_report_uses_category_sized_flag_headings(tmp_path):
     db.add_file_flag(b, ev)
     db.commit()
 
-    case = Case(p.parent, db)
+    c = Case(p.parent, db)
     try:
         doc = report.export_html(
-            case, tmp_path / "r.html",
+            c, tmp_path / "r.html",
             "id IN (SELECT file_id FROM file_flags)", by_flag=True,
         ).read_text(encoding="utf-8")
     finally:
-        case.close()
+        c.close()
 
     assert "three.jpg" not in doc                    # unflagged file excluded by scope
     assert "id='flag-" in doc and "id='cat-" not in doc
@@ -1583,15 +1583,15 @@ def test_summary_rows_link_to_their_section(tmp_path):
     db.add_file_flag(a, ev)
     db.commit()
 
-    case = Case(p.parent, db)
+    c = Case(p.parent, db)
     try:
-        default_doc = report.export_html(case, tmp_path / "r1.html").read_text(encoding="utf-8")
+        default_doc = report.export_html(c, tmp_path / "r1.html").read_text(encoding="utf-8")
         flags_doc = report.export_html(
-            case, tmp_path / "r2.html",
+            c, tmp_path / "r2.html",
             "id IN (SELECT file_id FROM file_flags)", by_flag=True,
         ).read_text(encoding="utf-8")
     finally:
-        case.close()
+        c.close()
 
     # default report: both axes are clickable, and the flag link's target
     # (the first place "Evidence" appears) actually exists in the document
@@ -1624,15 +1624,15 @@ def test_flag_sections_split_by_kind(tmp_path):
     db.add_file_flag(vid, ev)
     db.commit()
 
-    case = Case(p.parent, db)
+    c = Case(p.parent, db)
     try:
-        default_doc = report.export_html(case, tmp_path / "r1.html").read_text(encoding="utf-8")
+        default_doc = report.export_html(c, tmp_path / "r1.html").read_text(encoding="utf-8")
         flags_doc = report.export_html(
-            case, tmp_path / "r2.html",
+            c, tmp_path / "r2.html",
             "id IN (SELECT file_id FROM file_flags)", by_flag=True,
         ).read_text(encoding="utf-8")
     finally:
-        case.close()
+        c.close()
 
     for doc in (default_doc, flags_doc):
         assert "Images <span class='n'>(1)</span>" in doc
@@ -1650,17 +1650,17 @@ def test_specific_flags_scope_filters_and_restricts_grouping(tmp_path):
     app = create_app(None)
     cl = app.test_client()
     cl.post("/api/case/create", json={"path": str(tmp_path / "sf"), "name": "SF"})
-    case = app.config["STATE"]["case"]
-    a = case.db.upsert_file("/a/one.jpg", kind="image", md5="a" * 32, category=1)
-    b = case.db.upsert_file("/a/two.jpg", kind="image", md5="b" * 32, category=1)
-    case.db.upsert_file("/a/three.jpg", kind="image", md5="c" * 32, category=1)
-    ev = case.db.add_flag("Evidence")
-    bo = case.db.add_flag("Bondage")
-    pr = case.db.add_flag("Priority")
-    case.db.add_file_flag(a, ev)
-    case.db.add_file_flag(a, bo)      # one.jpg carries an unselected flag too
-    case.db.add_file_flag(b, pr)
-    case.db.commit()
+    c = app.config["STATE"]["case"]
+    a = c.db.upsert_file("/a/one.jpg", kind="image", md5="a" * 32, category=1)
+    b = c.db.upsert_file("/a/two.jpg", kind="image", md5="b" * 32, category=1)
+    c.db.upsert_file("/a/three.jpg", kind="image", md5="c" * 32, category=1)
+    ev = c.db.add_flag("Evidence")
+    bo = c.db.add_flag("Bondage")
+    pr = c.db.add_flag("Priority")
+    c.db.add_file_flag(a, ev)
+    c.db.add_file_flag(a, bo)      # one.jpg carries an unselected flag too
+    c.db.add_file_flag(b, pr)
+    c.db.commit()
 
     r = cl.post("/api/report", json={"format": ["html"], "scope": "specificflags",
                                      "flags": [ev]}).get_json()
@@ -1673,7 +1673,7 @@ def test_specific_flags_scope_filters_and_restricts_grouping(tmp_path):
     assert "Evidence <span class='n'>(1)</span>" in doc   # a section heading
     assert "Bondage <span class='n'>" not in doc          # never a section heading
     assert ">Bondage<" in doc                             # but still shown on one.jpg's own card
-    case.close()
+    c.close()
 
 
 def test_search_covers_all_metadata(tmp_path, evidence):
