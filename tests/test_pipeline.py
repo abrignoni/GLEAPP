@@ -837,6 +837,38 @@ def test_a_case_with_the_old_faces_table_gains_keyframe_id(tmp_path):
         db2.close()
 
 
+def test_the_old_tags_table_migrates_to_flags(tmp_path):
+    """A pre-v17 case had a freeform ``tags`` table; opening it once converts
+    every distinct tag string into its own flag (auto-colored) and carries the
+    file links over, then drops the old table."""
+    from gleapp.db import SCHEMA_VERSION, CaseDB
+    p = tmp_path / "old" / "case.gleapp"
+    p.parent.mkdir(parents=True)
+    db = CaseDB(p)
+    a = db.upsert_file("/a/b.jpg", kind="image", md5="deadbeef")
+    b = db.upsert_file("/a/c.jpg", kind="image", md5="beadfeed")
+    db.conn.execute(
+        "CREATE TABLE tags (file_id INTEGER NOT NULL, tag TEXT NOT NULL, "
+        "PRIMARY KEY (file_id, tag))")
+    db.conn.executemany("INSERT INTO tags(file_id, tag) VALUES(?,?)",
+                        [(a, "evidence"), (a, "bondage"), (b, "evidence")])
+    db.conn.execute("UPDATE meta SET value='16' WHERE key='schema_version'")
+    db.commit()
+    db.close()
+
+    db2 = CaseDB(p)                                # reopen -> migration runs
+    try:
+        assert db2.get_meta("schema_version") == str(SCHEMA_VERSION)
+        assert not db2.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
+        ).fetchone()
+        assert {r["name"] for r in db2.list_flags()} == {"evidence", "bondage"}
+        assert {r["name"] for r in db2.flags_for(a)} == {"evidence", "bondage"}
+        assert {r["name"] for r in db2.flags_for(b)} == {"evidence"}
+    finally:
+        db2.close()
+
+
 def test_category_migration_seeds_used_codes(tmp_path, evidence):
     """A v1-style case with a custom category code on files gets a placeholder
     row, and the locked VIC presets are back-filled on open."""
@@ -1455,7 +1487,8 @@ def test_search_covers_all_metadata(tmp_path, evidence):
         md5="deadbeef" + "0" * 24, orig_name="IMG_2201.HEIC",
         orig_path="/DCIM/100APPLE/IMG_2201.HEIC", camera="Apple iPhone 14",
         created_dt="2024-07-15T09:30:00", mime="image/heic", notes="suspect A")
-    c.db.add_tag(fid, "victim-B")
+    fc = c.db.add_flag("victim-B")
+    c.db.add_file_flag(fid, fc)
     c.db.commit()
 
     def n(q):
@@ -1467,7 +1500,7 @@ def test_search_covers_all_metadata(tmp_path, evidence):
     assert n("2024-07") == 1           # created_dt
     assert n("iphone") == 1            # camera
     assert n("suspect") == 1          # notes
-    assert n("victim-B") == 1          # tag
+    assert n("victim-B") == 1          # flag
     assert n("dcim%20iphone") == 1     # two words, both must match
     assert n("dcim%20nope") == 0       # AND fails
 

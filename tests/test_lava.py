@@ -67,7 +67,8 @@ def case(tmp_path, evidence):
     first = c.db.iter_files()[0]
     c.db.update_file(first["id"], category=1, reviewed=1, reviewed_at=1_700_000_000.0,
                      reviewed_by="tester", notes="marked in triage")
-    c.db.add_tag(first["id"], "exhibit")
+    fc = c.db.add_flag("exhibit")
+    c.db.add_file_flag(first["id"], fc)
     c.db.commit()
     yield c
     c.close()
@@ -99,7 +100,8 @@ def rich_case(tmp_path, evidence):
     first = c.db.iter_files()[0]
     c.db.update_file(first["id"], category=1, reviewed=1, reviewed_at=1_700_000_000.0,
                      reviewed_by="tester", notes="marked in triage")
-    c.db.add_tag(first["id"], "exhibit")
+    fc = c.db.add_flag("exhibit")
+    c.db.add_file_flag(first["id"], fc)
     c.db.commit()
     yield c
     c.close()

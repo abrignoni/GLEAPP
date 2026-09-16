@@ -407,7 +407,7 @@ def _rows(case: Case, where: str) -> list[dict]:
     for record in case.db.iter_files(where):
         row = dict(record)
         row["category_label"] = categories.label(case.db, row.get("category") or 0)
-        row["tags"] = ", ".join(case.db.tags_for(row["id"]))
+        row["flags"] = ", ".join(f["name"] for f in case.db.flags_for(row["id"]))
         row["disp_path"] = _disp_path(row)
         row["disp_name"] = _disp_name(row)
         alt = row.get("alt_paths")
@@ -569,7 +569,7 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
         ("Modified Timestamp", "datetime"), ("Created Timestamp", "datetime"),
         ("Accessed Timestamp", "datetime"), RECORDED_LABEL, "Capture Time",
         "File Name", "Path", "Also Under", "Source", "How Recovered", ("Media", "media"),
-        "Kind", "Category", "Tags", "Reviewed By", "Examiner Notes",
+        "Kind", "Category", "Flags", "Reviewed By", "Examiner Notes",
         ("Size", "integer"), "Dimensions", "Duration", "Camera",
         "MD5", "SHA1", "SHA256", "Perceptual Hash",
         ("Faces", "integer"), ("Skin Ratio", "real"),
@@ -588,7 +588,7 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
             row.get("source") or "",
             _origin_label(row),
             writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
-            row.get("kind") or "", row.get("category_label") or "", row.get("tags") or "",
+            row.get("kind") or "", row.get("category_label") or "", row.get("flags") or "",
             row.get("reviewed_by") or "", row.get("notes") or "",
             row.get("size"), _dimensions(row), _duration(row), row.get("camera") or "",
             row.get("md5") or "", row.get("sha1") or "", row.get("sha256") or "",
@@ -611,13 +611,13 @@ def _artifact_categorized(writer: "_Writer", rows: list[dict],
     name = "Categorized Media"
     marked = [r for r in rows if (r.get("category") or 0) != 0]
     headers = [("Reviewed Timestamp", "datetime"), "Category", "File Name", "Path",
-               ("Media", "media"), "Reviewed By", "Examiner Notes", "Tags",
+               ("Media", "media"), "Reviewed By", "Examiner Notes", "Flags",
                "MD5", "SHA1", "Kind", ("Size", "integer")]
     data = [[
         _epoch(row.get("reviewed_at")), row.get("category_label") or "",
         row.get("disp_name") or "", row.get("disp_path") or "",
         writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
-        row.get("reviewed_by") or "", row.get("notes") or "", row.get("tags") or "",
+        row.get("reviewed_by") or "", row.get("notes") or "", row.get("flags") or "",
         row.get("md5") or "", row.get("sha1") or "", row.get("kind") or "",
         row.get("size"),
     ] for row in marked]
@@ -797,7 +797,7 @@ def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) ->
             "them, so a blank in those two means the field was absent and 'no' means it "
             "was present and false. Series is the known series the VIC record placed "
             "the entry in, and VIC Tags are the labels that record carried; both are "
-            "the importing organisation's, and are kept apart from the Tags column "
+            "the importing organisation's, and are kept apart from the Flags column "
             "elsewhere in this report, which is the examiner's own. A case built from "
             "folders or an extraction rather than a VIC file has no Project VIC "
             "Records artifact at all, since an artifact with no rows is left out of "
@@ -1246,7 +1246,7 @@ _MEDIA_NOTES = (
     "folder source is registered as it was found. {media}. Dimensions, duration and "
     "the perceptual hashes are computed by GLEAPP from the file's bytes, as are the "
     "cryptographic hashes except where a Project VIC import supplied an MD5, which "
-    "processing trusts rather than recomputing. Tags, Reviewed By and Examiner Notes "
+    "processing trusts rather than recomputing. Flags, Reviewed By and Examiner Notes "
     "are the examiner's own record and are not properties of the file. Category is "
     "usually theirs as well, with one exception this row records in its own columns: "
     "an uncategorised file that matched a known-hash source is categorised without "
