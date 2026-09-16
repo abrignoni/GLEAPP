@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # audit_log actor for anything the app itself triggered - a background
 # timer, a close-time save, a safety-net copy before a restore - as opposed
@@ -141,12 +141,6 @@ CREATE INDEX IF NOT EXISTS idx_files_category ON files(category);
 CREATE INDEX IF NOT EXISTS idx_files_stack    ON files(stack_id);
 CREATE INDEX IF NOT EXISTS idx_files_cluster  ON files(cluster_id);
 
--- Free-form labels applied to a file (many-to-many).
-CREATE TABLE IF NOT EXISTS tags (
-    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-    tag     TEXT NOT NULL,
-    PRIMARY KEY (file_id, tag)
-);
 
 -- Video key frames extracted for review.
 CREATE TABLE IF NOT EXISTS keyframes (
@@ -219,6 +213,24 @@ CREATE TABLE IF NOT EXISTS categories (
     position INTEGER NOT NULL DEFAULT 0,   -- display order + 1-9 shortcut order
     active   INTEGER NOT NULL DEFAULT 1,   -- 0 = hidden from picker, label kept
     locked   INTEGER NOT NULL DEFAULT 0    -- 1 = Project VIC preset, not editable
+);
+
+-- Flags: examiner-defined labels, independent of category. Any number can
+-- apply to one file (e.g. a Category 1 file flagged both Evidence and
+-- Bondage). Unlike categories, none are locked or preseeded - the list is
+-- empty until the examiner adds to it - and a flag plays no part in hash-
+-- stash matching (see gleapp/stash.py, which only ever looks at category).
+CREATE TABLE IF NOT EXISTS flags (
+    code     INTEGER PRIMARY KEY,
+    name     TEXT NOT NULL DEFAULT '',
+    color    TEXT NOT NULL DEFAULT '#888888',
+    position INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS file_flags (
+    file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    flag_code INTEGER NOT NULL REFERENCES flags(code) ON DELETE CASCADE,
+    PRIMARY KEY (file_id, flag_code)
 );
 """
 
@@ -326,7 +338,42 @@ class CaseDB:
                 "INTEGER REFERENCES keyframes(id) ON DELETE CASCADE")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_faces_keyframe ON faces(keyframe_id)")
+        self._migrate_tags_to_flags()
         self.conn.commit()
+
+    def _migrate_tags_to_flags(self) -> None:
+        """One-time (schema v17): fold the old freeform ``tags`` table into
+        ``flags``/``file_flags``. Every distinct tag string an examiner had
+        typed becomes its own flag (auto-colored, nothing lost), the file
+        links carry over, and the old table is dropped."""
+        exists = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tags'"
+        ).fetchone()
+        if not exists:
+            return
+        code = int(self.conn.execute(
+            "SELECT COALESCE(MAX(code), 0) AS c FROM flags").fetchone()["c"])
+        pos = int(self.conn.execute(
+            "SELECT COALESCE(MAX(position), 0) AS p FROM flags").fetchone()["p"])
+        name_to_code: dict[str, int] = {}
+        for r in self.conn.execute("SELECT DISTINCT tag FROM tags ORDER BY tag"):
+            existing = self.conn.execute(
+                "SELECT code FROM flags WHERE name=?", (r["tag"],)).fetchone()
+            if existing:
+                name_to_code[r["tag"]] = existing["code"]
+                continue
+            code += 1
+            pos += 1
+            color = CATEGORY_PALETTE[(code - 1) % len(CATEGORY_PALETTE)]
+            self.conn.execute(
+                "INSERT INTO flags(code, name, color, position) "
+                "VALUES(?,?,?,?)", (code, r["tag"], color, pos))
+            name_to_code[r["tag"]] = code
+        for r in self.conn.execute("SELECT file_id, tag FROM tags"):
+            self.conn.execute(
+                "INSERT OR IGNORE INTO file_flags(file_id, flag_code) VALUES(?,?)",
+                (r["file_id"], name_to_code[r["tag"]]))
+        self.conn.execute("DROP TABLE tags")
 
     def _seed_categories(self) -> None:
         """Seed the locked Project VIC presets (codes 0-5) and give any category
@@ -546,28 +593,88 @@ class CaseDB:
     def get_file(self, file_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
 
-    # -- tags ------------------------------------------------------------
-    def add_tag(self, file_id: int, tag: str) -> None:
+    # -- flags ------------------------------------------------------------
+    def list_flags(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM flags ORDER BY position, code").fetchall()
+
+    def get_flag(self, code: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM flags WHERE code=?", (code,)
+        ).fetchone()
+
+    def add_flag(self, name: str = "") -> int:
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT COALESCE(MAX(code), 0) + 1 AS c FROM flags"
+            ).fetchone()
+            code = int(row["c"])
+            pos_row = self.conn.execute(
+                "SELECT COALESCE(MAX(position), 0) + 1 AS p FROM flags"
+            ).fetchone()
+            color = CATEGORY_PALETTE[(code - 1) % len(CATEGORY_PALETTE)]
+            self.conn.execute(
+                "INSERT INTO flags(code, name, color, position) VALUES(?,?,?,?)",
+                (code, name.strip(), color, int(pos_row["p"])),
+            )
+            self._touch()
+            self.conn.commit()
+            return code
+
+    def update_flag(self, code: int, **fields: Any) -> None:
+        allowed = {"name", "color", "position"}
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        if not fields:
+            return
+        cols = ", ".join(f"{k}=?" for k in fields)
+        with self.lock:
+            self.conn.execute(
+                f"UPDATE flags SET {cols} WHERE code=?",
+                (*fields.values(), code),
+            )
+            self._touch()
+            self.conn.commit()
+
+    def delete_flag(self, code: int) -> None:
+        """Deleting a flag just removes it (and, via cascade, every file's
+        link to it) - unlike a category, no file needs a flag to be valid,
+        so there is nothing to reassign."""
+        with self.lock:
+            self.conn.execute("DELETE FROM flags WHERE code=?", (code,))
+            self._touch()
+            self.conn.commit()
+
+    def reorder_flags(self, codes: list[int]) -> None:
+        with self.lock:
+            for pos, code in enumerate(codes, start=1):
+                self.conn.execute(
+                    "UPDATE flags SET position=? WHERE code=?", (pos, code)
+                )
+            self._touch()
+            self.conn.commit()
+
+    # -- file flags --------------------------------------------------------
+    def flags_for(self, file_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT f.code, f.name, f.color FROM file_flags ff "
+            "JOIN flags f ON f.code = ff.flag_code WHERE ff.file_id=? "
+            "ORDER BY f.position, f.code", (file_id,)
+        ).fetchall()
+
+    def add_file_flag(self, file_id: int, code: int) -> None:
         with self.lock:
             self._touch()
             self.conn.execute(
-                "INSERT OR IGNORE INTO tags(file_id, tag) VALUES(?,?)", (file_id, tag)
+                "INSERT OR IGNORE INTO file_flags(file_id, flag_code) VALUES(?,?)",
+                (file_id, code)
             )
 
-    def remove_tag(self, file_id: int, tag: str) -> None:
+    def remove_file_flag(self, file_id: int, code: int) -> None:
         with self.lock:
             self._touch()
             self.conn.execute(
-                "DELETE FROM tags WHERE file_id=? AND tag=?", (file_id, tag)
+                "DELETE FROM file_flags WHERE file_id=? AND flag_code=?",
+                (file_id, code)
             )
-
-    def tags_for(self, file_id: int) -> list[str]:
-        return [
-            r["tag"]
-            for r in self.conn.execute(
-                "SELECT tag FROM tags WHERE file_id=? ORDER BY tag", (file_id,)
-            )
-        ]
 
     # -- keyframes -----------------------------------------------------
     def add_keyframe(self, file_id: int, ts: float, thumb: str, phash: str | None) -> int:
@@ -765,10 +872,19 @@ class CaseDB:
             "SELECT COUNT(*) n FROM files "
             "WHERE COALESCE(vstack_id, stack_id, id) != id"
         ).fetchone()["n"]
+        flagged = c.execute(
+            "SELECT COUNT(DISTINCT file_id) n FROM file_flags"
+        ).fetchone()["n"]
+        by_flag = {
+            r["flag_code"]: r["n"]
+            for r in c.execute("SELECT flag_code, COUNT(*) n FROM file_flags GROUP BY flag_code")
+        }
         return {
             "total": total,
             "by_kind": by_kind,
             "by_category": by_cat,
+            "flagged": flagged,
+            "by_flag": by_flag,
             "reviewed": reviewed,
             "hashset_hits": hits,
             "known_good": known_good,

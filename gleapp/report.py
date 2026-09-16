@@ -49,7 +49,10 @@ def _rows(case: Case, where: str = "") -> list[dict]:
     for r in case.db.iter_files(where):
         d = dict(r)
         d["category_label"] = categories.label(case.db, d.get("category") or 0)
-        d["tags"] = case.db.tags_for(d["id"])
+        # compatibility shim: db.py's freeform ``tags`` table is gone (folded
+        # into flags/file_flags); the report's own flags rendering lands in a
+        # follow-up change, this just keeps _rows() from crashing meanwhile.
+        d["flags"] = [dict(r) for r in case.db.flags_for(d["id"])]
         d["file_path"] = _disp_path(d)      # device path (VIC) or source path
         d["disk_name"] = _disk_name(d)      # the on-disk (MD5) name
         out.append(d)

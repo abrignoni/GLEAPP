@@ -25,7 +25,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 
-from .. import appconfig, archive, backup, basemaps, categories, lava, report
+from .. import appconfig, archive, backup, basemaps, categories, flags, lava, report
 from ..case import open_case, parse_source_spec
 from ..db import ORIGINS, TOOL_ACTOR
 from ..facematch import find_matching_faces
@@ -73,8 +73,9 @@ def _col_sql(col: str) -> str | None:
 
 def _col_filter_clause(col: str, op: str, val):
     """One (sql, params) pair for a details-list column filter, or None."""
-    if col == "tags":
-        return ("id IN (SELECT file_id FROM tags WHERE tag LIKE ? ESCAPE '\\')",
+    if col == "flags":
+        return ("id IN (SELECT ff.file_id FROM file_flags ff JOIN flags fl "
+                "ON fl.code = ff.flag_code WHERE fl.name LIKE ? ESCAPE '\\')",
                 [f"%{_like_escape(val)}%"])
     expr = _col_sql(col)
     if expr is None:
@@ -151,7 +152,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         code = d.get("category") or 0
         d["category_label"] = categories.label(case.db, code)
         d["category_color"] = categories.color(case.db, code)
-        d["tags"] = case.db.tags_for(d["id"])
+        d["flags"] = [dict(r) for r in case.db.flags_for(d["id"])]
         d["has_keyframes"] = bool(
             case.db.conn.execute(
                 "SELECT 1 FROM keyframes WHERE file_id=? LIMIT 1", (d["id"],)
@@ -958,6 +959,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 where.append("container_id IS NOT NULL")
             if q.get("category") not in (None, "", "any"):
                 eq("category", int(q["category"]))
+            if q.get("flag") not in (None, "", "any"):
+                where.append("id IN (SELECT file_id FROM file_flags WHERE flag_code=?)")
+                params.append(int(q["flag"]))
             if q.get("cluster"):
                 eq("cluster_id", int(q["cluster"]))
             if q.get("hashset") == "1":
@@ -1013,7 +1017,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 for word in q["q"].split():
                     term = f"%{word}%"
                     clause = " OR ".join(f"{c} LIKE ?" for c in cols)
-                    clause += " OR id IN (SELECT file_id FROM tags WHERE tag LIKE ?)"
+                    clause += (" OR id IN (SELECT ff.file_id FROM file_flags ff "
+                               "JOIN flags fl ON fl.code = ff.flag_code "
+                               "WHERE fl.name LIKE ?)")
                     where.append(f"({clause})")
                     params += [term] * (len(cols) + 1)
             # details list-view: per-column filters (JSON: [{col,op,val}, …])
@@ -1207,6 +1213,51 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         case.db.audit_log(case.examiner, "category_reorder", json.dumps({"order": order}))
         return jsonify(list(categories.catmap(case.db).values()))
 
+    # ---- flags ------------------------------------------------
+    @app.get("/api/flags")
+    def flags_list():
+        case = C()
+        return jsonify(list(flags.flagmap(case.db).values()))
+
+    @app.post("/api/flags")
+    def flags_add():
+        case = C()
+        data = request.get_json(silent=True) or {}
+        name = str(data.get("name", ""))
+        code = case.db.add_flag(name)
+        case.db.audit_log(case.examiner, "flag_add",
+                          json.dumps({"code": code, "name": name}))
+        return jsonify(flags.flagmap(case.db)[code])
+
+    @app.patch("/api/flags/<int:code>")
+    def flags_update(code: int):
+        case = C()
+        data = request.get_json(force=True)
+        fields = {k: data[k] for k in ("name", "color") if k in data}
+        case.db.update_flag(code, **fields)
+        case.db.audit_log(case.examiner, "flag_update", json.dumps(
+            {"code": code, "changed": fields}))
+        return jsonify(flags.flagmap(case.db).get(code, {}))
+
+    @app.delete("/api/flags/<int:code>")
+    def flags_delete(code: int):
+        case = C()
+        row = case.db.get_flag(code)
+        name = row["name"] if row else ""
+        case.db.delete_flag(code)
+        case.db.audit_log(case.examiner, "flag_delete", json.dumps(
+            {"code": code, "name": name}))
+        return jsonify({"ok": True})
+
+    @app.post("/api/flags/reorder")
+    def flags_reorder():
+        case = C()
+        data = request.get_json(force=True)
+        codes = [int(c) for c in data["codes"]]
+        case.db.reorder_flags(codes)
+        case.db.audit_log(case.examiner, "flag_reorder", json.dumps({"order": codes}))
+        return jsonify(list(flags.flagmap(case.db).values()))
+
     # ---- mutations ------------------------------------------
     @app.post("/api/categorize")
     def categorize():
@@ -1245,15 +1296,15 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         case.db.commit()
         return jsonify({"ok": True})
 
-    @app.post("/api/tag")
-    def tag():
+    @app.post("/api/flag")
+    def flag():
         case = C()
         data = request.get_json(force=True)
         for fid in data["ids"]:
-            for t in data.get("add", []):
-                case.db.add_tag(int(fid), t.strip())
-            for t in data.get("remove", []):
-                case.db.remove_tag(int(fid), t.strip())
+            for code in data.get("add", []):
+                case.db.add_file_flag(int(fid), int(code))
+            for code in data.get("remove", []):
+                case.db.remove_file_flag(int(fid), int(code))
         case.db.commit()
         return jsonify({"ok": True})
 
@@ -1301,6 +1352,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 "examiner": case.examiner, "sources": [], "archive_sources": [],
                 "clusters": [],
                 "categories": list(categories.catmap(case.db).values()),
+                "flags": list(flags.flagmap(case.db).values()),
                 "stats": {}, "vic": None, "errors": 0,
                 "known_hash": {}, "screening": {},
                 "timezone": appconfig.get_timezone(), "timezone_options": [],
@@ -1364,6 +1416,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "basemaps": len(basemaps.list_basemaps()),
             "clusters": clusters,
             "categories": list(categories.catmap(case.db).values()),
+            "flags": list(flags.flagmap(case.db).values()),
             "stats": cst,
             "vic": vic,
             "errors": n_err,
