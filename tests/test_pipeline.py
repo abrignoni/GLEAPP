@@ -1396,6 +1396,12 @@ def test_html_report_header_fields_grouping(tmp_path, evidence):
         assert "type='text/plain'" not in d2
         assert "class='rimg video'" in d2          # still shows the key-frame thumb
 
+        # blur is on by default but can be turned off per report at export time
+        p3 = report.export_html(c, tmp_path / "r3.html", blur=False)
+        d3 = p3.read_text(encoding="utf-8")
+        assert '<html class="">' in d3
+        assert "wire('btnBlur', 'blur', 'blur', false, false)" in d3
+
         # scope = specific categories
         from gleapp.web.app import create_app
         app = create_app(None)
@@ -1409,13 +1415,16 @@ def test_html_report_header_fields_grouping(tmp_path, evidence):
             Path(r["dir"]) / "report_selection.csv", encoding="utf-8")))
         assert {x["md5"] for x in rows} == {"a" * 32, "b" * 32, "e" * 32}  # cats 1+5, not 3
 
-        # header + fields still round-trip as case prefs
+        # header + fields + blur still round-trip as case prefs
         cl.post("/api/report", json={"format": ["html"], "scope": "all",
                                      "report_header": {"agency": "County SO"},
-                                     "fields": ["name", "sha256"]})
+                                     "fields": ["name", "sha256"], "blur": False})
         prefs = cl.get("/api/report/prefs").get_json()
         assert prefs["header"]["agency"] == "County SO"
         assert prefs["fields"] == ["name", "sha256"]
+        assert prefs["blur"] is False
+        html_doc = (Path(r["dir"]) / "report.html").read_text(encoding="utf-8")
+        assert '<html class="">' in html_doc
     finally:
         c.close()
 
@@ -1473,6 +1482,198 @@ def test_group_view_ignores_other_active_filters(tmp_path):
     assert d["total"] == 2
     assert {f["id"] for f in d["files"]} == {a, b}
     c.close()
+
+
+def test_report_groups_flags_within_each_category(tmp_path):
+    """Within one category's section, flags come first (one collapsible group
+    per flag - not mutually exclusive, so a file with two flags appears under
+    both), then a single 'No flag' group for whatever is left. No more
+    Images/Videos/Other split above them - a card renders correctly in
+    whichever section it lands in regardless of kind."""
+    from gleapp import report
+    from gleapp.case import Case
+    from gleapp.db import CaseDB
+
+    p = tmp_path / "case" / "case.gleapp"
+    p.parent.mkdir(parents=True)
+    db = CaseDB(p)
+    a = db.upsert_file("/a/one.jpg", kind="image", md5="a" * 32, category=1)
+    b = db.upsert_file("/a/two.jpg", kind="image", md5="b" * 32, category=1)
+    db.upsert_file("/a/three.jpg", kind="image", md5="c" * 32, category=2)
+    ev = db.add_flag("Evidence")
+    bo = db.add_flag("Bondage")
+    db.add_file_flag(a, ev)
+    db.add_file_flag(a, bo)
+    db.add_file_flag(b, ev)
+    db.commit()
+
+    case = Case(p.parent, db)
+    try:
+        doc = report.export_html(case, tmp_path / "r.html").read_text(encoding="utf-8")
+    finally:
+        case.close()
+
+    cat1_html = doc[doc.index("id='cat-1'"):doc.index("id='cat-2'")]
+    cat2_html = doc[doc.index("id='cat-2'"):]
+
+    assert "Evidence <span class='n'>(2)</span>" in cat1_html   # one.jpg + two.jpg
+    assert "Bondage <span class='n'>(1)</span>" in cat1_html    # one.jpg only
+    assert "No flag" not in cat1_html        # both of its files carry a flag
+    # each card's <summary> names the file once per section it lands in - once
+    # per flag it carries, since neither file here has zero flags
+    assert cat1_html.count("<summary>one.jpg</summary>") == 2   # Evidence + Bondage
+    assert cat1_html.count("<summary>two.jpg</summary>") == 1   # Evidence only
+    assert "No flag <span class='n'>(1)</span>" in cat2_html    # its one file carries no flag
+    assert cat2_html.count("<summary>three.jpg</summary>") == 1
+
+
+def test_flags_only_report_uses_category_sized_flag_headings(tmp_path):
+    """The 'Flagged only' scope both filters to flagged files and makes flags
+    the report's top-level sections - the same heading markup a category
+    normally gets (h2.catsec), not the smaller nested .flagsec treatment."""
+    from gleapp import report
+    from gleapp.case import Case
+    from gleapp.db import CaseDB
+
+    p = tmp_path / "case" / "case.gleapp"
+    p.parent.mkdir(parents=True)
+    db = CaseDB(p)
+    a = db.upsert_file("/a/one.jpg", kind="image", md5="a" * 32, category=1)
+    b = db.upsert_file("/a/two.jpg", kind="image", md5="b" * 32, category=1)
+    db.upsert_file("/a/three.jpg", kind="image", md5="c" * 32, category=2)  # no flag
+    ev = db.add_flag("Evidence")
+    bo = db.add_flag("Bondage")
+    db.add_file_flag(a, ev)
+    db.add_file_flag(a, bo)
+    db.add_file_flag(b, ev)
+    db.commit()
+
+    case = Case(p.parent, db)
+    try:
+        doc = report.export_html(
+            case, tmp_path / "r.html",
+            "id IN (SELECT file_id FROM file_flags)", by_flag=True,
+        ).read_text(encoding="utf-8")
+    finally:
+        case.close()
+
+    assert "three.jpg" not in doc                    # unflagged file excluded by scope
+    assert "id='flag-" in doc and "id='cat-" not in doc
+    assert "<h2 class='catsec' id='flag-" in doc      # same element/class as a category heading
+    assert "class='kindsec flagsec'" not in doc       # not the smaller nested treatment
+    assert doc.count("<summary>one.jpg</summary>") == 2   # Evidence + Bondage
+    assert doc.count("<summary>two.jpg</summary>") == 1   # Evidence only
+
+
+def test_summary_rows_link_to_their_section(tmp_path):
+    """Category and flag names in the 'Report contents' summary are links to
+    the matching section - a second way to get there besides the TOC.
+    Whichever axis has no section in this report's mode (categories in a
+    flags-only report) is left as plain text rather than a link to nowhere."""
+    from gleapp import report
+    from gleapp.case import Case
+    from gleapp.db import CaseDB
+
+    p = tmp_path / "case" / "case.gleapp"
+    p.parent.mkdir(parents=True)
+    db = CaseDB(p)
+    a = db.upsert_file("/a/one.jpg", kind="image", md5="a" * 32, category=1)
+    db.upsert_file("/a/two.jpg", kind="image", md5="b" * 32, category=2)
+    ev = db.add_flag("Evidence")
+    db.add_file_flag(a, ev)
+    db.commit()
+
+    case = Case(p.parent, db)
+    try:
+        default_doc = report.export_html(case, tmp_path / "r1.html").read_text(encoding="utf-8")
+        flags_doc = report.export_html(
+            case, tmp_path / "r2.html",
+            "id IN (SELECT file_id FROM file_flags)", by_flag=True,
+        ).read_text(encoding="utf-8")
+    finally:
+        case.close()
+
+    # default report: both axes are clickable, and the flag link's target
+    # (the first place "Evidence" appears) actually exists in the document
+    assert "<a href='#cat-1'>CAM (Child Abuse Material)</a>" in default_doc
+    assert "<a href='#flag-1'>Evidence</a>" in default_doc
+    assert "id='flag-1'" in default_doc
+
+    # flags-only report: flag rows still link, category rows do not (no
+    # category sections exist in this mode to link to)
+    assert "<a href='#flag-1'>Evidence</a>" in flags_doc
+    assert "<a href='#cat-" not in flags_doc
+    assert "CAM (Child Abuse Material)</td>" in flags_doc   # plain text, not a link
+
+
+def test_flag_sections_split_by_kind(tmp_path):
+    """A flag's files are still broken into Images / Videos sub-grids, in
+    both report modes - a flag/category heading is a grouping, not a
+    replacement for the image/video split within it."""
+    from gleapp import report
+    from gleapp.case import Case
+    from gleapp.db import CaseDB
+
+    p = tmp_path / "case" / "case.gleapp"
+    p.parent.mkdir(parents=True)
+    db = CaseDB(p)
+    img = db.upsert_file("/a/one.jpg", kind="image", md5="a" * 32, category=1)
+    vid = db.upsert_file("/a/clip.mp4", kind="video", md5="b" * 32, category=1)
+    ev = db.add_flag("Evidence")
+    db.add_file_flag(img, ev)
+    db.add_file_flag(vid, ev)
+    db.commit()
+
+    case = Case(p.parent, db)
+    try:
+        default_doc = report.export_html(case, tmp_path / "r1.html").read_text(encoding="utf-8")
+        flags_doc = report.export_html(
+            case, tmp_path / "r2.html",
+            "id IN (SELECT file_id FROM file_flags)", by_flag=True,
+        ).read_text(encoding="utf-8")
+    finally:
+        case.close()
+
+    for doc in (default_doc, flags_doc):
+        assert "Images <span class='n'>(1)</span>" in doc
+        assert "Videos <span class='n'>(1)</span>" in doc
+        assert doc.index("Evidence") < doc.index("Images <span class='n'>(1)</span>")
+
+
+def test_specific_flags_scope_filters_and_restricts_grouping(tmp_path):
+    """'Specific flags' filters to files carrying one of the chosen flags and,
+    unlike plain 'Flagged only', restricts the report's *grouping* to just
+    those flags - a qualifying file's other flags still show on its own card
+    (real information about the file) but get no section/heading of their own."""
+    from gleapp.web.app import create_app
+
+    app = create_app(None)
+    cl = app.test_client()
+    cl.post("/api/case/create", json={"path": str(tmp_path / "sf"), "name": "SF"})
+    case = app.config["STATE"]["case"]
+    a = case.db.upsert_file("/a/one.jpg", kind="image", md5="a" * 32, category=1)
+    b = case.db.upsert_file("/a/two.jpg", kind="image", md5="b" * 32, category=1)
+    case.db.upsert_file("/a/three.jpg", kind="image", md5="c" * 32, category=1)
+    ev = case.db.add_flag("Evidence")
+    bo = case.db.add_flag("Bondage")
+    pr = case.db.add_flag("Priority")
+    case.db.add_file_flag(a, ev)
+    case.db.add_file_flag(a, bo)      # one.jpg carries an unselected flag too
+    case.db.add_file_flag(b, pr)
+    case.db.commit()
+
+    r = cl.post("/api/report", json={"format": ["html"], "scope": "specificflags",
+                                     "flags": [ev]}).get_json()
+    assert r["ok"]
+    doc = (Path(r["dir"]) / "report_selection.html").read_text(encoding="utf-8")
+
+    assert "one.jpg" in doc and "two.jpg" not in doc and "three.jpg" not in doc
+    assert f"id='flag-{ev}'" in doc                       # Evidence gets its section
+    assert f"id='flag-{bo}'" not in doc                   # Bondage does not
+    assert "Evidence <span class='n'>(1)</span>" in doc   # a section heading
+    assert "Bondage <span class='n'>" not in doc          # never a section heading
+    assert ">Bondage<" in doc                             # but still shown on one.jpg's own card
+    case.close()
 
 
 def test_search_covers_all_metadata(tmp_path, evidence):

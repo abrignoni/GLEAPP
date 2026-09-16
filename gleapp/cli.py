@@ -363,6 +363,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     where = args.where or {
         "categorized": "category != 0",
         "uncategorized": "category = 0",
+        "flags": "id IN (SELECT file_id FROM file_flags)",
     }.get(args.scope, "")
     tag = f"_{args.scope}" if args.scope != "all" and not args.where else ""
     out_dir = case.report_dir
@@ -376,7 +377,8 @@ def cmd_report(args: argparse.Namespace) -> int:
         made.append(report.export_html(case, out_dir / f"report{tag}.html", where,
                                        full_images=not args.thumbs_only,
                                        full_videos=not args.thumbs_only,
-                                       maps=not args.no_maps))
+                                       maps=not args.no_maps,
+                                       by_flag=args.scope == "flags"))
     if "kml" in fmts:
         made.append(report.export_kml(case, out_dir / f"geolocation{tag}.kmz", where))
     if "md5" in fmts:
@@ -545,8 +547,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--format", nargs="+",
                    choices=["csv", "json", "html", "kml", "md5", "vic", "lava"])
     s.add_argument("--scope", default="all",
-                   choices=["all", "categorized", "uncategorized"],
-                   help="which files to include (default: all)")
+                   choices=["all", "categorized", "uncategorized", "flags"],
+                   help="which files to include; 'flags' also groups the HTML "
+                        "report by flag instead of category (default: all)")
     s.add_argument("--where", help="raw SQL filter on the files table (overrides --scope)")
     s.add_argument("--thumbs-only", action="store_true",
                    help="HTML report: thumbnails only - no full-size images or videos")

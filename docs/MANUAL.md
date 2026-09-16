@@ -74,7 +74,7 @@ must stay put; on makes the case self-contained), and **Recover media
 **The gallery opens as soon as files are registered, so you don't wait for
 processing to finish.** A progress bar along the bottom of the window shows the
 running count and stage; thumbnails fill in as each file is processed and the
-file count climbs. You can review, categorize and tag any already-processed file
+file count climbs. You can review, categorize and flag any already-processed file
 while the rest catch up. The bar clears itself when processing completes;
 duplicate-stacking, known-hash matching and clustering run in the final stage,
 so those columns and filters settle a moment after the last thumbnail. Closing
@@ -261,15 +261,15 @@ lightened view.
 | `A` | select every file on the page |
 | `←` `→` | move the selection (turns the page at the edge) |
 
-The bottom selection bar (category buttons, Clear category, Tag..., Export
-MD5s, Deselect) appears when anything is selected. Any category action applies
-to the whole selection.
+The bottom selection bar (category buttons, Clear category, Export MD5s,
+Deselect) appears when anything is selected. Any category action applies to
+the whole selection.
 
 ## 6. The details pane
 
 Opens on click when toggled on (`I`). Shows: a preview with "View full size";
-the current category and the category buttons; Find similar; Add tag; existing
-tags (× to remove); a video key-frame filmstrip; a metadata table (source,
+the current category and the category buttons; Find similar; Flags; its flags
+(× to remove one); a video key-frame filmstrip; a metadata table (source,
 type, original name/path, MIME, VIC MediaID and flags, size, dimensions,
 duration, captured date, camera, faces, skin ratio, known-hash, exact/visual/
 near-dup group sizes, error); GPS with a Copy button and, once a basemap is
@@ -310,6 +310,22 @@ Categorizing is non-destructive and is recorded in the case audit log with your
 examiner name. Codes map 1:1 to Project VIC codes on export; code 0 exports as
 `null`.
 
+### Flags: an independent, per-file label
+
+A file's **category** is always exactly one value. **Flags** are separate and
+additive: a file can carry any number of them - Evidence, Bondage, Priority,
+whatever your workflow needs - on top of its category, and a flag never changes
+what the category is. Open the picker from a tile's details pane ("+ flag") or
+right-click → Flags…; checking a box applies it immediately, unchecking removes
+it. The **⚙ Flags** editor (Menu → Case) manages the list itself: add, rename,
+recolor, drag to reorder, delete. Unlike categories, **no flag is preseeded or
+locked** - the list is empty until you add to it, so the vocabulary is entirely
+yours. Flags are searchable (the free-text search box matches flag names),
+filterable (the sidebar's Flag dropdown), sortable as a details-list column, and
+appear in every report as small colored labels under the category badge, plus
+their own "By flag" breakdown in the report summary. They play no part in
+known-hash matching or the local hash stash, which key on category alone.
+
 ## 8. Filtering: every option
 
 Filters combine with AND and apply as you change them.
@@ -330,7 +346,7 @@ Filters combine with AND and apply as you change them.
 Free text. Each whitespace-separated word must match somewhere (AND); within a
 word it matches across relative path, absolute path, original device name and
 path, camera, notes, MIME, source, capture date, examiner, known-hash name,
-error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and tags.
+error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and flags.
 
 ### Category / Type / Source
 - **Category**: **Any**, a specific category, or **Uncategorized**.
@@ -742,7 +758,7 @@ When **HTML report** is ticked the dialog shows:
 - **Fields under each image**: tick the metadata you want beneath every
   thumbnail: file name, original name, path, device path, captured / file-
   modified / ingested dates, MD5 / SHA-1 / SHA-256 / pHash, dimensions, size,
-  duration, camera, GPS, category, tags, notes, faces, skin ratio, source,
+  duration, camera, GPS, category, flags, notes, faces, skin ratio, source,
   **how recovered** (§16), the **recorded reading** a zone-less volume stored,
   MIME, VIC MediaID, known-hash, error. Default: **file name, captured date,
   MD5**; remembered per case. Empty fields are omitted from a card.
@@ -775,6 +791,10 @@ report`, to leave them out.
 - **Embed playable videos**: each video file added to the report; a play
   triangle marks video cards and clicking plays the video in a new tab. This is
   what makes a report large.
+- **Blur images by default**: sets whether *this* report opens blurred or not -
+  baked into the file at export time. Whoever opens it can still flip the
+  **Blur images** switch for their own viewing; that choice is never saved back
+  into the file, so the next person to open it sees your chosen default again.
 
 The report stays one self-contained file. CLI `report --thumbs-only` for
 thumbnails only.
@@ -787,7 +807,7 @@ exports get a filename suffix.
 
 ## 15. Autosave & snapshots
 
-Every category, tag and note change is committed immediately (SQLite WAL). The
+Every category, flag and note change is committed immediately (SQLite WAL). The
 header shows "All changes saved · HH:MM" / "Saving..." / a retry prompt on
 failure. A full timestamped copy of `case.gleapp` is snapshotted to `backups/`
 roughly every 10 minutes while there are unsaved-since-last-snapshot edits, and

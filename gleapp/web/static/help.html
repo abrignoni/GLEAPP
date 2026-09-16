@@ -103,7 +103,7 @@ small but the archive must stay put; on makes the case self-contained), and
 <p><strong>The gallery opens as soon as files are registered, so you don't wait for
 processing to finish.</strong> A progress bar along the bottom of the window
 shows the running count and stage; thumbnails fill in as each file is processed
-and the file count climbs. You can review, categorize and tag any
+and the file count climbs. You can review, categorize and flag any
 already-processed file while the rest catch up. Duplicate-stacking, known-hash
 matching and clustering run in the final stage, so those columns and filters
 settle a moment after the last thumbnail. The bar clears itself when processing
@@ -267,7 +267,7 @@ left-to-right across a video tile to <strong>scrub</strong> through its key fram
 <p>Single-click selects. Double-click opens the <strong>full-size viewer</strong>
 (video plays with controls; non-web image formats are transcoded on the fly).
 Right-click for a context menu (find similar, details, view full size, categorize,
-tag, export MD5s, open the original file).</p>
+flag, export MD5s, open the original file).</p>
 <p>In the full-size viewer, <strong>Lighten dark areas</strong> (top-left) applies
 an adjustable shadow lift for checking content in badly underexposed photos. It is
 a <strong>view-only display filter</strong>: the file, its thumbnail and its
@@ -283,16 +283,16 @@ browser). Exported reports show the original image, not the lightened view.</p>
   <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>move the selection one tile (turns the page at the edge)</td></tr>
 </table>
 <p>The selection bar at the bottom appears when anything is selected: category
-buttons, Clear category, Tag..., Export MD5s, Deselect. Any category action (bar,
+buttons, Clear category, Export MD5s, Deselect. Any category action (bar,
 number key, context menu, details pane) applies to the whole selection.</p>
 
 <h2 id="details">6. The details pane</h2>
 <p>Click a tile with the pane open (<kbd>I</kbd>) and it fills with: a preview and
 "View full size" button; the current category and the category buttons; Find
-similar; Add tag; <strong>Hex view</strong> (<kbd>H</kbd>, or right-click &rarr;
+similar; Flags; <strong>Hex view</strong> (<kbd>H</kbd>, or right-click &rarr;
 Hex view): a scrolling offset / hex / ASCII dump of the raw file, page through
-it or type an offset (decimal, or <code>0x</code>-prefixed); existing tags (click
-&times; to remove); a video key-frame filmstrip; a metadata table (source, type, original name/path, MIME, VIC MediaID and flags, size,
+it or type an offset (decimal, or <code>0x</code>-prefixed); its flags (click
+&times; on one to remove it); a video key-frame filmstrip; a metadata table (source, type, original name/path, MIME, VIC MediaID and flags, size,
 dimensions, duration, captured date, camera, faces, skin ratio, known-hash,
 exact/visual/near-dup group sizes, error); GPS with a Copy button and, once a basemap
 is imported (section&nbsp;19), an offline map of the spot; MD5 / SHA-1 /
@@ -360,6 +360,22 @@ auto-assigned color.</p>
 audit log with your examiner name. Codes map 1:1 to Project&nbsp;VIC codes on
 export; code 0 exports as <code>null</code>.</p>
 
+<h3 id="flags">Flags: an independent, per-file label</h3>
+<p>A file's <strong>category</strong> is always exactly one value. <strong>Flags</strong>
+are separate and additive: a file can carry any number of them &mdash; Evidence,
+Bondage, Priority, whatever your workflow needs &mdash; on top of its category, and
+a flag never changes what the category is. Open the picker from a tile's details
+pane ("+ flag") or right-click &rarr; Flags&hellip;; checking a box applies it
+immediately, unchecking removes it. The <strong>⚙&nbsp;Flags</strong> editor (Menu
+&rarr; Case) manages the list itself: add, rename, recolor, drag to reorder, delete.
+Unlike categories, <strong>no flag is preseeded or locked</strong> &mdash; the list is
+empty until you add to it, so the vocabulary is entirely yours. Flags are
+searchable (the free-text search box matches flag names), filterable (the
+sidebar's Flag dropdown), sortable as a details-list column, and appear in every
+report as small colored labels under the category badge, plus their own "By flag"
+breakdown in the report summary. They play no part in known-hash matching or the
+local hash stash, which key on category alone.</p>
+
 <h2 id="filters">8. Filtering: every option</h2>
 <p>Filters combine with AND and apply as you change them.</p>
 <ul>
@@ -381,7 +397,7 @@ export; code 0 exports as <code>null</code>.</p>
 word it matches across <em>all</em> of: relative path, absolute path, original
 device name and path, camera, notes, MIME, source, capture date, examiner,
 known-hash name, error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work),
-and tags. So <code>dcim 2024-07</code> finds files whose path mentions DCIM and
+and flags. So <code>dcim 2024-07</code> finds files whose path mentions DCIM and
 whose date is in July 2024.</p>
 
 <h3>Category / Type / Source</h3>
@@ -781,7 +797,7 @@ seconds (UTC).</p>
   <li><strong>Fields under each image</strong>: tick the metadata you want beneath
   every thumbnail: file name, original name, path, device path, captured date,
   file-modified / ingested dates, MD5 / SHA-1 / SHA-256 / pHash, dimensions, size,
-  duration, camera, GPS, category, tags, notes, faces, skin ratio, source, MIME
+  duration, camera, GPS, category, flags, notes, faces, skin ratio, source, MIME
   type, VIC MediaID, known-hash, error. The default is <strong>file name,
   captured date, MD5</strong>; your selection is remembered per case. Fields with
   no value for a given file are simply left out of that card.</li>
@@ -820,6 +836,11 @@ maps</strong> in the Export dialog, or pass <code>--no-maps</code> to
   report; a play triangle marks video cards and <strong>clicking opens the video
   playing in a new tab</strong>. This is what makes the report large; untick it
   (or "full-size images") for a lean thumbnails-only report.</li>
+  <li><strong>Blur images by default</strong>: sets whether <em>this</em> report
+  opens blurred or not, baked into the file at export time. Whoever opens it can
+  still flip the <strong>Blur images</strong> switch for their own viewing - that
+  never saves back into the file, so the next person to open it sees whatever
+  default you picked here.</li>
 </ul>
 <p>The report stays a single self-contained file either way.</p>
 <p>A <strong>Report contents</strong> breakdown near the top gives the file count
@@ -829,7 +850,7 @@ and the case total. Outputs land in the case's <code>reports/</code> folder;
 scoped exports get a filename suffix.</p>
 
 <h2 id="save">15. Autosave &amp; snapshots</h2>
-<p>Every category, review, tag and note change is committed immediately (SQLite
+<p>Every category, review, flag and note change is committed immediately (SQLite
 WAL). The header shows "All changes saved · HH:MM" / "Saving..." / a retry prompt on
 failure. In the background, a full timestamped copy of <code>case.gleapp</code> is
 snapshotted to <code>backups/</code> roughly every 10 minutes while there are

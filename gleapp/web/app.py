@@ -1741,6 +1741,16 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             return "category != 0", "categorized only"
         if scope == "uncategorized":
             return "category = 0", "uncategorized only"
+        if scope == "flags":
+            return "id IN (SELECT file_id FROM file_flags)", "flagged only"
+        if scope == "specificflags":
+            codes = sorted({int(x) for x in (body.get("flags") or [])})
+            if not codes:
+                abort(400, description="no flags selected")
+            fmap = flags.flagmap(C().db)
+            names = ", ".join(fmap.get(c, {}).get("name", f"Flag {c}") for c in codes)
+            return (f"id IN (SELECT file_id FROM file_flags WHERE flag_code IN "
+                    f"({','.join(map(str, codes))}))", names)
         if scope == "categories":
             codes = sorted({int(x) for x in (body.get("categories") or [])})
             if not codes:
@@ -1784,6 +1794,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "full_images": case.db.get_meta("report_full_images") != "0",
             "full_videos": case.db.get_meta("report_full_videos") != "0",
             "maps": case.db.get_meta("report_maps") != "0",
+            "blur": case.db.get_meta("report_blur") != "0",
         })
 
     @app.post("/api/report")
@@ -1792,6 +1803,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         body = request.get_json(silent=True) or {}
         fmts = body.get("format", ["html", "csv", "json"])
         where, label = _scope_where(body)
+        by_flag = body.get("scope") in ("flags", "specificflags")
+        only_flags = ([int(x) for x in body.get("flags") or []]
+                     if body.get("scope") == "specificflags" else None)
         out = case.report_dir
 
         rh = body.get("report_header")
@@ -1802,6 +1816,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         full_images = body.get("full_images", True)
         full_videos = body.get("full_videos", True)
         want_maps = body.get("maps", True)
+        blur = body.get("blur", True)
         if header is not None:  # remember for next time (logo can be large - cap it)
             store = dict(header)
             if isinstance(store.get("logo"), str) and len(store["logo"]) > 4_000_000:
@@ -1814,12 +1829,14 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         case.db.set_meta("report_full_images", "1" if full_images else "0")
         case.db.set_meta("report_full_videos", "1" if full_videos else "0")
         case.db.set_meta("report_maps", "1" if want_maps else "0")
+        case.db.set_meta("report_blur", "1" if blur else "0")
 
         tz = case.db.get_meta("display_tz") or appconfig.get_timezone()
 
         tag = "" if not where else "_" + {
             "categorized only": "categorized",
             "uncategorized only": "uncategorized",
+            "flagged only": "flags",
         }.get(label, "selection")
 
         # A LAVA project stages every file's media, draws a locator map for each
@@ -1840,7 +1857,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                     written = _write_reports(
                         case, fmts, out, tag, where, label, header=header,
                         fields=fields, full_images=full_images,
-                        full_videos=full_videos, maps=want_maps, tz=tz,
+                        full_videos=full_videos, maps=want_maps, tz=tz, blur=blur,
+                        by_flag=by_flag, only_flags=only_flags,
                         only_categorized=body.get("scope") == "categorized"
                         or bool(body.get("only_categorized")),
                         progress=lambda d, t: j.update(done=d, total=t),
@@ -1861,7 +1879,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             made = _write_reports(
                 case, fmts, out, tag, where, label, header=header, fields=fields,
                 full_images=full_images, full_videos=full_videos,
-                maps=want_maps, tz=tz,
+                maps=want_maps, tz=tz, blur=blur, by_flag=by_flag, only_flags=only_flags,
                 only_categorized=body.get("scope") == "categorized"
                 or bool(body.get("only_categorized")))
         except FileNotFoundError as exc:
@@ -1951,7 +1969,8 @@ REPORT_FORMATS = ("html", "csv", "json", "kml", "md5", "vic", "lava")
 
 
 def _write_reports(case, fmts, out, tag, where, label, *, header, fields,
-                   full_images, full_videos, maps, tz, only_categorized,
+                   full_images, full_videos, maps, tz, only_categorized, blur=True,
+                   by_flag=False, only_flags=None,
                    progress=None, stage_cb=None) -> list[str]:
     """Write every picked format into ``out`` and return the paths written.
 
@@ -1968,7 +1987,8 @@ def _write_reports(case, fmts, out, tag, where, label, *, header, fields,
         made.append(str(report.export_html(
             case, out / f"report{tag}.html", where,
             header=header, fields=fields, scope_label=label,
-            full_images=full_images, full_videos=full_videos, tz=tz, maps=maps)))
+            full_images=full_images, full_videos=full_videos, tz=tz, maps=maps,
+            blur=blur, by_flag=by_flag, only_flags=only_flags)))
     if "kml" in fmts:
         made.append(str(report.export_kml(case, out / f"geolocation{tag}.kmz", where)))
     if "md5" in fmts:

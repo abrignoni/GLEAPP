@@ -13,7 +13,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-from . import basemaps, categories, imaging, staticmap, timeutil  # noqa: F401  (imaging: registers HEIF decoder)
+from . import basemaps, categories, flags, imaging, staticmap, timeutil  # noqa: F401  (imaging: registers HEIF decoder)
 from .case import Case
 
 # overview map size - shared so the clickable overlay in _overview_html always
@@ -25,7 +25,7 @@ _CSV_FIELDS = [
     "created_dt", "ctime", "mtime", "atime",
     "md5", "sha1", "sha256", "phash", "width", "height", "duration",
     "gps_lat", "gps_lon", "camera", "faces", "skin_ratio",
-    "category", "category_label", "triage",
+    "category", "category_label", "triage", "flags_label",
     "hashset_hit", "hashset_cat", "hashset_kind",
     "stack_id", "vstack_id", "cluster_id", "notes",
     "media_id", "orig_name", "orig_path", "mime", "origin", "recorded_times",
@@ -49,10 +49,8 @@ def _rows(case: Case, where: str = "") -> list[dict]:
     for r in case.db.iter_files(where):
         d = dict(r)
         d["category_label"] = categories.label(case.db, d.get("category") or 0)
-        # compatibility shim: db.py's freeform ``tags`` table is gone (folded
-        # into flags/file_flags); the report's own flags rendering lands in a
-        # follow-up change, this just keeps _rows() from crashing meanwhile.
-        d["flags"] = [dict(r) for r in case.db.flags_for(d["id"])]
+        d["flags"] = [dict(fr) for fr in case.db.flags_for(d["id"])]
+        d["flags_label"] = ", ".join(fr["name"] for fr in d["flags"])
         d["file_path"] = _disp_path(d)      # device path (VIC) or source path
         d["disk_name"] = _disk_name(d)      # the on-disk (MD5) name
         out.append(d)
@@ -313,7 +311,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "gps":        ("GPS",           lambda d: (f"{d['gps_lat']:.6f}, {d['gps_lon']:.6f}"
                                                if d.get("gps_lat") is not None else ""), False),
     "category":   ("Category",      lambda d: d.get("category_label") or "", False),
-    "tags":       ("Tags",          lambda d: ", ".join(d.get("tags") or []), False),
+    "flags":      ("Flags",         lambda d: d.get("flags_label") or "", False),
     "notes":      ("Notes",         lambda d: d.get("notes") or "", False),
     "faces":      ("Faces",         lambda d: str(d["faces"]) if d.get("faces") else "", False),
     "skin_ratio": ("Skin ratio",    lambda d: f"{d['skin_ratio']:.2f}" if d.get("skin_ratio") else "", False),
@@ -326,7 +324,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
 }
 DEFAULT_REPORT_FIELDS = ["name", "created_dt", "md5"]
 
-_HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
+_HTML_HEAD = """<!doctype html><html class="{blur_cls}"><head><meta charset="utf-8">
 <title>{case} - report</title>
 <style>
  :root{{--line:#d5d9e0;--ink:#1a1d24;--mut:#5b6472}}
@@ -345,16 +343,17 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  header.rpt td{{padding:2px 14px 2px 0;vertical-align:top}}
  header.rpt td:first-child{{color:var(--mut);white-space:nowrap}}
  header.rpt .hnotes{{margin-top:8px;white-space:pre-wrap;max-width:70ch}}
- .summary{{margin:18px 0 6px;border:1px solid var(--line);border-radius:8px;overflow:hidden}}
+ .summary{{margin:18px 0 6px;border:1px solid var(--line);border-left:4px solid #2f6fd8;
+   border-radius:0 8px 8px 0;overflow:hidden}}
  details.summary > summary.cap{{cursor:pointer;list-style:none;font-weight:700;font-size:14px;
-   padding:11px 14px;color:var(--ink);background:#f0f5ff;display:flex;align-items:center;
+   padding:11px 14px;color:var(--ink);background:#fafbfd;display:flex;align-items:center;
    gap:9px;user-select:none;transition:background .12s}}
  details.summary > summary.cap::-webkit-details-marker{{display:none}}
  details.summary > summary.cap::before{{content:"\\25B8";color:#2f6fd8;font-size:13px}}
  details.summary[open] > summary.cap::before{{content:"\\25BE"}}
- details.summary > summary.cap:hover{{background:#dfe9ff}}
- html.dark details.summary > summary.cap{{background:#1c2b4a}}
- html.dark details.summary > summary.cap:hover{{background:#25396b}}
+ details.summary > summary.cap:hover{{background:#eef1f5}}
+ html.dark details.summary > summary.cap{{background:#1c1f26}}
+ html.dark details.summary > summary.cap:hover{{background:#242833}}
  .summary .sumrow{{display:flex;gap:32px;align-items:center;flex-wrap:wrap;padding:14px}}
  .summary .chartcol{{flex:0 0 auto}}
  .summary .donut{{width:148px;height:148px;display:block}}
@@ -365,6 +364,8 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .summary table{{border-collapse:collapse;font-size:12.5px}}
  .summary td{{padding:3px 0}}
  .summary td.lbl{{padding-right:30px}}
+ .summary td.lbl a{{color:inherit;text-decoration:none;border-bottom:1px dotted var(--mut)}}
+ .summary td.lbl a:hover{{color:#2f6fd8;border-bottom-color:#2f6fd8}}
  .summary td.n{{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;
    padding-right:22px;min-width:66px}}
  .summary td.pct{{text-align:right;font-variant-numeric:tabular-nums;color:var(--mut);min-width:50px}}
@@ -375,15 +376,15 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .summary tr.tot td{{border-top:2px solid var(--ink);padding-top:7px;font-weight:700}}
  .summary .sw{{display:inline-block;width:9px;height:9px;border-radius:2px;
    margin-right:9px;vertical-align:1px;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
- details.overview{{margin:18px 0 4px;border:1px solid var(--line);border-radius:8px;
-   overflow:hidden}}
+ details.overview{{margin:18px 0 4px;border:1px solid var(--line);border-left:4px solid #2f6fd8;
+   border-radius:0 8px 8px 0;overflow:hidden}}
  details.overview > summary{{cursor:pointer;font-weight:700;font-size:14px;list-style:none;
-   padding:11px 14px;color:var(--ink);background:#f0f5ff;display:flex;align-items:center;
+   padding:11px 14px;color:var(--ink);background:#fafbfd;display:flex;align-items:center;
    gap:9px;user-select:none;transition:background .12s}}
  details.overview > summary::-webkit-details-marker{{display:none}}
  details.overview > summary::before{{content:"\\25B8";color:#2f6fd8;font-size:13px}}
  details.overview[open] > summary::before{{content:"\\25BE"}}
- details.overview > summary:hover{{background:#dfe9ff}}
+ details.overview > summary:hover{{background:#eef1f5}}
  details.overview > summary .n{{color:var(--mut);font-weight:400;font-size:13px}}
  details.overview > summary .hint{{margin-left:auto;font-size:11px;font-weight:600;
    color:#2f6fd8}}
@@ -421,8 +422,8 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  details.overview .ovlinks a:hover{{text-decoration:underline}}
  details.overview .ovbasemap{{color:var(--mut);font-size:11px;margin-top:10px;
    padding-top:8px;border-top:1px solid var(--line)}}
- html.dark details.overview > summary{{background:#1c2b4a}}
- html.dark details.overview > summary:hover{{background:#25396b}}
+ html.dark details.overview > summary{{background:#1c1f26}}
+ html.dark details.overview > summary:hover{{background:#242833}}
  nav.toc{{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0 4px;align-items:center}}
  nav.toc .lbl{{color:var(--mut);font-size:12px;font-weight:600}}
  nav.toc a{{border:1px solid #2f6fd8;border-radius:6px;padding:3px 12px;text-decoration:none;
@@ -451,6 +452,7 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
    color:#2f6fd8;border:1px solid var(--line);border-radius:5px;padding:1px 9px}}
  h2.catsec .toplink:hover{{background:#2f6fd8;color:#fff;border-color:#2f6fd8}}
  details.kindsec{{margin:14px 0}}
+ details.flagsec{{margin-left:18px}}   /* level with a category heading's own text (6px border + 12px padding) */
  details.kindsec > summary{{cursor:pointer;font-weight:700;font-size:13px;
    list-style:none;padding:4px 0;color:var(--ink)}}
  details.kindsec > summary::-webkit-details-marker{{display:none}}
@@ -458,6 +460,8 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  details.kindsec[open] > summary::before{{content:"\\25BE "}}
  details.kindsec > summary .n{{color:var(--mut);font-weight:400;margin-left:4px}}
  details.kindsec > .grid{{margin-top:10px}}
+ details.flagsec > summary .fsw{{display:inline-block;width:9px;height:9px;border-radius:2px;
+   margin-right:5px;vertical-align:1px}}
  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}}
  .card{{border:1px solid var(--line);border-radius:8px;overflow:hidden;break-inside:avoid;
    scroll-margin-top:12px}}
@@ -475,6 +479,12 @@ _HTML_HEAD = """<!doctype html><html class="blur"><head><meta charset="utf-8">
  .card details.meta:not([open]) img.locmap{{display:none}}
  html.blur .card img.locmap{{filter:none}}   /* a locator map carries no evidence imagery */
  .card .catbar{{padding:3px 9px;color:#fff;font-weight:600;font-size:11px}}
+ .card .flagrow{{padding:5px 9px 0}}
+ .card .rchip{{display:inline-flex;align-items:center;gap:5px;background:#f1f2f5;
+   border:1px solid var(--line);border-radius:10px;padding:1px 8px 1px 5px;
+   margin:0 4px 4px 0;font-size:11px}}
+ .card .rchip i{{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block}}
+ html.dark .card .rchip{{background:#242833}}
  .card details.meta{{font-size:12px}}
  .card details.meta > summary{{padding:7px 10px;cursor:pointer;font-weight:600;
    list-style:none;word-break:break-all}}
@@ -803,19 +813,31 @@ def _overview_html(case: Case, overview: str, tally: dict[str, int], drawn_rows:
             f"<div class='ovnote'>{html.escape(note)}</div>{linklist}{bm_html}</div></details>")
 
 
-def _summary_html(case: Case, rows: list[dict], label: str) -> str:
+def _summary_html(case: Case, rows: list[dict], label: str, *,
+                  flag_mode: bool = False) -> str:
     by_kind = Counter(d.get("kind") for d in rows)
     by_cat = Counter(d.get("category") or 0 for d in rows)
+    by_flag: Counter = Counter()
+    flagged = 0
+    for d in rows:
+        fl = d.get("flags") or []
+        if fl:
+            flagged += 1
+        for f in fl:
+            by_flag[f["code"]] += 1
     hits = sum(1 for d in rows if d.get("hashset_hit"))
     n = len(rows)
     total = case.db.stats()["total"]
     cmap = categories.catmap(case.db)
+    fmap = flags.flagmap(case.db)
 
     def line(cls: str, name: str, count: int, *, pct: str | None = None,
-             swatch: str | None = None) -> str:
+             swatch: str | None = None, href: str | None = None) -> str:
         sw = (f"<span class='sw' style='background:{html.escape(swatch, quote=True)}'></span>"
               if swatch else "")
-        return (f"<tr class='{cls}'><td class='lbl'>{sw}{html.escape(str(name))}</td>"
+        label_html = (f"<a href='{html.escape(href, quote=True)}'>{html.escape(str(name))}</a>"
+                      if href else html.escape(str(name)))
+        return (f"<tr class='{cls}'><td class='lbl'>{sw}{label_html}</td>"
                 f"<td class='n'>{count:,}</td>"
                 f"<td class='pct'>{pct or ''}</td></tr>")
 
@@ -829,8 +851,24 @@ def _summary_html(case: Case, rows: list[dict], label: str) -> str:
         out.append("<tr class='grp'><td colspan='3'>By category</td></tr>")
         for c in codes:
             pct = f"{100 * by_cat[c] / n:.1f}%" if n else None
+            # category sections only exist in the default (non-flag) report
             out.append(line("cat", categories.label(case.db, c), by_cat[c],
-                            pct=pct, swatch=categories.color(case.db, c)))
+                            pct=pct, swatch=categories.color(case.db, c),
+                            href=None if flag_mode else f"#cat-{c}"))
+
+    flag_codes = sorted(by_flag, key=lambda c: fmap.get(c, {}).get("position", c))
+    if flag_codes:
+        out.append("<tr class='grp'><td colspan='3'>By flag</td></tr>")
+        for c in flag_codes:
+            pct = f"{100 * by_flag[c] / n:.1f}%" if n else None
+            # every flag gets a #flag-{code} anchor whichever mode the report
+            # is in - the top-level heading in a flags-only report, or the
+            # first place that flag appears in the default (by-category) one
+            out.append(line("cat", fmap.get(c, {}).get("name", f"Flag {c}"), by_flag[c],
+                            pct=pct, swatch=fmap.get(c, {}).get("color"),
+                            href=f"#flag-{c}"))
+        pct_flagged = f"{100 * flagged / n:.1f}%" if n else None
+        out.append(line("sub", "Files with at least one flag", flagged, pct=pct_flagged))
 
     if hits:
         out.append("<tr class='grp'><td colspan='3'>Known-hash</td></tr>")
@@ -966,6 +1004,16 @@ def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
     catbar = (f"<div class='catbar' style='background:"
               f"{html.escape(categories.color(case.db, code))}'>"
               f"{html.escape(d['category_label'])}</div>" if code else "")
+    # Flags sit right under the category bar - small and colored, never
+    # confusable with the (bold, singular) category itself. A file can carry
+    # any number, including zero.
+    flagrow = ""
+    if d.get("flags"):
+        chips = "".join(
+            f"<span class='rchip'><i style='background:"
+            f"{html.escape(fl['color'], quote=True)}'></i>{html.escape(fl['name'])}</span>"
+            for fl in d["flags"])
+        flagrow = f"<div class='flagrow'>{chips}</div>"
     name = html.escape(_disp_name(d))
     is_video = d.get("kind") == "video"
     img = blob = ""
@@ -1007,9 +1055,22 @@ def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
               f"data-full='{html.escape(loc_map, quote=True)}' data-name='location of {name}' "
               f"alt='location of {name}' title='drawn on the imported offline basemap'>"
               if loc_map else "")
-    return (f"<div class='card' id='file-{d['id']}'>{img}{catbar}"
+    return (f"<div class='card' id='file-{d['id']}'>{img}{catbar}{flagrow}"
             f"<details class='meta'><summary>{name}</summary>{locimg}"
             f"<div class='fields'>{''.join(parts)}</div></details></div>")
+
+
+_KIND_LABELS = (("image", "Images"), ("video", "Videos"), ("other", "Other files"))
+
+
+def _by_kind(items: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Split a section's rows into (label, rows) buckets - Images, Videos,
+    Other - in that fixed order, skipping whichever are empty."""
+    buckets: dict[str, list[dict]] = {}
+    for d in items:
+        k = d.get("kind") if d.get("kind") in ("image", "video") else "other"
+        buckets.setdefault(k, []).append(d)
+    return [(lbl, buckets[k]) for k, lbl in _KIND_LABELS if buckets.get(k)]
 
 
 def export_html(case: Case, dest: str | Path, where: str = "", *,
@@ -1017,7 +1078,9 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
                 fields: list[str] | None = None, scope_label: str = "",
                 full_images: bool = True, full_videos: bool = True,
                 tz: str | None = None, maps: bool = True,
-                map_flavor: str = "light", map_cap: int = 400) -> Path:
+                map_flavor: str = "light", map_cap: int = 400,
+                blur: bool = True, by_flag: bool = False,
+                only_flags: list[int] | None = None) -> Path:
     global _TZ
     _TZ = tz
     dest = Path(dest)
@@ -1026,42 +1089,19 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
         or DEFAULT_REPORT_FIELDS
     cn = html.escape(str(case.db.get_meta("case_name") or "GLEAPP"))
     thumb_root = case.thumb_dir
-
-    # group by category (ordered by the category's display position, 0 last),
-    # then within each category by kind (images / videos / other) so a section
-    # can be browsed one media type at a time
     cmap = categories.catmap(case.db)
-    groups: dict[int, dict[str, list[dict]]] = {}
-    for d in rows:
-        code = d.get("category") or 0
-        kind = d.get("kind") if d.get("kind") in ("image", "video") else "other"
-        groups.setdefault(code, {}).setdefault(kind, []).append(d)
-
-    def _order(code: int) -> tuple:
-        if code == 0:
-            return (1, 1e9, 0)
-        return (0, cmap.get(code, {}).get("position", code), code)
-    codes = sorted(groups, key=_order)
-
-    def _cat_count(code: int) -> int:
-        return sum(len(v) for v in groups[code].values())
+    fmap = flags.flagmap(case.db)
 
     overview_uri, loc_maps, map_tally, drawn_rows, marker_px = ("", {}, {}, [], {})
     if maps:
         overview_uri, loc_maps, map_tally, drawn_rows, marker_px = _render_report_maps(
             case, rows, flavor=map_flavor, cap=map_cap)
 
-    body = [_HTML_HEAD.format(case=cn)]
+    body = [_HTML_HEAD.format(case=cn, blur_cls="blur" if blur else "")]
     body.append(_header_html(case, header))
-    body.append(_summary_html(case, rows, scope_label))
+    body.append(_summary_html(case, rows, scope_label, flag_mode=by_flag))
     body.append(_overview_html(case, overview_uri, map_tally, drawn_rows, marker_px))
-
-    if len(codes) > 1:
-        toc = "".join(
-            f"<a href='#cat-{c}'>{html.escape(categories.label(case.db, c))} "
-            f"<span class='n'>{_cat_count(c):,}</span></a>" for c in codes)
-        body.append(f"<nav class='toc'><span class='lbl'>Jump to section:</span>{toc}</nav>")
-    body.append(
+    rptbar_html = (
         "<div class='rptbar'><span class='lbl'>Metadata:</span> "
         "<button type='button' onclick=\"document.querySelectorAll("
         "'details.meta').forEach(d=>d.open=true)\">expand all</button> "
@@ -1071,27 +1111,125 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
         "<button type='button' id='btnBlur' class='tgl'><span class='sw'></span>Blur images</button>"
         "<button type='button' id='btnDark' class='tgl'><span class='sw'></span>Dark mode</button></div>")
 
-    for c in codes:
-        lbl = html.escape(categories.label(case.db, c))
-        col = html.escape(categories.color(case.db, c))
-        body.append(
-            f"<h2 class='catsec' id='cat-{c}' style='border-left:6px solid {col}'>"
-            f"{lbl} <span class='n'>({_cat_count(c):,})</span>"
-            f"<a class='toplink' href='#top'>&uarr; top</a></h2>")
-        for kind, klabel in (("image", "Images"), ("video", "Videos"), ("other", "Other files")):
-            items = groups[c].get(kind)
-            if not items:
-                continue
+    def _kind_grids(items: list[dict]) -> None:
+        """One collapsible Images/Videos/Other grid per kind present."""
+        for klabel, sub in _by_kind(items):
             body.append(
                 f"<details class='kindsec' open><summary>{klabel} "
-                f"<span class='n'>({len(items):,})</span></summary><div class='grid'>")
-            for d in items:
+                f"<span class='n'>({len(sub):,})</span></summary><div class='grid'>")
+            for d in sub:
                 body.append(_card_html(case, d, keys, thumb_root,
                                        full_images, full_videos,
                                        loc_map=loc_maps.get(d["id"], "")))
             body.append("</div></details>")
 
-    body.append(_REPORT_JS)
+    def _section(label: str, items: list[dict], *, swatch: str = "", anchor: str = "") -> None:
+        sw = (f"<span class='fsw' style='background:"
+              f"{html.escape(swatch, quote=True)}'></span>" if swatch else "")
+        id_attr = f" id='{anchor}'" if anchor else ""
+        body.append(
+            f"<details class='kindsec flagsec'{id_attr} open><summary>{sw}{label} "
+            f"<span class='n'>({len(items):,})</span></summary>")
+        _kind_grids(items)
+        body.append("</details>")
+
+    if by_flag:
+        # A flags-only report: every row here already carries at least one
+        # flag (the scope that asks for this filters to just those), and a
+        # flag stands in for a category as the report's top-level section -
+        # same heading (size, "jump to section" link, left color bar) a
+        # category normally gets. Not mutually exclusive, so a file carrying
+        # two flags appears once under each - unless the examiner picked
+        # specific flags to include, in which case any *other* flag a
+        # qualifying file also carries is left out of the grouping entirely.
+        allowed = set(only_flags) if only_flags else None
+        flag_groups: dict[int, list[dict]] = {}
+        for d in rows:
+            for fl in d.get("flags") or []:
+                if allowed is not None and fl["code"] not in allowed:
+                    continue
+                flag_groups.setdefault(fl["code"], []).append(d)
+        flag_codes = sorted(flag_groups, key=lambda fc: fmap.get(fc, {}).get("position", fc))
+
+        if len(flag_codes) > 1:
+            toc = "".join(
+                f"<a href='#flag-{fc}'>{html.escape(fmap.get(fc, {}).get('name', f'Flag {fc}'))} "
+                f"<span class='n'>{len(flag_groups[fc]):,}</span></a>" for fc in flag_codes)
+            body.append(f"<nav class='toc'><span class='lbl'>Jump to section:</span>{toc}</nav>")
+        body.append(rptbar_html)
+
+        for fc in flag_codes:
+            finfo = fmap.get(fc, {})
+            lbl = html.escape(finfo.get("name", f"Flag {fc}"))
+            col = html.escape(finfo.get("color", "#888888"), quote=True)
+            items = flag_groups[fc]
+            body.append(
+                f"<h2 class='catsec' id='flag-{fc}' style='border-left:6px solid {col}'>"
+                f"{lbl} <span class='n'>({len(items):,})</span>"
+                f"<a class='toplink' href='#top'>&uarr; top</a></h2>")
+            _kind_grids(items)
+    else:
+        # group by category (ordered by the category's display position, 0
+        # last), then within each category by flag (see _section above), with
+        # kind (image/video/other) only splitting whatever carries no flag.
+        groups: dict[int, dict[str, list[dict]]] = {}
+        for d in rows:
+            code = d.get("category") or 0
+            kind = d.get("kind") if d.get("kind") in ("image", "video") else "other"
+            groups.setdefault(code, {}).setdefault(kind, []).append(d)
+
+        def _order(code: int) -> tuple:
+            if code == 0:
+                return (1, 1e9, 0)
+            return (0, cmap.get(code, {}).get("position", code), code)
+        codes = sorted(groups, key=_order)
+
+        def _cat_count(code: int) -> int:
+            return sum(len(v) for v in groups[code].values())
+
+        if len(codes) > 1:
+            toc = "".join(
+                f"<a href='#cat-{c}'>{html.escape(categories.label(case.db, c))} "
+                f"<span class='n'>{_cat_count(c):,}</span></a>" for c in codes)
+            body.append(f"<nav class='toc'><span class='lbl'>Jump to section:</span>{toc}</nav>")
+        body.append(rptbar_html)
+
+        # the summary's "By flag" rows link to #flag-{code} whichever mode the
+        # report is in; here that flag can recur under several categories, so
+        # only the first occurrence (in doc order) gets the anchor
+        seen_flag_anchor: set[int] = set()
+
+        for c in codes:
+            lbl = html.escape(categories.label(case.db, c))
+            col = html.escape(categories.color(case.db, c))
+            body.append(
+                f"<h2 class='catsec' id='cat-{c}' style='border-left:6px solid {col}'>"
+                f"{lbl} <span class='n'>({_cat_count(c):,})</span>"
+                f"<a class='toplink' href='#top'>&uarr; top</a></h2>")
+            cat_rows = (groups[c].get("image", []) + groups[c].get("video", [])
+                        + groups[c].get("other", []))
+            flag_rows: dict[int, list[dict]] = {}
+            unflagged: list[dict] = []
+            for d in cat_rows:
+                fl_list = d.get("flags") or []
+                if not fl_list:
+                    unflagged.append(d)
+                for fl in fl_list:
+                    flag_rows.setdefault(fl["code"], []).append(d)
+
+            flag_codes = sorted(flag_rows, key=lambda fc: fmap.get(fc, {}).get("position", fc))
+            for fc in flag_codes:
+                finfo = fmap.get(fc, {})
+                anchor = ""
+                if fc not in seen_flag_anchor:
+                    anchor = f"flag-{fc}"
+                    seen_flag_anchor.add(fc)
+                _section(html.escape(finfo.get("name", f"Flag {fc}")), flag_rows[fc],
+                         swatch=finfo.get("color", "#888888"), anchor=anchor)
+            if unflagged:
+                _section("No flag", unflagged)
+
+    body.append(_REPORT_JS.replace("__BLUR_DEFAULT__", "true" if blur else "false"))
     body.append("</div></body></html>")
     dest.write_text("".join(body), encoding="utf-8")
     return dest
@@ -1118,10 +1256,12 @@ _REPORT_JS = """
       if(persist) set(key, v ? '1' : '0');
     });
   }
-  // Blur always starts ON, every time this report is opened - not persisted,
-  // so an examiner turning it off to look at one report can't leave it off
-  // for the next one they open (local html files share storage per browser).
-  wire('btnBlur', 'blur', 'blur', true, false);
+  // Blur starts at whichever default the examiner picked when exporting this
+  // report (the Export dialog's "Blur images by default" checkbox) - baked
+  // into the file at export time, not persisted across reports, so turning it
+  // off to look at one report can't leave it off for the next one they open
+  // (local html files share storage per browser).
+  wire('btnBlur', 'blur', 'blur', __BLUR_DEFAULT__, false);
   wire('btnDark', 'dark', 'dark', false, true);
   // click a thumbnail -> open the full-size image, or play the video, in a new tab
   function openImage(im){
