@@ -489,7 +489,9 @@ class CaseDB:
 
     # -- meta --------------------------------------------------------------
     def get_meta(self, key: str, default: str | None = None) -> str | None:
-        row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row["value"] if row else default
 
     def set_meta(self, key: str, value: str) -> None:
