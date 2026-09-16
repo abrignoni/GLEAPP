@@ -147,12 +147,23 @@ async function refreshCats() {
         i < 9 ? ` <span class="muted">${i + 1}</span>` : ""}</button>`).join("");
 }
 
+/* ---------- flags ---------- */
+async function refreshFlags() {
+  state.flags = await api("/api/flags");
+  const sel = $("#fflag"), cur = sel.value;
+  sel.innerHTML = '<option value="any">Any</option>';
+  state.flags.slice().sort((a, b) => a.position - b.position).forEach(fl =>
+    sel.insertAdjacentHTML("beforeend", `<option value="${fl.code}">${esc(fl.name)}</option>`));
+  sel.value = cur || "any";
+}
+
 /* ---------- filters ---------- */
 function filterParams() {
   const p = new URLSearchParams();
   const q = $("#fq").value.trim(); if (q) p.set("q", q);
   if ($("#fkind").value) p.set("kind", $("#fkind").value);
   if ($("#fcat").value !== "any") p.set("category", $("#fcat").value);
+  if ($("#fflag").value !== "any") p.set("flag", $("#fflag").value);
   if ($("#fsrc").value) p.set("source", $("#fsrc").value);
   if ($("#forigin").value) p.set("origin", $("#forigin").value);
   if ($("#finarch").checked) p.set("in_archive", "1");
@@ -289,6 +300,9 @@ function tileEl(f) {
     : "";
   const gps = f.gps_lat != null ? `<span class="b">\u{1F4CD}</span>` : "";
   const err = f.error && !f.thumb ? `<span class="b hit">ERR</span>` : "";
+  const flagB = f.flags && f.flags.length
+    ? `<span class="b" title="${esc(f.flags.map(x => x.name).join(", "))}">⚑ ${f.flags.length}</span>`
+    : "";
   let stack = "";
   if (nVis > 1) {
     el.classList.add("vstacked");
@@ -312,7 +326,7 @@ function tileEl(f) {
       ${media}
       ${f.kind === "video" ? `<div class="scrub"><i></i></div>
         <span class="vid">▶ ${fmtDur(f.duration)}</span>` : ""}
-      <div class="badges">${hit}${err}${dist}${faces}${gps}</div>
+      <div class="badges">${hit}${err}${dist}${faces}${gps}${flagB}</div>
       ${stack}
       <span class="selcheck">✓</span>
     </div>
@@ -486,7 +500,7 @@ const LIST_DEFS = [
       .map(c => ({ value: c.code, label: c.name })) },
   { key: "triage", label: "Triage", type: "text", get: f => f.triage || "" },
   { key: "notes", label: "Notes", type: "text", get: f => f.notes || "" },
-  { key: "tags", label: "Tags", type: "text", get: f => (f.tags || []).join(", ") },
+  { key: "flags", label: "Flags", type: "text", get: f => (f.flags || []).map(x => x.name).join(", ") },
   { key: "hashset_hit", label: "Hash set", type: "text", get: f => f.hashset_hit || "" },
   { key: "hashset_kind", label: "Hash kind", type: "enum", get: f => f.hashset_kind || "",
     options: [{ value: "known", label: "known" }, { value: "known-good", label: "known-good" },
@@ -501,13 +515,13 @@ const LIST_DEFS = [
 const colId = d => d.alt || d.key || "thumb";
 const DEFAULT_LIST_COLS = ["thumb", "name", "diskname", "orig_path", "kind", "ext", "size",
   "created_dt", "ctime", "mtime", "atime", "camera", "faces", "skin_ratio", "gps_lat", "gps_lon",
-  "category", "md5", "hashset_hit", "tags", "notes", "error"];
+  "category", "md5", "hashset_hit", "flags", "notes", "error"];
 
 function visibleDefs() {
   const on = state.listCols || new Set(DEFAULT_LIST_COLS);
   return LIST_DEFS.filter(d => on.has(colId(d)));
 }
-const LIST_PREFS_V = 5;   // bump when DEFAULT_LIST_COLS gains a column
+const LIST_PREFS_V = 6;   // bump when DEFAULT_LIST_COLS gains a column
 function persistListPrefs() {
   try {
     localStorage.setItem("gleapp.list", JSON.stringify({
@@ -535,6 +549,7 @@ function restoreListPrefs() {
         state.listCols.delete("path");
         state.listCols.add("orig_path");
       }
+      if ((s.v || 0) < 6) state.listCols.delete("tags");  // "Tags" -> "Flags"
       DEFAULT_LIST_COLS.forEach(k => state.listCols.add(k));
       persistListPrefs();
     }
@@ -1146,31 +1161,66 @@ function advancePast(justDone) {
   state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
   document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
-// Add-tag dialog: a plain browser prompt() shows as "<host> says", which reads
-// like a security warning and carries no case/app branding, so this is its own
-// small dialog instead - same pattern as every other single-field prompt here.
-let tagDlgIds = [];
-async function tagIds(ids) {
+// Flag picker: a multi-select checklist against the case's own flag list
+// (⚙ Flags), replacing a freeform typed tag - no vocabulary drift between
+// examiners, and a file can carry any number independent of its category.
+let flagDlgIds = [];
+function renderFlagList() {
+  const f0 = flagDlgIds.length === 1 ? state.files.find(x => x.id === flagDlgIds[0]) : null;
+  const on = new Set(((f0 && f0.flags) || []).map(x => x.code));
+  const rows = (state.flags || []).slice().sort((a, b) => a.position - b.position);
+  $("#flagList").innerHTML = rows.length ? rows.map(fl => `
+    <label class="fp-item" data-code="${fl.code}">
+      <input type="checkbox"${on.has(fl.code) ? " checked" : ""}>
+      <span class="dot" style="background:${esc(fl.color)}"></span>${esc(fl.name)}
+    </label>`).join("") : `<div class="empty">No flags yet — add one below.</div>`;
+}
+function flagIds(ids) {
   if (!ids.length) return;
-  tagDlgIds = ids;
-  $("#tagInput").value = "";
-  $("#tagDlg").style.display = "block";
-  $("#tagInput").focus();
+  flagDlgIds = ids;
+  renderFlagList();
+  $("#flagNewInput").value = "";
+  $("#flagDlg").style.display = "block";
 }
-async function _applyTag(t) {
-  const ids = tagDlgIds;
-  if (!t || !ids.length) return;
-  await save("/api/tag", { ids, add: t.split(",").map(s => s.trim()).filter(Boolean) });
-  if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
-  toast("Tagged " + ids.length);
+function closeFlagDlg() { $("#flagDlg").style.display = "none"; }
+// keep a file's in-memory `.flags` (tile badge, list column, meta pane) in
+// sync with a picker toggle - mirrors what categorize() does for `.category`
+function _applyFlagLocally(ids, code, on) {
+  const fl = (state.flags || []).find(x => x.code === code);
+  ids.forEach(id => {
+    const f = state.files.find(x => x.id === id); if (!f) return;
+    f.flags = (f.flags || []).filter(x => x.code !== code);
+    if (on && fl) f.flags.push(fl);
+  });
+  refreshTiles(ids);
 }
-function closeTagDlg() { $("#tagDlg").style.display = "none"; }
-$("#tagGo").onclick = () => { const t = $("#tagInput").value.trim(); closeTagDlg(); _applyTag(t); };
-$("#tagCancel").onclick = closeTagDlg;
-$("#tagInput").addEventListener("keydown", e => {
-  if (e.key === "Enter") { e.preventDefault(); $("#tagGo").click(); }
+$("#flagList").addEventListener("change", e => {
+  const cb = e.target.closest("input[type=checkbox]"); if (!cb) return;
+  const code = +cb.closest("[data-code]").dataset.code;
+  const ids = flagDlgIds;
+  save("/api/flag", cb.checked ? { ids, add: [code] } : { ids, remove: [code] }).then(() => {
+    _applyFlagLocally(ids, code, cb.checked);
+    if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
+  });
 });
-$("#tagDlg").addEventListener("click", e => { if (e.target.id === "tagDlg") closeTagDlg(); });
+$("#flagNewGo").onclick = async () => {
+  const name = $("#flagNewInput").value.trim();
+  if (!name) return;
+  const fl = await save("/api/flags", { name });
+  state.flags = (state.flags || []).concat([fl]);
+  $("#flagNewInput").value = "";
+  renderFlagList();
+  await save("/api/flag", { ids: flagDlgIds, add: [fl.code] });
+  _applyFlagLocally(flagDlgIds, fl.code, true);
+  const row = $(`#flagList [data-code="${fl.code}"] input`);
+  if (row) row.checked = true;
+  if (state.metaOpen && flagDlgIds.includes(state.focus)) showMeta(state.focus);
+};
+$("#flagNewInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); $("#flagNewGo").click(); }
+});
+$("#flagDlgDone").onclick = closeFlagDlg;
+$("#flagDlg").addEventListener("click", e => { if (e.target.id === "flagDlg") closeFlagDlg(); });
 
 /* ---------- metadata pane ---------- */
 function toggleMeta(force) {
@@ -1274,13 +1324,13 @@ async function showMeta(id) {
       <div>Category:
         <span class="catnow" style="background:${catColor(f.category)}">
           ${esc(catName(f.category))}</span></div>
+      <div style="margin-top:6px">${(f.flags || []).map(fl =>
+        `<span class="flagchip"><span class="dot" style="background:${esc(fl.color)}"></span>${esc(fl.name)} <b data-fc="${fl.code}">×</b></span>`).join("")}
+        <button class="btn sm" id="mFlag">+ flag</button></div>
       <div class="row">
         <button class="btn sm" id="mSim">Find similar</button>
-        <button class="btn sm" id="mTag">Add tag</button>
         <button class="btn sm" id="mHex">Hex view</button>
       </div>
-      <div>${(f.tags || []).map(t =>
-        `<span class="pill">${esc(t)} <b data-t="${esc(t)}">×</b></span>`).join("")}</div>
 
       ${f.keyframes && f.keyframes.length ? `<div class="muted" style="margin-top:8px">Key frames</div>
         <div class="film">${f.keyframes.map(k =>
@@ -1312,7 +1362,7 @@ async function showMeta(id) {
     catch (e) { toast("Clipboard unavailable; select the text instead"); }
   };
   $("#mSim").onclick = () => showSimilar(id);
-  $("#mTag").onclick = () => tagIds([id]);
+  $("#mFlag").onclick = () => flagIds([id]);
   $("#mHex").onclick = () => openHex(id);
   if ($("#mFull")) $("#mFull").onclick = () => openViewer(id);
   if ($("#mMapFull")) $("#mMapFull").onclick = () => openSingleMapView(f);
@@ -1326,8 +1376,11 @@ async function showMeta(id) {
     $("#simBanner").style.display = "flex";
     $("#simId").textContent = `exact-duplicate group (${f.stack.length})`;
   };
-  m.querySelectorAll("[data-t]").forEach(b => b.onclick = () =>
-    save("/api/tag", { ids: [id], remove: [b.dataset.t] }).then(() => showMeta(id)));
+  m.querySelectorAll("[data-fc]").forEach(b => b.onclick = () =>
+    save("/api/flag", { ids: [id], remove: [+b.dataset.fc] }).then(() => {
+      _applyFlagLocally([id], +b.dataset.fc, false);
+      showMeta(id);
+    }));
 
   // notes: autosave ~0.9s after typing stops, and immediately on blur
   const ta = $("#mNotes");
@@ -1599,7 +1652,7 @@ function openCtx(x, y, ids) {
     ${catBtns}
     <button data-a="c0"><span class="dot" style="background:#3a3f4b"></span>Clear category${many} <span class="muted">0</span></button>
     <div class="sep"></div>
-    <button data-a="tag">\u{1F3F7} Add tag${many}</button>
+    <button data-a="flag">\u{1F3F7} Flags…${many}</button>
     <div class="sep"></div>
     <button data-a="md5">#️⃣ Export MD5s${many}</button>
     <button data-a="mediafile">Open original file</button>`;
@@ -1636,7 +1689,7 @@ $("#ctx").addEventListener("click", e => {
   if (a === "mediafile") return window.open("/media/" + ids[0], "_blank");
   if (a === "md5") return exportMd5(ids);
   if (a[0] === "c") return categorize(ids, +a.slice(1));
-  if (a === "tag") return tagIds(ids);
+  if (a === "flag") return flagIds(ids);
 });
 
 /* ---------- category editor ---------- */
@@ -1720,6 +1773,68 @@ $("#catAdd").onclick = async () => {
   await refreshCats(); renderCatEd();
 };
 
+/* ---------- flag editor ---------- */
+// Same shape as the category editor above, but simpler: no locked rows, no
+// keyboard-shortcut badges, and deleting one is a real delete (a flag is
+// optional on every file, so there is nothing to reassign it to).
+function renderFlagEd() {
+  const rows = (state.flags || []).slice().sort((a, b) => a.position - b.position);
+  $("#flagRows").innerHTML = rows.length ? rows.map(fl => `
+    <div class="flag" draggable="true" data-code="${fl.code}">
+      <span class="grip">☰</span>
+      <input type="color" value="${esc(fl.color || "#888888")}" title="Flag color">
+      <input type="text" value="${esc(fl.name)}" placeholder="Flag ${fl.code} (unnamed)">
+      <button class="btn sm" data-del="${fl.code}">Delete</button>
+    </div>`).join("") : `<div class="empty">No flags yet — add one below.</div>`;
+
+  $("#flagRows").querySelectorAll("input[type=text]").forEach(inp => {
+    inp.addEventListener("change", async () => {
+      const code = +inp.closest(".flag").dataset.code;
+      await save("/api/flags/" + code, { name: inp.value.trim() }, "PATCH");
+      await refreshFlags(); renderFlagEd(); refreshAllTiles();
+      if (state.metaOpen && state.focus != null) showMeta(state.focus);
+    });
+  });
+  $("#flagRows").querySelectorAll("input[type=color]").forEach(inp => {
+    inp.addEventListener("change", async () => {
+      const code = +inp.closest(".flag").dataset.code;
+      await save("/api/flags/" + code, { color: inp.value }, "PATCH");
+      await refreshFlags(); renderFlagEd(); refreshAllTiles();
+      if (state.metaOpen && state.focus != null) showMeta(state.focus);
+    });
+  });
+  $("#flagRows").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+    const code = +b.dataset.del;
+    const used = state.files.filter(f => (f.flags || []).some(x => x.code === code)).length;
+    if (used && !confirm(`${used} loaded file(s) carry this flag.\nDelete it anyway?`)) return;
+    await save("/api/flags/" + code, null, "DELETE");
+    await refreshFlags(); renderFlagEd(); refreshAllTiles();
+  });
+
+  let dragCode = null;
+  $("#flagRows").querySelectorAll(".flag").forEach(row => {
+    row.addEventListener("dragstart", () => { dragCode = +row.dataset.code; row.classList.add("drag"); });
+    row.addEventListener("dragend", () => row.classList.remove("drag"));
+    row.addEventListener("dragover", e => e.preventDefault());
+    row.addEventListener("drop", async e => {
+      e.preventDefault();
+      const target = +row.dataset.code;
+      if (dragCode == null || dragCode === target) return;
+      const order = rows.map(fl => fl.code).filter(c => c !== dragCode);
+      order.splice(order.indexOf(target), 0, dragCode);
+      await save("/api/flags/reorder", { codes: order });
+      await refreshFlags(); renderFlagEd();
+    });
+  });
+}
+$("#btnFlags").onclick = () => { renderFlagEd(); $("#flagEd").style.display = "block"; };
+$("#flagClose").onclick = () => { $("#flagEd").style.display = "none"; refreshAllTiles(); };
+$("#flagEd").addEventListener("click", e => { if (e.target.id === "flagEd") $("#flagClose").click(); });
+$("#flagAdd").onclick = async () => {
+  await save("/api/flags", { name: "" });
+  await refreshFlags(); renderFlagEd();
+};
+
 /* ---------- grid / list events ---------- */
 $("#grid").addEventListener("click", e => {
   const t = e.target.closest(".tile, .lvrow"); if (!t) return;
@@ -1765,7 +1880,8 @@ document.addEventListener("keydown", e => {
     $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
     $("#stashWipeDlg").style.display = "none"; $("#hashImportDlg").style.display = "none";
     $("#refDlg").style.display = "none"; $("#histDlg").style.display = "none";
-    $("#addEvDlg").style.display = "none"; $("#tagDlg").style.display = "none";
+    $("#addEvDlg").style.display = "none"; $("#flagDlg").style.display = "none";
+    $("#flagEd").style.display = "none";
     $("#mainMenu").style.display = "none"; $("#notifyMenu").style.display = "none";
     return;
   }
@@ -1807,7 +1923,7 @@ document.addEventListener("keydown", e => {
 
 /* ---------- filter wiring ---------- */
 // #fsort has its own handler (it maps to state.sortCol/Dir), so it's not here
-["#fq", "#fkind", "#fcat", "#fsrc", "#forigin", "#finarch", "#fdup", "#ffaces", "#fgps",
+["#fq", "#fkind", "#fcat", "#fflag", "#fsrc", "#forigin", "#finarch", "#fdup", "#ffaces", "#fgps",
  "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
@@ -1841,6 +1957,9 @@ const FILTER_DEFS = [
   { active: () => $("#fcat").value !== "any",
     label: () => `Category: ${esc($("#fcat").selectedOptions[0].textContent)}`,
     clear: () => { $("#fcat").value = "any"; } },
+  { active: () => $("#fflag").value !== "any",
+    label: () => `Flag: ${esc($("#fflag").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fflag").value = "any"; } },
   { active: () => !!$("#fkind").value,
     label: () => `Type: ${esc($("#fkind").selectedOptions[0].textContent)}`,
     clear: () => { $("#fkind").value = ""; } },
@@ -2056,6 +2175,8 @@ async function refreshContext() {
   showSourceStatus(c.archive_sources);
   state.cats = c.categories || [];
   try { await refreshCats(); } catch (e) {}
+  state.flags = c.flags || [];
+  try { await refreshFlags(); } catch (e) {}
   updateScreenInfo(c.screening);
   updateArchInfo(c.archives);
   updateKnownHash(c.known_hash);
@@ -2074,6 +2195,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fq").value = "";
   $("#fkind").value = "";
   $("#fcat").value = "any";
+  $("#fflag").value = "any";
   $("#fsrc").value = "";
   $("#forigin").value = "";
   $("#finarch").checked = false;
@@ -2121,6 +2243,7 @@ async function openReportDlg() {
   $("#scCat").textContent = `(${cats.toLocaleString()})`;
   $("#scUncat").textContent = s.total
     ? `(${((s.total || 0) - cats).toLocaleString()})` : "";
+  $("#scFlag").textContent = `(${(s.flagged || 0).toLocaleString()})`;
   $("#scSel").textContent = `(${state.sel.size})`;
   const selRadio = document.querySelector('input[name=rscope][value=selected]');
   selRadio.disabled = state.sel.size === 0;
@@ -2137,6 +2260,7 @@ async function openReportDlg() {
   setRptLogo(h.logo || null);
   $("#rhFull").checked = p.full_images !== false;
   $("#rhVideo").checked = p.full_videos !== false;
+  $("#rhBlur").checked = p.blur !== false;
   $("#rhMaps").checked = p.maps !== false;
   $("#rhMapsRow").style.display = state.basemap ? "" : "none";
   const chosen = new Set(p.fields || ["name", "created_dt", "md5"]);
@@ -2150,6 +2274,11 @@ async function openReportDlg() {
     .map(c => `<label><input type="checkbox" class="rscat" value="${c.code}">
       ${esc(c.name || "Category " + c.code)}
       <span class="muted">(${(byCat[c.code] || 0).toLocaleString()})</span></label>`).join("");
+  const byFlagN = s.by_flag || {};
+  $("#rscopeFlags").innerHTML = (state.flags || []).slice().sort((a, b) => a.position - b.position)
+    .map(fl => `<label><input type="checkbox" class="rsflag" value="${fl.code}">
+      ${esc(fl.name)}
+      <span class="muted">(${(byFlagN[fl.code] || 0).toLocaleString()})</span></label>`).join("");
   syncRptScope();
   syncRptHtmlOpts();
   $("#reportDlg").style.display = "block";
@@ -2157,6 +2286,8 @@ async function openReportDlg() {
 function syncRptScope() {
   const on = document.querySelector('input[name=rscope][value=categories]').checked;
   $("#rscopeCats").style.display = on ? "" : "none";
+  const onFlag = document.querySelector('input[name=rscope][value=specificflags]').checked;
+  $("#rscopeFlags").style.display = onFlag ? "" : "none";
 }
 function setRptLogo(uri) {
   rptLogo = (typeof uri === "string" && uri.startsWith("data:image/")) ? uri : null;
@@ -2198,6 +2329,10 @@ $("#reportGo").onclick = async () => {
     body.categories = [...document.querySelectorAll(".rscat:checked")].map(c => +c.value);
     if (!body.categories.length) return toast("Pick at least one category");
   }
+  if (scope === "specificflags") {
+    body.flags = [...document.querySelectorAll(".rsflag:checked")].map(c => +c.value);
+    if (!body.flags.length) return toast("Pick at least one flag");
+  }
   body.report_header = {
     agency: $("#rhAgency").value.trim(),
     case_number: $("#rhCase").value.trim(),
@@ -2209,6 +2344,7 @@ $("#reportGo").onclick = async () => {
   body.fields = [...document.querySelectorAll(".rfld:checked")].map(c => c.value);
   body.full_images = $("#rhFull").checked;
   body.full_videos = $("#rhVideo").checked;
+  body.blur = $("#rhBlur").checked;
   body.maps = $("#rhMaps").checked;
   closeReportDlg();
   const r = await api("/api/report", {
@@ -3756,11 +3892,13 @@ $("#mapViewClose").onclick = closeMapView;
       $("#btnRetryErr").textContent = `Retry ${c.errors.toLocaleString()} failed files`;
     }
     state.cats = c.categories || [];
+    state.flags = c.flags || [];
     state.sources = c.sources || [];
     state.basemap = c.basemap || null;
     showSourceStatus(c.archive_sources);
     setupTz(c);
     try { await refreshCats(); } catch (e) {}
+    try { await refreshFlags(); } catch (e) {}
     (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));
     try {
       if (localStorage.getItem("gleapp.meta") === "1") toggleMeta(true);

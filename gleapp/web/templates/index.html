@@ -255,7 +255,7 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg,#tagDlg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg,#flagDlg,#flagEd{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
   #hashImportDlg .box,#refDlg .box,#vicExportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #addEvDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #hashImportDlg h2,#refDlg h2,#vicExportDlg h2,#addEvDlg h2{margin:0 0 4px;font-size:15px}
@@ -307,10 +307,11 @@
   #snapList .snaprow b{font-size:12px}
   #snapList .tagauto{display:inline-block;padding:1px 7px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);font-size:10px;vertical-align:1px}
   #snapList button[data-snap]{white-space:nowrap}
-  #catEd .box,#reportDlg .box,#tagDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:440px;max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #catEd .box,#reportDlg .box,#flagDlg .box,#flagEd .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:440px;max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #reportDlg .box{width:520px}
-  #catEd h2,#reportDlg h2,#tagDlg h2{margin:0 0 10px;font-size:15px}
-  #tagDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px;font:inherit}
+  #catEd h2,#reportDlg h2,#flagDlg h2,#flagEd h2{margin:0 0 10px;font-size:15px}
+  #flagDlg input[type=text],#flagEd input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px;font:inherit}
+  #flagDlg .row input[type=text]{width:auto;flex:1}
   #reportDlg label{display:block;margin:4px 0}
   #reportDlg input[type=text],#reportDlg textarea{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px;font:inherit;margin-top:2px}
   #reportDlg .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
@@ -373,6 +374,23 @@
   #catEd .cat .lockname{flex:1;font-weight:600;padding:5px 0}
   #catEd .cat .vcode{font-size:15px;font-weight:400;color:var(--fg);white-space:nowrap}
   #catEd .cat .vcode b{font-weight:700}
+  /* flag editor (⚙ Flags) - same shape as the category editor, no locked rows */
+  #flagEd .flag{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}
+  #flagEd .flag input[type=color]{width:22px;height:22px;flex:0 0 22px;padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel2);cursor:pointer}
+  #flagEd .flag input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
+  #flagEd .flag input[type=color]::-webkit-color-swatch{border:none;border-radius:2px}
+  #flagEd .flag input[type=text]{flex:1;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
+  #flagEd .flag .grip{cursor:grab;color:var(--muted)}
+  #flagEd .flag.drag{opacity:.4}
+  #flagEd .empty{color:var(--muted);font-size:12px;font-style:italic;padding:8px 2px}
+  /* flag picker (per-file, opened from the details pane / context menu) */
+  #flagList .fp-item{display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:5px;font-size:13px;cursor:pointer}
+  #flagList .fp-item:hover{background:var(--panel2)}
+  #flagList .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  /* flag chips - on a tile's metadata pane and wherever a file's flags list renders */
+  .flagchip{display:inline-flex;align-items:center;gap:5px;background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:2px 8px 2px 6px;margin:0 4px 4px 0;font-size:11.5px}
+  .flagchip .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .flagchip b{font-weight:400;opacity:.55;cursor:pointer;margin-left:1px}
   #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--accent);border-radius:8px;padding:8px 16px;z-index:110;display:none}
   #toast.clickable{cursor:pointer}
   #toast.clickable:hover{background:var(--accent);color:#fff}
@@ -461,6 +479,7 @@
     <div id="mainMenu" class="hdrmenu">
       <div class="hd">Case</div>
       <button id="btnCats">⚙ Categories</button>
+      <button id="btnFlags" title="Examiner-defined flags, independent of category">⚙ Flags</button>
       <button id="btnSnapshot" title="Save, list and restore case snapshots">Snapshots</button>
       <button id="btnVic" style="display:none" title="Export a Project VIC 2.0 JSON with your categories">Export Project VIC</button>
       <div class="hd">Reference</div>
@@ -494,9 +513,11 @@
     </div>
 
     <div class="ffixed">
-      <input type="text" id="fq" placeholder="Search — name, path, hash, date, camera, tag…">
+      <input type="text" id="fq" placeholder="Search — name, path, hash, date, camera, flag…">
       <label class="flabel">Category
         <select id="fcat"><option value="any">Any</option></select></label>
+      <label class="flabel">Flag
+        <select id="fflag"><option value="any">Any</option></select></label>
       <label class="flabel">Type
         <select id="fkind"><option value="">All</option><option>image</option><option>video</option><option>other</option><option value="archive">archive (container)</option></select></label>
       <label class="flabel">Source
@@ -752,6 +773,10 @@
   <label><input type="radio" name="rscope" value="all" checked> All files <span class="muted" id="scAll"></span></label>
   <label><input type="radio" name="rscope" value="categorized"> Categorized only <span class="muted" id="scCat"></span></label>
   <label><input type="radio" name="rscope" value="uncategorized"> Uncategorized only <span class="muted" id="scUncat"></span></label>
+  <label><input type="radio" name="rscope" value="flags"> Flagged only <span class="muted" id="scFlag"></span>
+    <span class="muted" style="font-size:11px">— HTML report groups by flag instead of category</span></label>
+  <label><input type="radio" name="rscope" value="specificflags"> Specific flags</label>
+  <div id="rscopeFlags" class="rfields" style="display:none"></div>
   <label><input type="radio" name="rscope" value="categories"> Specific categories</label>
   <div id="rscopeCats" class="rfields" style="display:none"></div>
   <label><input type="radio" name="rscope" value="selected"> Selected files <span class="muted" id="scSel"></span></label>
@@ -794,6 +819,8 @@
       <span class="muted" style="font-size:11px">— click a thumbnail to open it in a new tab</span></label>
     <label><input type="checkbox" id="rhVideo" checked> Embed playable videos
       <span class="muted" style="font-size:11px">— click to play in a new tab (adds each video file to the report)</span></label>
+    <label><input type="checkbox" id="rhBlur" checked> Blur images by default
+      <span class="muted" style="font-size:11px">— whoever opens this report can still toggle it off with the "Blur images" button</span></label>
 
     <div style="margin:14px 0 6px"><b>Fields under each image</b></div>
     <div id="rptFields" class="rfields"></div>
@@ -1116,12 +1143,32 @@
   </div>
 </div></div>
 
-<div id="tagDlg"><div class="box">
-  <h2>Add tag</h2>
-  <input type="text" id="tagInput" placeholder="tag1, tag2, …" autocomplete="off">
+<div id="flagDlg"><div class="box">
+  <h2>Flags</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:8px">
+    Independent of category — check any that apply.
+  </div>
+  <div id="flagList"></div>
+  <div class="row" style="margin-top:10px">
+    <input type="text" id="flagNewInput" placeholder="New flag name…" autocomplete="off">
+    <button class="btn" id="flagNewGo">Add</button>
+  </div>
   <div class="row" style="margin-top:12px"><span style="flex:1"></span>
-    <button class="btn" id="tagCancel">Cancel</button>
-    <button class="btn" id="tagGo">Add</button>
+    <button class="btn" id="flagDlgDone">Done</button>
+  </div>
+</div></div>
+
+<div id="flagEd"><div class="box">
+  <h2>Flags</h2>
+  <div class="muted" style="font-size:12px;margin-bottom:8px">
+    Examiner-defined — none are locked or preseeded. A file can carry any number,
+    independent of its category.
+  </div>
+  <div id="flagRows"></div>
+  <div class="row" style="margin-top:12px">
+    <button class="btn" id="flagAdd">+ Add flag</button>
+    <span style="flex:1"></span>
+    <button class="btn" id="flagClose">Done</button>
   </div>
 </div></div>
 
