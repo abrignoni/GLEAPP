@@ -38,6 +38,19 @@
       "licence": "MIT",
       "licence_file": "gleapp/vendor/LICENSE-mediacarve",
       "note": "Copied verbatim. Fix upstream and re-vendor; edits here are reverted by the next sync."
+    },
+    {
+      "path": "gleapp/vendor/impacket_ese.py",
+      "name": "impacket_ese",
+      "version": "n/a (adapted from impacket 0.13.1)",
+      "upstream": "https://github.com/abrignoni/DLEAPP",
+      "upstream_file": "scripts/vendor/impacket_ese.py",
+      "commit": "17e396f5635f3ec5218ed702a697c5cad2906268",
+      "commit_date": "2026-09-16T18:59:34Z",
+      "sha256": "45348d441de200dbb30eac4acba52fa8fe6579183fcf3f7403f6d4fa2ab2eab7",
+      "licence": "Apache-2.0",
+      "licence_file": "gleapp/vendor/LICENSE-impacket",
+      "note": "Copied verbatim from DLEAPP, which itself adapted it from Fortra impacket 0.13.1 (impacket/structure.py + impacket/ese.py, folded into one stdlib-only file with the six/logging dependencies inlined, plus a fix so an ESE 7-bit-compressed tagged column decodes instead of returning None). GLEAPP's own upstream for this file is DLEAPP, not impacket directly - re-vendor from DLEAPP if it updates this file, or re-adapt from impacket per the provenance note at the top of the file if going further upstream is ever needed. Reads Windows.edb (ESE) for the Windows Search index; see gleapp/winsearch.py."
     }
   ]
 }

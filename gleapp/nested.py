@@ -10,10 +10,12 @@ The container row itself stays in the case as an ``archive`` row - it keeps the
 name, path and dates the filesystem gave it, and its own hashes - so a report can
 say where the media came from.
 
-Formats: ZIP, 7-Zip (via ``py7zr``), TAR (plain and gzip/bzip2/xz), and a single
-gzip/bzip2/xz-compressed file. RAR is recognised on ingest but not expanded - its
-readers need an external ``unrar``/``bsdtar`` binary a self-contained build cannot
-carry - and the container row is flagged so the examiner knows to extract it.
+Formats: ZIP, 7-Zip (via ``py7zr``), TAR (plain and gzip/bzip2/xz), a single
+gzip/bzip2/xz-compressed file, and a Windows ``thumbcache_*.db`` (see
+``gleapp/thumbcache.py`` for what that last one can and cannot recover). RAR is
+recognised on ingest but not expanded - its readers need an external
+``unrar``/``bsdtar`` binary a self-contained build cannot carry - and the
+container row is flagged so the examiner knows to extract it.
 """
 
 from __future__ import annotations
@@ -28,8 +30,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterator
 
-from . import archive
-from .ingest import ARCHIVE_EXTS, _kind_from_magic, classify, is_appledouble
+from . import archive, thumbcache
+from .ingest import ARCHIVE_EXTS, _kind_from_magic, classify, is_appledouble, is_search_index_name
 
 # A single member larger than this is skipped rather than written into the case.
 MAX_MEMBER_BYTES = 2 * 1024 ** 3
@@ -88,6 +90,8 @@ def _looks_like_container(path: Path) -> str | None:
         return "7z"
     if head[:4] == b"Rar!":
         return "rar"                            # recognised, not opened (needs a binary)
+    if head[:4] == thumbcache.FILE_MAGIC:
+        return "thumbcache"
     single = None
     if head[:2] == b"\x1f\x8b":
         single = "gz"
@@ -196,6 +200,12 @@ def _sevenzip_members(path: Path) -> Iterator[_Member]:
                               (lambda p=fp: p.read_bytes()))
 
 
+def _thumbcache_members(path: Path) -> Iterator[_Member]:
+    for i, e in enumerate(thumbcache.iter_entries(path)):
+        name = f"entry_{i:05d}_{e.entry_id:016x}.{e.ext}"
+        yield _Member(name, len(e.data), None, None, (lambda d=e.data: d))
+
+
 def _members(path: Path, fmt: str) -> Iterator[_Member]:
     if fmt == "zip":
         yield from _zip_members(path)
@@ -209,6 +219,8 @@ def _members(path: Path, fmt: str) -> Iterator[_Member]:
         yield from _single_member(path, bz2.open, "bz2")
     elif fmt == "xz":
         yield from _single_member(path, lzma.open, "xz")
+    elif fmt == "thumbcache":
+        yield from _thumbcache_members(path)
 
 
 # --------------------------------------------------------------------------
@@ -268,7 +280,8 @@ def _expand_one(case, row, *, include_other: bool, tally: dict) -> list[int]:
                     tally["too_big"] += 1
                     continue
                 kind, ext = _member_kind(nm, data)
-                if kind not in ("image", "video", "archive") and not include_other:
+                if (kind not in ("image", "video", "archive") and not include_other
+                        and not is_search_index_name(nm)):
                     tally["skipped_other"] += 1
                     continue
                 dest = _dest_for(case.root, row["id"], nm, ext)

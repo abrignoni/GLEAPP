@@ -13,6 +13,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--texworker":
         from gleapp._texworker import main as tw_main
         sys.exit(tw_main(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == "--edbworker":
+        from gleapp._edbworker import main as edb_main
+        sys.exit(edb_main(sys.argv[2:]))
     # --version answers without a window, so a frozen build can be smoke-tested
     # headless and it matches `python gleapp.py --version`. desktop.main() does not
     # handle it.

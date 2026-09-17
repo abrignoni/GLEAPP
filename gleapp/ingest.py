@@ -62,6 +62,20 @@ def is_appledouble_name(name: str) -> bool:
     return name.replace("\\", "/").rsplit("/", 1)[-1].startswith(APPLEDOUBLE_PREFIX)
 
 
+# The Windows Search index: the one place a thumbcache entry's id can become a
+# real name and path (see gleapp/winsearch.py). Kept regardless of
+# ``include_other`` - unlike an arbitrary "other" file, these two fixed,
+# well-known names are always worth having in the case when they exist. Name
+# matching only, on purpose: unlike a container's magic bytes, an ESE or SQLite
+# signature is too generic (shared with every other .edb/.db on the system) to
+# select on safely, where a specific, fixed filename is not.
+_SEARCH_INDEX_NAMES = {"windows.edb", "windows.db"}
+
+
+def is_search_index_name(name: str) -> bool:
+    return name.replace("\\", "/").rsplit("/", 1)[-1].lower() in _SEARCH_INDEX_NAMES
+
+
 def is_appledouble(name: str, head: bytes) -> bool:
     """True for a macOS AppleDouble sidecar: the ``._`` name *and* the magic.
 
@@ -86,6 +100,8 @@ def classify(ext: str) -> str:
 def _kind_from_magic(h: bytes) -> str:
     """image / video / archive / other from a file's leading bytes."""
     if h[:4] == b"LZC\x00":                                  # Snapchat bundle
+        return "archive"
+    if h[:4] == b"CMMM":                                     # Windows thumbnail cache
         return "archive"
     if (h[:4] == b"PK\x03\x04" or h[:4] == b"PK\x05\x06"     # zip (incl. empty)
             or h[:2] == b"\x1f\x8b"                          # gzip
@@ -180,7 +196,7 @@ def scan(
                 sniffed = sniff_kind(fp)
                 if sniffed != "other":
                     kind = sniffed
-                elif not include_other:
+                elif not include_other and not is_search_index_name(name):
                     continue
             try:
                 st = fp.stat()

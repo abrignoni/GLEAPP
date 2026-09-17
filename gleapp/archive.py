@@ -72,7 +72,7 @@ from pathlib import Path, PurePosixPath
 
 from . import storage_views
 from .ingest import (ARCHIVE_EXTS, IMAGE_EXTS, VIDEO_EXTS, _kind_from_magic,
-                     is_appledouble, is_appledouble_name)
+                     is_appledouble, is_appledouble_name, is_search_index_name)
 from .vendor import ewfprobe, mediacarve, qnxprobe
 
 _SLUG = re.compile(r"[^A-Za-z0-9._-]+")
@@ -974,7 +974,7 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
             if kind == "other":
                 with zf.open(info) as fh:
                     kind = _kind_from_magic(fh.read(16))
-                if kind == "other" and not src.include_other:
+                if kind == "other" and not src.include_other and not is_search_index_name(name):
                     continue
             if name in drop:
                 tally.mirrored += 1
@@ -1093,7 +1093,7 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
                     kind = "other"
                 if kind == "other":
                     kind = _kind_from_magic(head)
-                    if kind == "other" and not src.include_other:
+                    if kind == "other" and not src.include_other and not is_search_index_name(path):
                         continue
                 dest = _staged_path(staged_dir, slug, name)
                 # collect() carries only the modified time. NTFS holds created and
@@ -1339,7 +1339,7 @@ def _ingest_tar(case, src, tar_path: Path, fmt: str, *, count: int, progress) ->
                 kind = "other"
             if kind == "other":
                 kind = _kind_from_magic(head)
-                if kind == "other" and not src.include_other:
+                if kind == "other" and not src.include_other and not is_search_index_name(name):
                     continue
             dest = _staged_path(staged_dir, slug, name)
             mtime = float(member.mtime)
