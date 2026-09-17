@@ -56,25 +56,36 @@ def _cache_file(entries: list[bytes]) -> bytes:
 # ---- Windows.db (SQLite) fixture ----
 
 def _windows_db(items: dict[int, tuple[str, str]]) -> bytes:
-    """items: {cache_id: (path, name)}."""
+    """items: {cache_id: (path, name)}.
+
+    Built on a real temp file, not ``:memory:`` + ``Connection.serialize()`` -
+    that method needs Python 3.11+, and this suite runs on 3.10 too.
+    """
+    import os
+    import tempfile
+
     props = ("System.ThumbnailCacheId", "System.ItemPathDisplay", "System.ItemNameDisplay")
-    con = sqlite3.connect(":memory:")
-    con.execute("CREATE TABLE SystemIndex_1_PropertyStore_Metadata (Id INTEGER, Name TEXT)")
-    con.execute("CREATE TABLE SystemIndex_1_PropertyStore (WorkId INTEGER, ColumnId INTEGER, Value BLOB)")
-    for col_id, name in enumerate(props, start=1):
-        con.execute("INSERT INTO SystemIndex_1_PropertyStore_Metadata VALUES (?, ?)", (col_id, name))
-    for work_id, (cache_id, (path, name)) in enumerate(items.items(), start=1):
-        # stored as an 8-byte blob, the same as the real property store - a
-        # ThumbnailCacheId with its high bit set overflows SQLite's signed
-        # 64-bit INTEGER as a plain Python int.
-        id_bytes = struct.pack("<Q", cache_id)
-        con.execute("INSERT INTO SystemIndex_1_PropertyStore VALUES (?, 1, ?)", (work_id, id_bytes))
-        con.execute("INSERT INTO SystemIndex_1_PropertyStore VALUES (?, 2, ?)", (work_id, path))
-        con.execute("INSERT INTO SystemIndex_1_PropertyStore VALUES (?, 3, ?)", (work_id, name))
-    con.commit()
-    raw = con.serialize()
-    con.close()
-    return bytes(raw)
+    fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        con = sqlite3.connect(tmp_path)
+        con.execute("CREATE TABLE SystemIndex_1_PropertyStore_Metadata (Id INTEGER, Name TEXT)")
+        con.execute("CREATE TABLE SystemIndex_1_PropertyStore (WorkId INTEGER, ColumnId INTEGER, Value BLOB)")
+        for col_id, name in enumerate(props, start=1):
+            con.execute("INSERT INTO SystemIndex_1_PropertyStore_Metadata VALUES (?, ?)", (col_id, name))
+        for work_id, (cache_id, (path, name)) in enumerate(items.items(), start=1):
+            # stored as an 8-byte blob, the same as the real property store - a
+            # ThumbnailCacheId with its high bit set overflows SQLite's signed
+            # 64-bit INTEGER as a plain Python int.
+            id_bytes = struct.pack("<Q", cache_id)
+            con.execute("INSERT INTO SystemIndex_1_PropertyStore VALUES (?, 1, ?)", (work_id, id_bytes))
+            con.execute("INSERT INTO SystemIndex_1_PropertyStore VALUES (?, 2, ?)", (work_id, path))
+            con.execute("INSERT INTO SystemIndex_1_PropertyStore VALUES (?, 3, ?)", (work_id, name))
+        con.commit()
+        con.close()
+        return Path(tmp_path).read_bytes()
+    finally:
+        os.unlink(tmp_path)
 
 
 def _rows(case):
