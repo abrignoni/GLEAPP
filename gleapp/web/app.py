@@ -490,10 +490,14 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         def _job() -> None:
             j = state["job"]
             try:
-                from .. import nested
+                from .. import nested, winsearch
                 added = nested.expand_containers(
                     case, force=force,
                     progress=lambda k: j.update(done=k, message=f"{k:,} files found"))
+                try:
+                    winsearch.correlate_thumbnails(case)
+                except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                    pass
                 if added:
                     j.update(stage="process", done=0, total=added,
                              message=f"Processing {added:,} extracted file(s)…")

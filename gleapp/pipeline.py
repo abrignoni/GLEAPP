@@ -21,7 +21,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import archive, dedupe, detect, hashdb, imaging, lzc, nested  # noqa: F401  (imaging: decoder setup)
+from . import archive, dedupe, detect, hashdb, imaging, lzc, nested, winsearch  # noqa: F401  (imaging: decoder setup)
 from .case import Case, Source
 from .hashing import crypto_hashes, perceptual_hashes
 from .ingest import scan, sniff_kind
@@ -112,6 +112,14 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
     added = nested.expand_containers(
         case, progress=(lambda k: progress(n + k)) if progress else None,
         include_other=any(getattr(s, "include_other", False) for s in sources))
+
+    # A cached thumbnail extracted just above has no name of its own; if this
+    # source also carried a Windows Search index, try to name it. Best-effort:
+    # a source with no index, or an unreadable one, must not fail the ingest.
+    try:
+        winsearch.correlate_thumbnails(case)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        pass
     return n + added
 
 
