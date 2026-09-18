@@ -17,10 +17,10 @@ Storage, the same in both stores:
 * ``vic_series`` and ``vic_exif_names`` hold each series name and property
   name once, since both repeat across millions of records.
 
-The Exif reading is the source tool's, and it is carried as text. A location
-in it is never written to the matched file's GPS columns or drawn on a map:
-it describes the file Project VIC recorded, which is not a reading this case
-took of the file in front of it.
+The Exif rows are carried as text. The Project VIC 2.0 model keys each Exif
+row to its record's MD5, so the rows are the set's record of that file, not a
+reading this case took, and a location in them is never written to the matched
+file's GPS columns or drawn on a map.
 
 The flags are read as VICS 2.0 defines them, booleans, and a producer that
 writes them as the strings "true" and "false" is read the same way. A flag

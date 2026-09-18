@@ -586,7 +586,7 @@ store so every case matches against it: <strong>Reference data ... &#x25b8;
 <code>.json</code> switches <strong>Treat matches as</strong> to
 <em>Notable</em> and hides the release/delta choice and <strong>Store</strong>,
 which apply to the NSRL and not to this file: its MD5, SHA-1, SHA-256 and
-PhotoDNA values are all kept. From the
+PhotoDNA values are kept, except the hashes of an empty file. From the
 command line: <code>gleapp hashset &lt;file&gt;.json --global --name
 "&lt;a name&gt;"</code>.</p>
 <ul>
@@ -620,21 +620,28 @@ command line: <code>gleapp hashset &lt;file&gt;.json --global --name
   files that match it:</strong> the MediaID, the Series, the five flags (Victim
   identified, Offender identified, Distributed, Suspected, Self-generated), the
   Tags and the Exif reading the record holds. They are the distributing
-  organisation's record, not findings GLEAPP made. A flag the record does not
-  carry is shown blank rather than as false. The details come only with a match
+  organisation's record, not findings GLEAPP made. The flags field lists the
+  flags the record sets true and reads <em>none set</em> when every flag it
+  carries is false; the LAVA artifact shows each flag as yes or no, and blank
+  when the record does not carry it. The details come only with a match
   on SHA-256, SHA-1 or MD5; a perceptual match is a similar picture and carries
   none. A set imported before GLEAPP kept these details matches as before but
   shows none until it is imported again.</li>
-  <li><strong>The record's Exif is shown as text only.</strong> It describes the
-  file the record was made from, so a location in it is never written to the
-  matching file's coordinates, drawn on a map or placed in a KMZ.</li>
+  <li><strong>The record's Exif is shown as text only.</strong> The Project VIC
+  2.0 model keys each Exif row to its record's MD5, so it is the set's record of
+  that file, not a reading GLEAPP took. A location in it is never written to the
+  matching file's coordinates, drawn on a map or placed in a KMZ. Each row's
+  property name and value are kept, in the order stored; a row with no property
+  name, and a PropertyGroup value, are not.</li>
   <li><strong>Where the details show:</strong> the file's details pane (the Exif
   under <em>VIC Exif, as recorded</em>), the HTML report's fields under each
   image (<em>VIC record MediaID</em>, <em>VIC series</em>, <em>VIC flags</em>,
   <em>VIC tags</em>, <em>VIC Exif (as recorded)</em>), the CSV and JSON exports,
-  and the LAVA report's <em>Project VIC Hash-Set Matches</em> artifact. A file
-  imported from a Project VIC case export shows its own series, flags and tags
-  in the same fields, ahead of any hash-set record it matches.</li>
+  and the LAVA report's <em>Project VIC Hash-Set Matches</em> artifact. In the
+  details pane, the HTML report and the CSV, a file imported from a Project VIC
+  case export shows its own series, flags and tags where it has them, ahead of
+  any hash-set record it matches; the JSON export keeps both, and the LAVA
+  artifact shows the hash-set record's.</li>
   <li><strong>Keeping an HTML report small.</strong> Untick any of those fields
   under <strong>Fields under each image</strong> to leave them out of a report.
   <strong>Project VIC matches</strong> under <strong>Which files</strong> (shown
