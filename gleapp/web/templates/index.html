@@ -928,6 +928,7 @@
     Large known-hash sets — the <b>NSRL RDS</b>
     (<a href="https://www.nsrl.nist.gov/" target="_blank" rel="noopener">nsrl.nist.gov</a>
     &rarr; Download RDS) or similar — shared by every case. Not copied into any case.
+    A <b>Project VIC hash set</b> (<code>.json</code>) imports here too.
   </div>
 
   <div id="refList" style="font-size:12px;margin-top:12px"></div>
@@ -964,13 +965,22 @@
           <option value="other">Flag only</option>
         </select>
       </label>
-      <label style="flex:1;min-width:180px">Store
+      <label id="refAlgosLbl" style="flex:1;min-width:180px">Store
         <select id="refAlgos" style="width:100%;margin-top:2px">
           <option value="md5">MD5 only (recommended)</option>
           <option value="md5,sha1,sha256">MD5 + SHA-1 + SHA-256</option>
           <option value="sha256">SHA-256 only (minimal DB)</option>
         </select>
       </label>
+    </div>
+    <div id="refVicNote" class="muted" style="font-size:11px;margin-top:8px;display:none">
+      A Project VIC hash set carries its own categories, so its matches are
+      notable, and an uncategorized file that matches takes the category Project
+      VIC gave it. Its MD5, SHA-1, SHA-256 and PhotoDNA values are all kept.
+      PhotoDNA values are stored but
+      never matched: comparing them needs a licensed PhotoDNA implementation,
+      which GLEAPP does not ship. The file is read as it is imported, never loaded
+      whole, and needs free disk space beyond the finished store while it runs.
     </div>
     <div class="muted" style="font-size:11px;margin-top:8px">
       Runs in the background — a full NSRL set is tens of millions of hashes.

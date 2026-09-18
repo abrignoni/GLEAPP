@@ -233,7 +233,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
                     file_types=(
-                        "Reference data (*.db;*.sqlite;*.sqlite3;*.sql)",
+                        "Reference data (*.db;*.sqlite;*.sqlite3;*.sql;*.json)",
                         "All files (*.*)"),
                 )
             elif kind == "basemap":
@@ -570,8 +570,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         kind = data.get("kind") if data.get("kind") in (
             "known", "known-good", "other") else "known"
         name = str(data.get("name", "")).strip() or Path(raw).stem
+        from .. import hashdb
+        refusal = hashdb.kind_refusal(raw, kind)
+        if refusal:
+            abort(400, description=refusal)
         try:
-            from .. import hashdb
             hs_id, added = hashdb.import_hashset(
                 case.db, raw, name=name, kind=kind, actor=case.examiner)
             counts = hashdb.algo_counts(case.db.conn, hs_id)
@@ -618,11 +621,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     @app.post("/api/hashset/global/import")
     def hashset_global_import():
         """Import a reference set into the shared global store, in the
-        background: an NSRL RDS ``.db``, a ``.sql`` dump, or a quarterly
-        ``_delta.sql`` merged onto the previous full ``.db`` (``base``)."""
+        background: an NSRL RDS ``.db``, a ``.sql`` dump, a quarterly
+        ``_delta.sql`` merged onto the previous full ``.db`` (``base``), or a
+        Project VIC hash set (``.json``), which is read as it is imported."""
         if state["job"]["running"]:
             abort(409, description="a job is already running")
-        from .. import hashstore
+        from .. import hashdb, hashstore
         data = request.get_json(force=True) or {}
         src = str(data.get("path", "")).strip().strip('"')
         base = str(data.get("base", "")).strip().strip('"')
@@ -640,6 +644,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         if schema and not Path(schema).is_file():
             abort(400, description=f"schema file not found: {schema}")
         name = str(data.get("name", "")).strip() or Path(src).stem
+        if not (schema or is_delta):
+            # checked here, before the job starts, so the examiner sees why
+            refusal = hashdb.kind_refusal(src, kind)
+            if refusal:
+                abort(400, description=refusal)
         case = state["case"]
         state["job"] = {"running": True, "stage": "process", "done": 0,
                         "total": 0, "stats": None, "error": None,
@@ -669,7 +678,6 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                         case, progress=lambda d, t: j.update(
                             done=d, total=t,
                             message="Re-checking case files against known hashes…"))
-                from .. import hashdb
                 note = hashdb.photodna_note(hashstore.algo_counts(_hs))
                 j.update(running=False, stage="done",
                          stats={"entries": added, "hashset_hits": hits,

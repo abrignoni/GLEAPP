@@ -23,11 +23,11 @@ list held, and ``photodna_note`` states the gap wherever an import is reported.
 from __future__ import annotations
 
 import csv
-import json
 import re
 from pathlib import Path
 from typing import Iterator, Mapping
 
+from . import jsonstream
 from .db import PHASH_ALGO, PHOTODNA_ALGO, CaseDB
 from .hashing import hamming
 
@@ -50,7 +50,7 @@ def _iter_projectvic(obj: object) -> Iterator[tuple[str, str, int | None]]:
     """Yield (algo, value, category) from a parsed Project VIC document."""
     records: list = []
     if isinstance(obj, dict):
-        for key in ("value", "media", "Media", "objects", "data"):
+        for key in jsonstream.RECORD_KEYS:
             if isinstance(obj.get(key), list):
                 records = obj[key]
                 break
@@ -60,30 +60,54 @@ def _iter_projectvic(obj: object) -> Iterator[tuple[str, str, int | None]]:
         records = obj
 
     for rec in records:
-        if not isinstance(rec, dict):
+        yield from _record_entries(rec)
+
+
+def iter_json_entries(path: str | Path) -> Iterator[tuple[str, str, int | None]]:
+    """Yield (algo, value, category) from a JSON hash list, reading it one record
+    at a time, so a multi-gigabyte national Project VIC set is never held in
+    memory whole. Same entries as ``_iter_projectvic(json.load(...))``."""
+    for rec in jsonstream.iter_records(path):
+        yield from _record_entries(rec)
+
+
+def _category(low: Mapping[str, object]) -> int | None:
+    # The first category field actually present. Category 0 is a real value
+    # (Project VIC's Uncategorized), so it must not fall through to the next
+    # field the way a falsy test would let it.
+    for field in ("category", "mediacategory", "vicscategory"):
+        val = low.get(field)
+        if val is None or str(val).strip() == "":
             continue
-        low = {k.lower(): v for k, v in rec.items()}
-        cat = low.get("category") or low.get("mediacategory") or low.get("vicscategory")
         try:
-            cat = int(cat) if cat is not None and str(cat).strip() != "" else None
+            return int(val)
         except (TypeError, ValueError):
-            cat = None
-        for field, algo in (
-            ("md5", "md5"), ("sha1", "sha1"), ("sha256", "sha256"),
-            ("md5hash", "md5"), ("sha1hash", "sha1"),
-        ):
+            return None
+    return None
+
+
+def _record_entries(rec: object) -> Iterator[tuple[str, str, int | None]]:
+    """The (algo, value, category) entries one JSON hash-list record carries."""
+    if not isinstance(rec, dict):
+        return
+    low = {k.lower(): v for k, v in rec.items()}
+    cat = _category(low)
+    for field, algo in (
+        ("md5", "md5"), ("sha1", "sha1"), ("sha256", "sha256"),
+        ("md5hash", "md5"), ("sha1hash", "sha1"),
+    ):
+        val = low.get(field)
+        if isinstance(val, str) and _HEX.match(val.strip()):
+            yield algo, val.strip(), cat
+    # Keyed on the field name the producer wrote, which is the only
+    # recorded statement of which kind of hash a value is. A PhotoDNA
+    # value labelled phash would be counted as matchable and never match.
+    for fields, algo in ((_PHASH_FIELDS, PHASH_ALGO),
+                         (_PHOTODNA_FIELDS, PHOTODNA_ALGO)):
+        for field in fields:
             val = low.get(field)
-            if isinstance(val, str) and _HEX.match(val.strip()):
+            if isinstance(val, str) and val.strip():
                 yield algo, val.strip(), cat
-        # Keyed on the field name the producer wrote, which is the only
-        # recorded statement of which kind of hash a value is. A PhotoDNA
-        # value labelled phash would be counted as matchable and never match.
-        for fields, algo in ((_PHASH_FIELDS, PHASH_ALGO),
-                             (_PHOTODNA_FIELDS, PHOTODNA_ALGO)):
-            for field in fields:
-                val = low.get(field)
-                if isinstance(val, str) and val.strip():
-                    yield algo, val.strip(), cat
 
 
 def _iter_delimited(path: Path) -> Iterator[tuple[str, str, int | None]]:
@@ -120,6 +144,37 @@ def algo_counts(conn, hashset_id: int) -> dict[str, int]:
         "GROUP BY algo", (hashset_id,))}
 
 
+
+def is_vics_hash_record(rec: object) -> bool:
+    """True for a Project VIC (VICS 2.0) Media record: an MD5 and a MediaID on
+    the record itself, the shape a Project VIC hash set is made of."""
+    if not isinstance(rec, dict):
+        return False
+    keys = {str(k).lower() for k in rec}
+    return "md5" in keys and "mediaid" in keys
+
+
+def kind_refusal(path: str | Path, kind: str) -> str | None:
+    """Why ``kind`` is wrong for this file, or None when it is not.
+
+    A Project VIC hash set carries a category on every entry. Imported as
+    known-good, every match would be treated as benign and an uncategorized
+    matching file moved to Non-pertinent, whatever category Project VIC gave
+    it, so that pairing is refused rather than imported.
+    """
+    if kind != "known-good" or not jsonstream.starts_as_json(path):
+        return None
+    try:
+        rec = jsonstream.first_record(path)
+    except ValueError:
+        return None      # not readable JSON: the import itself reports that
+    if not is_vics_hash_record(rec):
+        return None
+    return (f"{Path(path).name} is a Project VIC hash set, and its entries carry "
+            "their own categories. Import it as notable (known), not as "
+            "known-good: as known-good its matches would carry the benign badge "
+            "and an uncategorized match would be moved to Non-pertinent.")
+
 def photodna_note(counts: Mapping[str, int] | None) -> str:
     """One sentence naming the PhotoDNA entries a set holds and why nothing
     matches them, or "" when the set holds none.
@@ -143,19 +198,30 @@ def import_hashset(
     kind: str = "known",
     actor: str = "examiner",
 ) -> tuple[int, int]:
-    """Import a hash list into the case. Returns (hashset_id, entries_added)."""
+    """Import a hash list into the case. Returns (hashset_id, entries_added).
+
+    The file is read as it is imported, never loaded whole.
+    """
     path = Path(path)
     name = name or path.stem
-    hs_id = db.create_hashset(name, source=str(path), kind=kind)
-
-    entries: list[tuple[str, str, int | None]]
-    text = path.read_text(encoding="utf-8-sig", errors="replace").lstrip()
-    if text[:1] in "[{":
-        entries = list(_iter_projectvic(json.loads(text)))
+    refusal = kind_refusal(path, kind)
+    if refusal:
+        raise ValueError(refusal)
+    if jsonstream.starts_as_json(path):
+        entries = iter_json_entries(path)
     else:
-        entries = list(_iter_delimited(path))
+        entries = _iter_delimited(path)
 
-    added = db.add_hashset_entries(hs_id, entries)
+    hs_id = db.create_hashset(name, source=str(path), kind=kind)
+    try:
+        added = db.add_hashset_entries(hs_id, entries)
+    except BaseException:
+        # A file that fails part-way (a truncated download, say) must not leave
+        # a partial set behind that reads as complete. Nothing of this import is
+        # committed yet, since add_hashset_entries commits once at the end, so
+        # rolling back also leaves a set already stored under this name as it was.
+        db.conn.rollback()
+        raise
     note = photodna_note(algo_counts(db.conn, hs_id))
     db.audit_log(actor, "import_hashset",
                  f"{name}: {added} entries from {path.name}"

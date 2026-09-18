@@ -181,6 +181,15 @@ def parse_source_spec(spec: str | Path) -> tuple[list[Source], dict]:
     # A Project VIC data file - not a GLEAPP ingest-job spec.
     from . import projectvic
     if projectvic.is_vic_file(p):
+        if projectvic.is_hash_set(p):
+            # A hash set has no media files to register, so ingesting one would
+            # read the whole file (several gigabytes for a national set) and
+            # add nothing. Point the examiner at the import that uses it.
+            raise ValueError(
+                f"{p.name} is a Project VIC hash set, not a case: its records are "
+                "hashes with no media files behind them. Import it as a hash set "
+                "instead: Reference data (NSRL) for every case, or Import hash set "
+                "for this one; from the command line, gleapp hashset <file> --global.")
         return [Source(name=f"Project VIC ({p.stem})", path=str(p.resolve()),
                        kind="projectvic")], {}
 
