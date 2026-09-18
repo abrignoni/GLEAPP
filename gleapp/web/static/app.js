@@ -1254,12 +1254,7 @@ async function showMeta(id) {
   }
   const m = $("#meta");
   const isVid = f.kind === "video";
-  let flags = "";
-  try {
-    const vf = f.vic_flags ? JSON.parse(f.vic_flags) : null;
-    if (vf) flags = Object.entries(vf).filter(([, v]) => v === true)
-      .map(([k]) => k.replace(/_/g, " ")).join(", ");
-  } catch (e) {}
+  const vic = vicView(f);
   // device path for a VIC file; the on-disk path for a folder ingest;
   // never the local folder a VIC export was unpacked into
   const dispPath = f.orig_path || (f.media_id ? "" : (f.path || f.rel_path)) || "";
@@ -1278,7 +1273,10 @@ async function showMeta(id) {
     ["Stored at", f.orig_path && f.path && f.path !== f.orig_path ? f.path : ""],
     ["MIME", f.mime || ""],
     ["VIC MediaID", f.media_id ?? ""],
-    ["VIC flags", flags],
+    ["VIC record MediaID", vic.mediaId],
+    ["VIC series", vic.series],
+    ["VIC tags", vic.tags],
+    ["VIC flags", vic.flags],
     ["Size", fmtSize(f.size)],
     ["Dimensions", f.width ? `${f.width}×${f.height}` : ""],
     ["Duration", f.duration ? fmtDur(f.duration) : ""],
@@ -1337,10 +1335,14 @@ async function showMeta(id) {
           `<img src="${k.thumb}" title="${fmtDur(k.ts)}" data-ts="${k.ts}" data-kf="${k.id}">`).join("")}</div>` : ""}
 
       <table>
-        ${rows.map(r => `<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join("")}
+        ${rows.map(r => `<tr><td>${r[0]}</td><td style="white-space:pre-line">${esc(r[1])}</td></tr>`).join("")}
         ${gps}
         ${hashes.map(r => `<tr><td>${r[0]}</td><td class="mono">${esc(r[1])}</td></tr>`).join("")}
       </table>
+      ${vic.exif.length ? `<details style="margin-top:8px"><summary class="muted"
+          title="The Exif reading the Project VIC record carries for the file it describes. It is shown as recorded and is not this file's own metadata; a location in it is not drawn on any map.">VIC Exif, as recorded (${vic.exif.length})</summary>
+        <table>${vic.exif.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v ?? "")}</td></tr>`).join("")}</table>
+      </details>` : ""}
 
       <div class="muted" style="margin-top:8px">Notes <span id="mNoteState" class="muted" style="font-size:11px"></span></div>
       <textarea id="mNotes" placeholder="autosaves as you type">${esc(f.notes || "")}</textarea>
@@ -2232,6 +2234,53 @@ $("#selbar").addEventListener("click", e => {
   const b = e.target.closest("[data-cat]");
   if (b) categorize([...state.sel], +b.dataset.cat);
 });
+/* ---------- Project VIC values on a file ---------- */
+const VIC_FLAG_LABELS = {
+  victim_identified: "Victim identified", offender_identified: "Offender identified",
+  is_distributed: "Distributed", is_suspected: "Suspected", self_generated: "Self-generated",
+};
+function vicBool(v) {
+  if (v === true || v === false) return v;
+  if (typeof v === "string") {
+    const t = v.trim().toLowerCase();
+    if (t === "true" || t === "1") return true;
+    if (t === "false" || t === "0") return false;
+  }
+  if (v === 1 || v === 0) return !!v;
+  return null;
+}
+// the flags recorded true; "none set" when every flag carried was false
+function vicFlagsText(fl) {
+  if (!fl || typeof fl !== "object") return "";
+  const present = Object.keys(VIC_FLAG_LABELS).filter(k => vicBool(fl[k]) !== null);
+  if (!present.length) return "";
+  const on = present.filter(k => vicBool(fl[k])).map(k => VIC_FLAG_LABELS[k]);
+  return on.length ? on.join(", ") : "none set";
+}
+function vicTagsText(t) {
+  if (t == null || t === "") return "";
+  let v = t;
+  if (typeof t === "string") { try { v = JSON.parse(t); } catch (e) { return t; } }
+  if (Array.isArray(v)) return v.filter(x => x != null && x !== "").join("\n");
+  if (v && typeof v === "object") return Object.entries(v).map(([k, x]) => `${k}: ${x}`).join("\n");
+  return String(v);
+}
+// The file's own VIC values (a VIC case import) where it has them, else those
+// of the Project VIC hash-set record it matched. Mirrors vicdetails.view.
+function vicView(f) {
+  let rec = {};
+  try { rec = f.hashset_vic ? JSON.parse(f.hashset_vic) || {} : {}; } catch (e) { rec = {}; }
+  let own = null;
+  try { own = f.vic_flags ? JSON.parse(f.vic_flags) : null; } catch (e) { own = null; }
+  return {
+    mediaId: rec.media_id ?? "",
+    series: f.vic_series || rec.series || "",
+    tags: vicTagsText(f.vic_tags) || vicTagsText(rec.tags),
+    flags: vicFlagsText(own) || vicFlagsText(rec.flags),
+    exif: Array.isArray(rec.exif) ? rec.exif : [],
+  };
+}
+
 /* ---------- export / report dialog ---------- */
 let rptLogo = null;   // data: URI of the chosen agency logo, or null
 
@@ -2245,6 +2294,9 @@ async function openReportDlg() {
     ? `(${((s.total || 0) - cats).toLocaleString()})` : "";
   $("#scFlag").textContent = `(${(s.flagged || 0).toLocaleString()})`;
   $("#scSel").textContent = `(${state.sel.size})`;
+  $("#scVic").textContent = `(${(s.vic_matches || 0).toLocaleString()})`;
+  $("#rVicRow").style.display = s.vic_matches ? "" : "none";
+  if (!s.vic_matches) $("#rVicMatch").value = "";
   const selRadio = document.querySelector('input[name=rscope][value=selected]');
   selRadio.disabled = state.sel.size === 0;
   if (state.sel.size) selRadio.checked = true;
@@ -2263,7 +2315,8 @@ async function openReportDlg() {
   $("#rhBlur").checked = p.blur !== false;
   $("#rhMaps").checked = p.maps !== false;
   $("#rhMapsRow").style.display = state.basemap ? "" : "none";
-  const chosen = new Set(p.fields || ["name", "created_dt", "md5"]);
+  const chosen = new Set(p.fields || ["name", "created_dt", "md5", "vic_record",
+    "vic_series", "vic_flags", "vic_tags", "vic_exif"]);
   $("#rptFields").innerHTML = (p.field_options || []).map(o =>
     `<label><input type="checkbox" class="rfld" value="${esc(o.key)}"${
       chosen.has(o.key) ? " checked" : ""}> ${esc(o.label)}</label>`).join("");
@@ -2324,6 +2377,7 @@ $("#reportGo").onclick = async () => {
   const fmt = [...document.querySelectorAll(".rfmt:checked")].map(c => c.value);
   if (!fmt.length) return toast("Pick at least one format");
   const body = { format: fmt, scope };
+  if ($("#rVicMatch").value) body.vic_match = $("#rVicMatch").value;
   if (scope === "selected") body.ids = [...state.sel];
   if (scope === "categories") {
     body.categories = [...document.querySelectorAll(".rscat:checked")].map(c => +c.value);

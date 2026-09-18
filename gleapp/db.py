@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
+from . import vicdetails
+
 SCHEMA_VERSION = 17
 
 # audit_log actor for anything the app itself triggered - a background
@@ -103,6 +105,8 @@ CREATE TABLE IF NOT EXISTS files (
     hashset_hit   TEXT,                   -- name of known-hash set matched, if any
     hashset_cat   INTEGER,               -- category asserted by that hash set
     hashset_kind  TEXT,                   -- 'known' | 'known-good' | 'other'
+    hashset_vic   TEXT,                   -- JSON: the matched Project VIC record's
+                                          -- MediaID, series, flags, tags, Exif
     stack_id      INTEGER,                -- exact-duplicate stack (== files.id of stack head)
     vstack_id     INTEGER,                -- visual stack: "same picture to the eye" (== head id)
     cluster_id    INTEGER,                -- looser near-duplicate cluster id
@@ -188,6 +192,7 @@ CREATE TABLE IF NOT EXISTS hashset_entries (
                                   -- | 'photodna' (stored, never matched)
     value      TEXT NOT NULL,
     category   INTEGER,
+    media_id   INTEGER,           -- Project VIC record this entry came from
     PRIMARY KEY (hashset_id, algo, value)
 );
 
@@ -318,7 +323,7 @@ class CaseDB:
             ("vic_series", "TEXT"), ("vic_tags", "TEXT"),
             ("origin", "TEXT"), ("member_node", "TEXT"),
             ("volume_base", "INTEGER"), ("recorded_times", "TEXT"),
-            ("container_id", "INTEGER"),
+            ("container_id", "INTEGER"), ("hashset_vic", "TEXT"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
@@ -338,6 +343,7 @@ class CaseDB:
                 "INTEGER REFERENCES keyframes(id) ON DELETE CASCADE")
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_faces_keyframe ON faces(keyframe_id)")
+        vicdetails.ensure_schema(self.conn)
         self._migrate_tags_to_flags()
         self.conn.commit()
 
@@ -746,7 +752,8 @@ class CaseDB:
         row = self.conn.execute("SELECT id FROM hashsets WHERE name=?", (name,)).fetchone()
         return int(row["id"])
 
-    def add_hashset_entries(self, hashset_id: int, rows: Iterable[tuple[str, str, int | None]]) -> int:
+    def add_hashset_entries(self, hashset_id: int, rows: Iterable[tuple],
+                            *, details: "vicdetails.Stager | None" = None) -> int:
         """Add entries to a set; returns how many were offered.
 
         A hash list arrives in random order with respect to the key the table
@@ -755,30 +762,42 @@ class CaseDB:
         from rewriting pages all over the tree. ``rowid`` breaks ties, so for
         a hash listed twice the first one in the file is the one kept. Nothing
         is committed until the end, so a caller can roll a failed import back.
+
+        A row is ``(algo, value, category)`` or ``(algo, value, category,
+        media_id)``. ``details``, when given, is a ``vicdetails.Stager`` the
+        rows' source feeds as it reads; its records are written with the set.
         """
         n = 0
         batch: list = []
         self.conn.execute("DROP TABLE IF EXISTS temp._hashset_stage")
         self.conn.execute("CREATE TEMP TABLE _hashset_stage "
-                          "(algo TEXT NOT NULL, value TEXT NOT NULL, category INTEGER)")
+                          "(algo TEXT NOT NULL, value TEXT NOT NULL, category INTEGER, "
+                          "media_id INTEGER)")
+        if details is not None:
+            details.open(self.conn)
         try:
-            for algo, value, category in rows:
+            for algo, value, category, *rest in rows:
                 value = (value.strip() if algo in _CASE_SENSITIVE_ALGOS
                          else value.lower().strip())
-                batch.append((algo, value, category))
+                batch.append((algo, value, category, rest[0] if rest else None))
                 n += 1
                 if len(batch) >= 50_000:
                     self.conn.executemany(
-                        "INSERT INTO temp._hashset_stage VALUES(?,?,?)", batch)
+                        "INSERT INTO temp._hashset_stage VALUES(?,?,?,?)", batch)
                     batch.clear()
             if batch:
-                self.conn.executemany("INSERT INTO temp._hashset_stage VALUES(?,?,?)", batch)
+                self.conn.executemany("INSERT INTO temp._hashset_stage VALUES(?,?,?,?)", batch)
             self.conn.execute(
-                "INSERT OR IGNORE INTO hashset_entries(hashset_id, algo, value, category) "
-                "SELECT ?, algo, value, category FROM temp._hashset_stage "
+                "INSERT OR IGNORE INTO hashset_entries"
+                "(hashset_id, algo, value, category, media_id) "
+                "SELECT ?, algo, value, category, media_id FROM temp._hashset_stage "
                 "ORDER BY algo, value, rowid", (hashset_id,))
+            if details is not None:
+                details.finish(hashset_id)
         finally:
             self.conn.execute("DROP TABLE IF EXISTS temp._hashset_stage")
+            if details is not None:
+                details.close()
         self.conn.execute(
             "UPDATE hashsets SET count=(SELECT COUNT(*) FROM hashset_entries WHERE hashset_id=?) "
             "WHERE id=?",
@@ -789,7 +808,8 @@ class CaseDB:
 
     def match_hash(self, algo: str, value: str) -> sqlite3.Row | None:
         return self.conn.execute(
-            "SELECT hs.name AS name, hs.kind AS kind, e.category AS category "
+            "SELECT hs.name AS name, hs.kind AS kind, e.category AS category, "
+            "e.hashset_id AS hashset_id, e.media_id AS media_id "
             "FROM hashset_entries e JOIN hashsets hs ON hs.id = e.hashset_id "
             "WHERE e.algo=? AND e.value=? LIMIT 1",
             (algo, value.lower().strip()),
@@ -819,10 +839,11 @@ class CaseDB:
             return None
         name = row["name"]
         with self.lock:
+            vicdetails.delete_for(self.conn, hashset_id)
             self.conn.execute("DELETE FROM hashsets WHERE id=?", (hashset_id,))
             self.conn.execute(
                 "UPDATE files SET hashset_hit=NULL, hashset_cat=NULL, "
-                "hashset_kind=NULL WHERE hashset_hit=?", (name,))
+                "hashset_kind=NULL, hashset_vic=NULL WHERE hashset_hit=?", (name,))
             self.conn.commit()
         return name
 
@@ -877,6 +898,11 @@ class CaseDB:
         known_good = c.execute(
             "SELECT COUNT(*) n FROM files WHERE hashset_kind = 'known-good'"
         ).fetchone()["n"]
+        # files whose match came from a Project VIC hash-set record
+        vic_matches = c.execute(
+            "SELECT COUNT(*) n FROM files WHERE hashset_vic IS NOT NULL "
+            "AND kind != 'archive'"
+        ).fetchone()["n"]
         stacks = c.execute(
             "SELECT COUNT(DISTINCT stack_id) n FROM files WHERE stack_id IS NOT NULL"
         ).fetchone()["n"]
@@ -909,6 +935,7 @@ class CaseDB:
             "by_flag": by_flag,
             "reviewed": reviewed,
             "hashset_hits": hits,
+            "vic_matches": vic_matches,
             "known_good": known_good,
             "stacks": stacks,
             "visual_stacks": vstacks,

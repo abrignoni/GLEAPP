@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
-from . import jsonstream
+from . import jsonstream, vicdetails
 
 VIC_SOURCE_NAME = "Project VIC"
 
@@ -306,13 +306,10 @@ def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None
                 fs_created=_parse_ts(mf.get("Created")),
                 fs_modified=_parse_ts(mf.get("Written") or mf.get("Modified")),
                 fs_accessed=_parse_ts(mf.get("Accessed")),
-                flags={
-                    "victim_identified": bool(m.get("VictimIdentified")),
-                    "offender_identified": bool(m.get("OffenderIdentified")),
-                    "is_distributed": bool(m.get("IsDistributed")),
-                    "is_suspected": m.get("IsSuspected"),
-                    "self_generated": m.get("SelfGenerated"),
-                },
+                # VICS 2.0 types all five as booleans; a producer that writes
+                # "true"/"false" strings is read the same way, and a flag the
+                # entry does not carry stays None rather than becoming false.
+                flags=vicdetails.record_flags(m),
                 tags=m.get("Tags"),
                 series=m.get("Series"),
                 comments=m.get("Comments"),

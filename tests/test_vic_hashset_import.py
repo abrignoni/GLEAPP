@@ -110,7 +110,8 @@ def test_streamed_records_equal_what_json_loads_gives(tmp_path, chunk):
             if name == "scalars":
                 continue          # not a hash list: no entries to compare
             # and the old in-memory path agrees on the entries they carry
-            assert list(hashdb.iter_json_entries(p)) == list(
+            # (the streamed entries also carry their record's MediaID)
+            assert [e[:3] for e in hashdb.iter_json_entries(p)] == list(
                 _iter_projectvic(json.loads(p.read_text("utf-8-sig"))))
 
 
@@ -192,7 +193,7 @@ def test_category_zero_is_kept_not_dropped(tmp_path):
     rec = {"MediaID": 1, "Category": 0, "MD5": "A" * 32}
     assert {c for _a, _v, c in _iter_projectvic({"value": [rec]})} == {0}
     p = _vics(tmp_path / "c0.json", [rec])
-    assert {c for _a, _v, c in hashdb.iter_json_entries(p)} == {0}
+    assert {e[2] for e in hashdb.iter_json_entries(p)} == {0}
     # an absent or blank category is still no category
     for other in ({"MD5": "A" * 32}, {"MD5": "A" * 32, "Category": ""}):
         assert {c for _a, _v, c in _iter_projectvic([other])} == {None}
