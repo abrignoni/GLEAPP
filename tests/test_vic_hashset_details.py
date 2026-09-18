@@ -257,7 +257,8 @@ def test_a_matched_file_carries_its_record_and_never_its_location(tmp_path, stor
         assert ["Lat/Lon", "12.5/-45.25"] in rec["exif"]
         # the record's location is text on the record, not this file's GPS
         assert f["gps_lat"] is None and f["gps_lon"] is None
-        assert json.loads(case.db.get_file(ids[2])["hashset_vic"]) == {"media_id": 503}
+        assert json.loads(case.db.get_file(ids[2])["hashset_vic"]) == {
+            "media_id": 503, "set": "VIC", "category": 0}
         assert case.db.get_file(ids[4])["hashset_vic"] is None      # no match
         assert case.db.stats()["vic_matches"] == 4
     finally:
@@ -408,3 +409,47 @@ def test_the_dialog_sends_the_vic_match_choice():
         assert value in dlg[:dlg.index("</div></div>")], value
     js = (root / "static/app.js").read_text(encoding="utf-8")
     assert 'body.vic_match = $("#rVicMatch").value' in js
+
+
+def test_the_lava_record_row_keeps_its_own_set_and_category_beside_other_sources(tmp_path):
+    """Since a file records every source that matched it, its hashset_hit and
+    hashset_cat describe the file as a whole: the most notable source, and the
+    lowest category any notable source asserts. The Project VIC row shows a
+    record, so its set and category must be the record's own, and Known Hash Set
+    Hits must give the category of the set it names, not the lowest overall."""
+    from gleapp import stash
+    recs = _records()                                  # 501 is category 1, 502 is 2
+    case, ids = _case_with_files(tmp_path, [recs[0]["MD5"], recs[1]["MD5"]])
+    try:
+        hashstore.import_path(_vics(tmp_path / "a.json", recs), name="VIC A", kind="known")
+        # the same file as record 502 (category 2) in a second set, as category 3
+        other = [dict(recs[1], MediaID=777, Category=3, Series="Second set")]
+        hashdb.import_hashset(case.db, _vics(tmp_path / "b.json", other),
+                              name="VIC B", kind="known")
+        stash.add([(recs[1]["MD5"], 1, "synthetic")])  # and in the stash, as 1
+        pipeline.rematch_hashes(case)
+        f = case.db.get_file(ids[1])
+        assert f["hashset_cat"] == 1                   # the file: lowest of 3, 2, 1
+        out = tmp_path / "lava"
+        lava.export_lava(case, out)
+    finally:
+        stash.close()
+        case.close()
+    manifest = json.loads((out / "_lava_data.lava").read_text(encoding="utf-8"))
+    db = sqlite3.connect(out / manifest["lava_db_name"])
+    try:
+        vic = {r[0]: r[1:] for r in db.execute(
+            "SELECT vic_media_id, hash_set, asserted_category, series "
+            "FROM project_vic_hashset_matches")}
+        hits = {r[0]: r[1:] for r in db.execute(
+            "SELECT md5, hash_set, asserted_category, matched_on, all_matches "
+            "FROM known_hash_set_hits")}
+    finally:
+        db.close()
+    # case sets are checked first, so VIC B's record is the one carried
+    assert vic[777] == ("VIC B", 3, "Second set")
+    assert vic[501] == ("VIC A", 1, "Synthetic series A")
+    row = hits[recs[1]["MD5"].lower()]
+    assert row[:3] == ("VIC B", 3, "md5")
+    assert "VIC B, category 3" in row[3] and "VIC A, category 2" in row[3]
+    assert "Hash stash (category 1)" in row[3]

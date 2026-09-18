@@ -49,7 +49,8 @@ from . import (__version__, archive, basemaps, categories, hashstore, stash,
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
-from .report import RECORDED_LABEL, _disp_name, _disp_path, _origin_label, _recorded
+from .report import (RECORDED_LABEL, _disp_name, _disp_path, _origin_label, _recorded,
+                     _sources, matched_in)
 
 __all__ = ["export_lava"]
 
@@ -1119,8 +1120,13 @@ def _artifact_vic_hashset_matches(writer: "_Writer", rows: list[dict],
     for row in hits:
         rec = vicdetails.parse(row.get("hashset_vic")) or {}
         flags = rec.get("flags") if isinstance(rec.get("flags"), dict) else {}
+        # The set and category of the entry the record came from. The file's own
+        # hashset_hit/hashset_cat describe every source that matched it, which
+        # can be another set or the hash stash; a record written before the
+        # record carried its own falls back to them until the case is re-checked.
         data.append([
-            row.get("hashset_hit") or "", rec.get("media_id"), row.get("hashset_cat"),
+            rec.get("set") or row.get("hashset_hit") or "", rec.get("media_id"),
+            rec["category"] if "category" in rec else row.get("hashset_cat"),
             row.get("disp_name") or "", row.get("disp_path") or "",
             writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
             rec.get("series") or "", vicdetails.tags_text(rec.get("tags")),
@@ -1139,15 +1145,18 @@ def _artifact_vic_hashset_matches(writer: "_Writer", rows: list[dict],
                     "what that set's record says about the file it describes.",
         notes=(
             "One row per file whose hash matched an entry taken from a Project VIC "
-            "hash-set record. VIC Media ID, Asserted Category, Series, VIC Tags, the "
+            "hash-set record. Hash Set is the set that record is in. VIC Media ID, "
+            "Asserted Category, Series, VIC Tags, the "
             "five flags and VIC Exif are what that record states, with surrounding "
             "spaces trimmed from Series, VIC Tags and Exif property names and each flag "
             "shown as yes or no: they are the "
             "distributing organisation's record, not findings this tool made or "
             "checked. File Name, Path, Media, MD5 and SHA1 describe the file in this "
-            "case. Case Category is the file's category in this case: the set's when "
-            "the file was uncategorized at matching and the set gave it one, otherwise "
-            "the examiner's or one an import set. A row here matched on SHA-256, SHA-1 "
+            "case. Case Category is the file's category in this case: when the file "
+            "was uncategorized at matching, the lowest category any notable source "
+            "asserted, which may be another set's or the hash stash's rather than this "
+            "record's; otherwise the examiner's or one an import set. A row here "
+            "matched on SHA-256, SHA-1 "
             "or MD5; a perceptual "
             "match carries no record and is not listed. Each flag reads 'yes' or "
             "'no' when the record carried it as a boolean, as the text true or false "
@@ -1161,7 +1170,9 @@ def _artifact_vic_hashset_matches(writer: "_Writer", rows: list[dict],
             "location in it is reported only as text and is not written to this "
             "file's coordinates or "
             "drawn on a map. A set imported before GLEAPP kept these records has no "
-            "rows here until it is imported again. An artifact with no rows is left "
+            "rows here until it is imported again, and a file matched before the "
+            "record named its own set and category shows the file's until the case is "
+            "re-checked. An artifact with no rows is left "
             "out of this report. Reference: fjollberg/GriffeyePS, "
             "'ProjectVicDataModel.2.0.xml, Exif entity', https://github.com/fjollberg/GriffeyePS/blob/"
             "cc4fb827a5dca2e3c194fb6e749b9cb62a58ac8a/Modules/GriffeyeJsonParser/Doc/"
@@ -1172,16 +1183,27 @@ def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
                            media: dict[int, str], *, sources: int = 0) -> None:
     name = "Known Hash Set Hits"
     hits = [r for r in rows if r.get("hashset_hit")]
-    headers = ["Hash Set", "Set Kind", ("Asserted Category", "integer"), "File Name",
+    headers = ["Hash Set", "Set Kind", ("Asserted Category", "integer"), "Matched On",
+               "All Matches", "File Name",
                "Path", ("Media", "media"), "MD5", "SHA1", "SHA256",
                "Case Category", ("Size", "integer"), "Kind"]
-    data = [[
-        row.get("hashset_hit") or "", row.get("hashset_kind") or "",
-        row.get("hashset_cat"), row.get("disp_name") or "", row.get("disp_path") or "",
-        writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
-        row.get("md5") or "", row.get("sha1") or "", row.get("sha256") or "",
-        row.get("category_label") or "", row.get("size"), row.get("kind") or "",
-    ] for row in hits]
+    data = []
+    for row in hits:
+        found = _sources(row.get("hashset_sources"))
+        # The entry for the set named in Hash Set. hashset_cat is the lowest
+        # category any notable source asserts for the file, which can come from
+        # a different source; a row matched before sources were recorded has
+        # none and falls back to it.
+        top = next((x for x in found if x.get("name") == row.get("hashset_hit")), None)
+        data.append([
+            row.get("hashset_hit") or "", row.get("hashset_kind") or "",
+            top.get("category") if top else row.get("hashset_cat"),
+            (top.get("via") or "") if top else "", matched_in(found),
+            row.get("disp_name") or "", row.get("disp_path") or "",
+            writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
+            row.get("md5") or "", row.get("sha1") or "", row.get("sha256") or "",
+            row.get("category_label") or "", row.get("size"), row.get("kind") or "",
+        ])
     writer.add_artifact(
         "GLEAPP Hash Sets", name, headers, data, icon="check-square",
         source_path="case.gleapp",
@@ -1198,11 +1220,20 @@ def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
             "shared store, or the examiner's local stash; the Known Hash Sets artifact "
             "says which, and lists everything that was checked. Set Kind is how it was "
             "imported: 'known' marks files an examiner wants surfaced, 'known-good' "
-            "files a source asserts are benign, and 'other' neither. A match is not "
-            "always an equal hash: a file is compared on SHA-256, SHA-1 and MD5 and "
-            "then, if none matched, on perceptual hash within a set distance, and the "
-            "first hit wins. The case records the source, category and kind but not "
-            "which of those found it, so this artifact cannot say whether a row "
+            "files a source asserts are benign, and 'other' neither. A file can match "
+            "more than one source; Hash Set is then the most notable of them, in the "
+            "order Project VIC, the hash stash, other sets, known-good sets, and All "
+            "Matches lists every source, with the category each carries where it "
+            "carries one. A match is not "
+            "always an equal hash: a file is compared on SHA-256, SHA-1 and MD5 against "
+            "every source, and only when none of those matched, on perceptual hash "
+            "within a set distance, where the closest entry is kept. Matched On is the "
+            "hash that found Hash Set's entry, as stored: sha256, sha1 or md5, "
+            "md5-stash for the hash stash, or phash~N for a perceptual match N bits "
+            "apart, which only looked alike and is not byte-identical to a listed file. "
+            "Matched On and All Matches are blank for a file matched before the case "
+            "recorded them, until the case is re-checked, and for such a file this "
+            "artifact cannot say whether it "
             "matched byte-for-byte or only looked alike. A file with no hit is absent "
             "from this artifact, which records only that none of the sources checked "
             "held a matching entry. An artifact with no rows is normally left out of "

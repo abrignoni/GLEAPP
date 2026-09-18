@@ -399,11 +399,22 @@ def vic_record(db: CaseDB, hit: Mapping[str, object] | None) -> dict | None:
     """The Project VIC record a hash match came from, as ``files.hashset_vic``
     holds it, or None when the matched entry has no record (a plain hash list,
     the hash stash, a perceptual match, or a set imported before records were
-    kept)."""
+    kept).
+
+    It also names the set the entry is in (``set``) and that entry's own
+    category (``category``). A file can match several sources, and the file's
+    ``hashset_hit`` and ``hashset_cat`` then describe the file as a whole (the
+    most notable source, the lowest category any of them asserts), not this
+    record, so a report that shows the record beside its set and category reads
+    them from here."""
     if not hit or hit.get("media_id") is None or hit.get("hashset_id") is None:
         return None
     hs_id, mid = int(hit["hashset_id"]), int(hit["media_id"])
     if hit.get("store") == "global":
         from . import hashstore
-        return hashstore.vic_details(hs_id, mid)
-    return vicdetails.lookup(db.conn, hs_id, mid)
+        out = hashstore.vic_details(hs_id, mid)
+    else:
+        out = vicdetails.lookup(db.conn, hs_id, mid)
+    out["set"] = hit.get("name")
+    out["category"] = hit.get("category")
+    return out
