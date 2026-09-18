@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import appconfig, jsonstream
+from . import appconfig, jsonstream, vicdetails
 from .db import PHASH_ALGO, PHOTODNA_ALGO
 
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS hashset_entries (
     algo       TEXT NOT NULL,
     value      TEXT NOT NULL,
     category   INTEGER,
+    media_id   INTEGER,              -- Project VIC record this entry came from
     PRIMARY KEY (hashset_id, algo, value)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_hse_algo_value ON hashset_entries(algo, value);
@@ -85,6 +86,7 @@ def connect() -> sqlite3.Connection:
             c.execute("PRAGMA foreign_keys = ON")
             c.execute("PRAGMA busy_timeout = 5000")
             c.executescript(_SCHEMA)
+            vicdetails.ensure_schema(c)
             c.commit()
             _conn = c
         return _conn
@@ -131,7 +133,8 @@ def lookup(algo: str, value: str) -> dict | None:
         return None
     with _lock:
         row = connect().execute(
-            "SELECT hs.name AS name, hs.kind AS kind, e.category AS category "
+            "SELECT hs.name AS name, hs.kind AS kind, e.category AS category, "
+            "e.hashset_id AS hashset_id, e.media_id AS media_id "
             "FROM hashset_entries e JOIN hashsets hs ON hs.id = e.hashset_id "
             "WHERE e.algo = ? AND e.value = ? LIMIT 1",
             (algo, value.strip().lower()),
@@ -139,7 +142,14 @@ def lookup(algo: str, value: str) -> dict | None:
     if not row:
         return None
     return {"name": row["name"], "kind": row["kind"],
-            "category": row["category"], "via": algo}
+            "category": row["category"], "via": algo, "store": "global",
+            "hashset_id": row["hashset_id"], "media_id": row["media_id"]}
+
+
+def vic_details(hashset_id: int, media_id: int) -> dict:
+    """The Project VIC record details the global store holds for one record."""
+    with _lock:
+        return vicdetails.lookup(connect(), hashset_id, media_id)
 
 
 def iter_phash() -> list[sqlite3.Row]:
@@ -179,6 +189,7 @@ def delete_set(set_id: int) -> None:
     c = connect()
     with _lock:
         c.execute("DELETE FROM hashset_entries WHERE hashset_id = ?", (set_id,))
+        vicdetails.delete_for(c, set_id)
         c.execute("DELETE FROM hashsets WHERE id = ?", (set_id,))
         c.commit()
 
@@ -210,6 +221,7 @@ def _create_set(name: str, source: str, kind: str) -> int:
         hs_id = int(conn.execute(
             "SELECT id FROM hashsets WHERE name = ?", (name,)).fetchone()[0])
         conn.execute("DELETE FROM hashset_entries WHERE hashset_id = ?", (hs_id,))
+        vicdetails.delete_for(conn, hs_id)
         conn.commit()
     return hs_id
 
@@ -381,8 +393,12 @@ def import_sqlite(src_path: str | Path, *, name: str, kind: str = "known-good",
 
 def _import_entries(name: str, source: str, kind: str, entries,
                     progress: Callable[[int, int], None] | None = None,
+                    details: "vicdetails.Stager | None" = None,
                     ) -> tuple[int, int]:
-    """Store a stream of (algo, value, category) entries as one set.
+    """Store a stream of (algo, value, category[, media_id]) entries as one set.
+
+    ``details``, when given, is the ``vicdetails.Stager`` the entries' source
+    feeds as it reads; its records are written with the set.
 
     The entries arrive in the file's order, which for a hash list is random
     with respect to the ``(hashset_id, algo, value)`` key the table is
@@ -406,8 +422,11 @@ def _import_entries(name: str, source: str, kind: str, entries,
             conn = connect()
             conn.execute("DROP TABLE IF EXISTS temp._import_stage")
             conn.execute("CREATE TEMP TABLE _import_stage "
-                         "(algo TEXT NOT NULL, value TEXT NOT NULL, category INTEGER)")
-        for algo, value, cat in entries:
+                         "(algo TEXT NOT NULL, value TEXT NOT NULL, category INTEGER, "
+                         "media_id INTEGER)")
+            if details is not None:
+                details.open(conn, _lock)
+        for algo, value, cat, *rest in entries:
             seen += 1
             if algo == PHASH_ALGO:
                 v = str(value).strip().lower()
@@ -419,7 +438,7 @@ def _import_entries(name: str, source: str, kind: str, entries,
                 v = _norm(algo, value)
             if not v:
                 continue
-            batch.append((algo, v, cat))
+            batch.append((algo, v, cat, rest[0] if rest else None))
             if len(batch) >= _BATCH:
                 staged += len(batch)
                 _stage(batch)
@@ -434,9 +453,11 @@ def _import_entries(name: str, source: str, kind: str, entries,
             conn = connect()
             _retry(lambda: conn.execute(
                 "INSERT OR IGNORE INTO hashset_entries"
-                "(hashset_id, algo, value, category) "
-                "SELECT ?, algo, value, category FROM temp._import_stage "
+                "(hashset_id, algo, value, category, media_id) "
+                "SELECT ?, algo, value, category, media_id FROM temp._import_stage "
                 "ORDER BY algo, value, rowid", (hs_id,)))
+            if details is not None:
+                details.finish(hs_id)
             conn.commit()
     except BaseException:
         # A file that fails part-way (a truncated download, say) must not leave
@@ -454,6 +475,8 @@ def _import_entries(name: str, source: str, kind: str, entries,
                 connect().execute("DROP TABLE IF EXISTS temp._import_stage")
             except sqlite3.Error:
                 pass
+            if details is not None:
+                details.close()
         _bulk_end()
     return hs_id, _finalize(hs_id)
 
@@ -462,7 +485,8 @@ def _stage(batch: list) -> None:
     """Append a batch to the import's TEMP staging table."""
     with _lock:
         connect().executemany(
-            "INSERT INTO temp._import_stage(algo, value, category) VALUES(?,?,?)",
+            "INSERT INTO temp._import_stage(algo, value, category, media_id) "
+            "VALUES(?,?,?,?)",
             batch)
     batch.clear()
 
@@ -586,8 +610,11 @@ def import_path(path: str | Path, *, name: str | None = None, kind: str = "known
     refusal = hashdb.kind_refusal(path, kind)
     if refusal:
         raise ValueError(refusal)
+    details = None
     if jsonstream.starts_as_json(path):
-        entries = hashdb.iter_json_entries(path)
+        details = vicdetails.Stager()
+        entries = hashdb.iter_json_entries(path, details=details)
     else:
         entries = hashdb._iter_delimited(path)
-    return _import_entries(name, str(path), kind, entries, progress=progress)
+    return _import_entries(name, str(path), kind, entries, progress=progress,
+                           details=details)

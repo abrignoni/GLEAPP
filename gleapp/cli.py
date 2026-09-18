@@ -366,6 +366,15 @@ def cmd_report(args: argparse.Namespace) -> int:
         "flags": "id IN (SELECT file_id FROM file_flags)",
     }.get(args.scope, "")
     tag = f"_{args.scope}" if args.scope != "all" and not args.where else ""
+    # a file whose match came from a Project VIC hash-set record
+    vic = {"only": "hashset_vic IS NOT NULL", "exclude": "hashset_vic IS NULL"}.get(
+        args.vic_matches)
+    if vic:
+        where = f"({where}) AND {vic}" if where else vic
+        tag += "_vicmatches" if args.vic_matches == "only" else "_novicmatches"
+    fields = None
+    if args.no_vic_details:
+        fields = [k for k in report.DEFAULT_REPORT_FIELDS if not k.startswith("vic_")]
     out_dir = case.report_dir
     made = []
     fmts = args.format or ["html", "csv", "json"]
@@ -377,7 +386,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         made.append(report.export_html(case, out_dir / f"report{tag}.html", where,
                                        full_images=not args.thumbs_only,
                                        full_videos=not args.thumbs_only,
-                                       maps=not args.no_maps,
+                                       maps=not args.no_maps, fields=fields,
                                        by_flag=args.scope == "flags"))
     if "kml" in fmts:
         made.append(report.export_kml(case, out_dir / f"geolocation{tag}.kmz", where))
@@ -551,6 +560,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="which files to include; 'flags' also groups the HTML "
                         "report by flag instead of category (default: all)")
     s.add_argument("--where", help="raw SQL filter on the files table (overrides --scope)")
+    s.add_argument("--vic-matches", default="include",
+                   choices=["include", "only", "exclude"],
+                   help="files whose hash matched a Project VIC hash-set record: "
+                        "keep them (default), report only them, or leave them out, "
+                        "for example to keep an HTML report small")
+    s.add_argument("--no-vic-details", action="store_true",
+                   help="HTML report: leave the Project VIC record MediaID, series, "
+                        "flags, tags and Exif out of the fields under each image")
     s.add_argument("--thumbs-only", action="store_true",
                    help="HTML report: thumbnails only - no full-size images or videos")
     s.add_argument("--no-maps", action="store_true",

@@ -554,6 +554,32 @@ are all kept. From the command line:
 - **Handing it to ingest stops with an explanation.** A hash set has no media
   files, so *Browse for JSON* on the launcher, or `gleapp ingest`, says it is a
   hash set and points here, instead of reading the file.
+- **Each record's details are kept with the set and carried onto the files
+  that match it:** the MediaID, the Series, the five flags (Victim identified,
+  Offender identified, Distributed, Suspected, Self-generated), the Tags and the
+  Exif reading the record holds. They are the distributing organisation's
+  record, not findings GLEAPP made. A flag the record does not carry is shown
+  blank rather than as false. The details come only with a match on SHA-256,
+  SHA-1 or MD5; a perceptual match is a similar picture and carries none. A set
+  imported before GLEAPP kept these details matches as before but shows none
+  until it is imported again.
+- **The record's Exif is shown as text only.** It describes the file the record
+  was made from, so a location in it is never written to the matching file's
+  coordinates, drawn on a map or placed in a KMZ.
+- **Where the details show:** the file's details pane (the Exif under *VIC
+  Exif, as recorded*), the HTML report's fields under each image (*VIC record
+  MediaID*, *VIC series*, *VIC flags*, *VIC tags*, *VIC Exif (as recorded)*),
+  the CSV and JSON exports, and the LAVA report's *Project VIC Hash-Set Matches*
+  artifact. A file imported from a Project VIC case export shows its own series,
+  flags and tags in the same fields, ahead of any hash-set record it matches.
+- **Keeping an HTML report small.** Untick any of those fields under **Fields
+  under each image** to leave them out of a report. **Project VIC matches**
+  under **Which files** (shown once a case has any) keeps them (the default),
+  reports only them, or leaves them out, and it narrows whichever **Which files**
+  choice is selected. The CSV, JSON, KMZ, MD5 list and LAVA report written in the
+  same export follow the same choice; the Project VIC JSON export is not narrowed
+  by it. From the command line: `gleapp report --vic-matches only|exclude`
+  and `--no-vic-details`.
 
 It can also be imported into a single case with **Import hash set...**, which
 stores it inside that case's file only; the global store is the place for a set

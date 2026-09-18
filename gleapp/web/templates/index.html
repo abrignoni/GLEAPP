@@ -781,6 +781,14 @@
   <label><input type="radio" name="rscope" value="categories"> Specific categories</label>
   <div id="rscopeCats" class="rfields" style="display:none"></div>
   <label><input type="radio" name="rscope" value="selected"> Selected files <span class="muted" id="scSel"></span></label>
+  <div id="rVicRow" style="display:none;margin-top:6px">
+    <label title="A Project VIC match is a file whose hash matched an entry that came from a Project VIC hash-set record. Leaving them out keeps an HTML report small. The CSV, JSON, KMZ, MD5 list and LAVA report written in the same export follow the same choice; the Project VIC JSON export is not narrowed by it.">Project VIC matches <span class="muted" id="scVic"></span>
+      <select id="rVicMatch">
+        <option value="">Include them</option>
+        <option value="only">Only these</option>
+        <option value="exclude">Leave them out</option>
+      </select></label>
+  </div>
   <div style="margin:12px 0 6px"><b>Format</b></div>
   <label><input type="checkbox" class="rfmt" value="html" checked> HTML report</label>
   <label><input type="checkbox" class="rfmt" value="csv"> CSV (full metadata)</label>

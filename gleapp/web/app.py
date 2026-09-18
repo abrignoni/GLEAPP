@@ -1721,7 +1721,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 from .. import stash
                 cur = case.db.conn.execute(
                     "UPDATE files SET hashset_hit=NULL, hashset_cat=NULL, "
-                    "hashset_kind=NULL WHERE hashset_hit = ?", (stash.STASH_NAME,))
+                    "hashset_kind=NULL, hashset_vic=NULL WHERE hashset_hit = ?",
+                    (stash.STASH_NAME,))
                 cleared = cur.rowcount
                 case.db.commit()
             case.db.audit_log(case.examiner, "set_use_stash",
@@ -1742,7 +1743,21 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         return jsonify({"ok": True})
 
     def _scope_where(body: dict) -> tuple[str, str]:
-        """(where_sql, human_label) for a report/export scope selection."""
+        """(where_sql, human_label) for a report/export scope selection, narrowed
+        by ``vic_match``: "only" keeps the files that matched a Project VIC
+        hash-set record, "exclude" leaves them out (to keep an HTML report small,
+        say). A match is a file whose matched entry came from a Project VIC
+        record, so a plain hash list's match is not one."""
+        where, label = _base_scope_where(body)
+        vic = {"only": ("hashset_vic IS NOT NULL", "Project VIC matches only"),
+               "exclude": ("hashset_vic IS NULL", "Project VIC matches left out"),
+               }.get(body.get("vic_match"))
+        if not vic:
+            return where, label
+        clause = f"({where}) AND {vic[0]}" if where else vic[0]
+        return clause, f"{label}, {vic[1]}"
+
+    def _base_scope_where(body: dict) -> tuple[str, str]:
         scope = body.get("scope", "all")
         if scope == "selected":
             ids = [int(x) for x in (body.get("ids") or [])]
@@ -1849,6 +1864,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "categorized only": "categorized",
             "uncategorized only": "uncategorized",
             "flagged only": "flags",
+            "all files, Project VIC matches only": "vicmatches",
+            "all files, Project VIC matches left out": "novicmatches",
         }.get(label, "selection")
 
         # A LAVA project stages every file's media, draws a locator map for each

@@ -45,7 +45,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from . import (__version__, archive, basemaps, categories, hashstore, stash,
-               staticmap, timeutil)
+               staticmap, timeutil, vicdetails)
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
@@ -788,14 +788,10 @@ def _artifact_vic(writer: "_Writer", rows: list[dict], media: dict[int, str]) ->
             "Every value here is what that file asserted, carried through unchanged: "
             "the flags are the importing organisation's record, not findings this tool "
             "made or checked. Media ID and Device Path are the identifiers the VIC file "
-            "used, so a row can be matched back to it. The five flags do not all "
-            "distinguish a false value from an absent one. Victim Identified, Offender "
-            "Identified and Distributed read 'no' both when the record said so and when "
-            "it carried no such field, because the import coerces an absent value to "
-            "false; measured on a record carrying none of the three, all three were "
-            "stored as false. Suspected and Self-Generated are kept as the record had "
-            "them, so a blank in those two means the field was absent and 'no' means it "
-            "was present and false. Series is the known series the VIC record placed "
+            "used, so a row can be matched back to it. Each of the five flags reads "
+            "'yes' or 'no' when the record carried it as a boolean or as the text "
+            "true or false, and is blank otherwise, including when the record did "
+            "not carry it; a blank is not a 'no'. Series is the known series the VIC record placed "
             "the entry in, and VIC Tags are the labels that record carried; both are "
             "the importing organisation's, and are kept apart from the Flags column "
             "elsewhere in this report, which is the examiner's own. A case built from "
@@ -1102,6 +1098,56 @@ def _artifact_clusters(writer: "_Writer", rows: list[dict],
             "excluded from the comparison outright, so their absence from every "
             "cluster is a property of the method. A row is only written for a cluster "
             "with more than one member." + SCOPE_NOTE))
+
+
+def _artifact_vic_hashset_matches(writer: "_Writer", rows: list[dict],
+                                  media: dict[int, str]) -> None:
+    name = "Project VIC Hash-Set Matches"
+    hits = [r for r in rows if r.get("hashset_vic")]
+    headers = ["Hash Set", ("VIC Media ID", "integer"), ("Asserted Category", "integer"),
+               "File Name", "Path", ("Media", "media"), "Series", "VIC Tags",
+               "Victim Identified", "Offender Identified", "Distributed", "Suspected",
+               "Self-Generated", "VIC Exif", "MD5", "SHA1", "Case Category"]
+    data = []
+    for row in hits:
+        rec = vicdetails.parse(row.get("hashset_vic")) or {}
+        flags = rec.get("flags") if isinstance(rec.get("flags"), dict) else {}
+        data.append([
+            row.get("hashset_hit") or "", rec.get("media_id"), row.get("hashset_cat"),
+            row.get("disp_name") or "", row.get("disp_path") or "",
+            writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
+            rec.get("series") or "", vicdetails.tags_text(rec.get("tags")),
+            _flag(flags.get("victim_identified")),
+            _flag(flags.get("offender_identified")),
+            _flag(flags.get("is_distributed")),
+            _flag(flags.get("is_suspected")),
+            _flag(flags.get("self_generated")),
+            vicdetails.exif_text(rec.get("exif")),
+            row.get("md5") or "", row.get("sha1") or "", row.get("category_label") or "",
+        ])
+    writer.add_artifact(
+        "GLEAPP Hash Sets", name, headers, data, icon="shield",
+        source_path="case.gleapp",
+        description="Files that matched an entry of a Project VIC hash set, with "
+                    "what that set's record says about the file it describes.",
+        notes=(
+            "One row per file whose hash matched an entry taken from a Project VIC "
+            "hash-set record. VIC Media ID, Asserted Category, Series, VIC Tags, the "
+            "five flags and VIC Exif are what that record states, carried through "
+            "unchanged: they are the distributing organisation's record, not findings "
+            "this tool made or checked. File Name, Path, Media, MD5 and SHA1 describe "
+            "the file in this case, and Case Category is the examiner's own. A row here "
+            "matched on SHA-256, SHA-1 or MD5; a perceptual match carries no record "
+            "and is not listed. Each flag reads 'yes' or 'no' when the record carried "
+            "it as a boolean or as the text true or false, and is blank otherwise, "
+            "including when the record did not carry it; a blank is not a 'no'. VIC "
+            "Exif is the "
+            "Exif reading the record carries, one property per line as recorded. It "
+            "describes the file the record was made from, so a location in it is "
+            "reported only as text and is not written to this file's coordinates or "
+            "drawn on a map. A set imported before GLEAPP kept these records has no "
+            "rows here until it is imported again. An artifact with no rows is left "
+            "out of this report."))
 
 
 def _artifact_hashset_hits(writer: "_Writer", rows: list[dict],
@@ -1543,6 +1589,7 @@ def export_lava(case: Case, dest, where: str = "", *, thumbs: bool = False,
     _artifact_duplicates(writer, rows, media)
     _artifact_similar(writer, rows, media)
     _artifact_hashset_hits(writer, rows, media, sources=sources)
+    _artifact_vic_hashset_matches(writer, rows, media)
     _artifact_audit(writer, case)
 
     _write_device_info(case, writer.logs_dir, tz_name=tz_name)

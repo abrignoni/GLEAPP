@@ -13,7 +13,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-from . import basemaps, categories, flags, imaging, staticmap, timeutil  # noqa: F401  (imaging: registers HEIF decoder)
+from . import basemaps, categories, flags, imaging, staticmap, timeutil, vicdetails  # noqa: F401  (imaging: registers HEIF decoder)
 from .case import Case
 
 # overview map size - shared so the clickable overlay in _overview_html always
@@ -29,6 +29,7 @@ _CSV_FIELDS = [
     "hashset_hit", "hashset_cat", "hashset_kind",
     "stack_id", "vstack_id", "cluster_id", "notes",
     "media_id", "orig_name", "orig_path", "mime", "origin", "recorded_times",
+    "vic_record_media_id", "vic_series", "vic_flags", "vic_tags", "vic_exif",
 ]
 
 
@@ -53,6 +54,8 @@ def _rows(case: Case, where: str = "") -> list[dict]:
         d["flags_label"] = ", ".join(fr["name"] for fr in d["flags"])
         d["file_path"] = _disp_path(d)      # device path (VIC) or source path
         d["disk_name"] = _disk_name(d)      # the on-disk (MD5) name
+        # the matched Project VIC hash-set record, as an object rather than text
+        d["hashset_vic"] = vicdetails.parse(d.get("hashset_vic"))
         out.append(d)
     return out
 
@@ -95,6 +98,11 @@ def export_csv(case: Case, dest: str | Path, where: str = "", *,
             # times the file has. Rendered as text, the way the report renders
             # them, because no instant can be derived from them.
             d["recorded_times"] = _recorded(d)
+            # The file's own Project VIC values where a VIC import gave it some,
+            # else those of the Project VIC hash-set record it matched, as text.
+            vv = vicdetails.view(d)
+            d.update(vic_record_media_id=vv["media_id"], vic_series=vv["series"],
+                     vic_flags=vv["flags"], vic_tags=vv["tags"], vic_exif=vv["exif"])
             w.writerow(d)
     return dest
 
@@ -320,9 +328,17 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "mime":       ("MIME type",     lambda d: d.get("mime") or "", False),
     "media_id":   ("VIC MediaID",   lambda d: str(d["media_id"]) if d.get("media_id") is not None else "", False),
     "hashset":    ("Known hash",    lambda d: d.get("hashset_hit") or "", False),
+    # A Project VIC value: the file's own where a VIC import gave it one, else
+    # the one on the Project VIC hash-set record the file matched.
+    "vic_record": ("VIC record MediaID", lambda d: vicdetails.view(d)["media_id"], False),
+    "vic_series": ("VIC series",    lambda d: vicdetails.view(d)["series"], False),
+    "vic_flags":  ("VIC flags",     lambda d: vicdetails.view(d)["flags"], False),
+    "vic_tags":   ("VIC tags",      lambda d: vicdetails.view(d)["tags"], False),
+    "vic_exif":   ("VIC Exif (as recorded)", lambda d: vicdetails.view(d)["exif"], False),
     "error":      ("Error",         lambda d: d.get("error") or "", False),
 }
-DEFAULT_REPORT_FIELDS = ["name", "created_dt", "md5"]
+DEFAULT_REPORT_FIELDS = ["name", "created_dt", "md5", "vic_record", "vic_series",
+                         "vic_flags", "vic_tags", "vic_exif"]
 
 _HTML_HEAD = """<!doctype html><html class="{blur_cls}"><head><meta charset="utf-8">
 <title>{case} - report</title>
@@ -494,7 +510,7 @@ _HTML_HEAD = """<!doctype html><html class="{blur_cls}"><head><meta charset="utf
  .card .fields{{padding:0 10px 8px}}
  .card .f{{display:flex;gap:6px;padding:1px 0}}
  .card .f .k{{color:var(--mut);flex:0 0 84px}}
- .card .f .v{{flex:1;word-break:break-all}}
+ .card .f .v{{flex:1;word-break:break-all;white-space:pre-line}}
  .card .f.mono .v{{font-family:ui-monospace,Consolas,monospace;font-size:11px}}
  .pill{{display:inline-block;padding:1px 7px;border-radius:10px;background:#eef0f3;margin:1px 1px 0 0}}
  /* dark mode (toggle) */

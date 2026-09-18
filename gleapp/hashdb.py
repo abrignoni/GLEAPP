@@ -27,7 +27,7 @@ import re
 from pathlib import Path
 from typing import Iterator, Mapping
 
-from . import jsonstream
+from . import jsonstream, vicdetails
 from .db import PHASH_ALGO, PHOTODNA_ALGO, CaseDB
 from .hashing import hamming
 
@@ -63,12 +63,25 @@ def _iter_projectvic(obj: object) -> Iterator[tuple[str, str, int | None]]:
         yield from _record_entries(rec)
 
 
-def iter_json_entries(path: str | Path) -> Iterator[tuple[str, str, int | None]]:
-    """Yield (algo, value, category) from a JSON hash list, reading it one record
-    at a time, so a multi-gigabyte national Project VIC set is never held in
-    memory whole. Same entries as ``_iter_projectvic(json.load(...))``."""
+def iter_json_entries(path: str | Path, *,
+                      details: vicdetails.Stager | None = None,
+                      ) -> Iterator[tuple[str, str, int | None, int | None]]:
+    """Yield (algo, value, category, media_id) from a JSON hash list, reading it
+    one record at a time, so a multi-gigabyte national Project VIC set is never
+    held in memory whole. Same entries as ``_iter_projectvic(json.load(...))``,
+    each with the MediaID of the record it came from (None when there is none).
+
+    ``details``, when given, receives every record as it is read, so a Project
+    VIC record's series, flags, tags and Exif are kept with the set.
+    """
     for rec in jsonstream.iter_records(path):
-        yield from _record_entries(rec)
+        if details is not None:
+            mid = details.add(rec)
+        else:
+            det = vicdetails.record_details(rec)
+            mid = det["media_id"] if det else None
+        for algo, value, cat in _record_entries(rec):
+            yield algo, value, cat, mid
 
 
 def _category(low: Mapping[str, object]) -> int | None:
@@ -207,14 +220,16 @@ def import_hashset(
     refusal = kind_refusal(path, kind)
     if refusal:
         raise ValueError(refusal)
+    details = None
     if jsonstream.starts_as_json(path):
-        entries = iter_json_entries(path)
+        details = vicdetails.Stager()
+        entries = iter_json_entries(path, details=details)
     else:
         entries = _iter_delimited(path)
 
     hs_id = db.create_hashset(name, source=str(path), kind=kind)
     try:
-        added = db.add_hashset_entries(hs_id, entries)
+        added = db.add_hashset_entries(hs_id, entries, details=details)
     except BaseException:
         # A file that fails part-way (a truncated download, say) must not leave
         # a partial set behind that reads as complete. Nothing of this import is
@@ -233,6 +248,10 @@ def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
                use_stash: bool = True) -> dict | None:
     """Return {'name','kind','category','via'} for the first hit, else None.
 
+    An exact hash hit also carries ``store`` ('case' or 'global'),
+    ``hashset_id`` and ``media_id``, which ``vic_record`` uses to fetch the
+    Project VIC record the entry came from.
+
     Checks the case's own hash sets first, then the shared global store
     (``gleapp.hashstore`` - where big reference sets like the NSRL RDS live).
 
@@ -249,7 +268,8 @@ def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
         hit = db.match_hash(algo, val)
         if hit:
             return {"name": hit["name"], "kind": hit["kind"],
-                    "category": hit["category"], "via": algo}
+                    "category": hit["category"], "via": algo, "store": "case",
+                    "hashset_id": hit["hashset_id"], "media_id": hit["media_id"]}
         if algo == "md5" and use_stash:
             # the examiner's own stash takes precedence over reference sets
             st = stash.lookup(val)
@@ -261,6 +281,8 @@ def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
             return g
 
     ph = row["phash"] if "phash" in row.keys() else None
+    # A perceptual match is a similar picture, not the recorded file, so it
+    # carries no record details (no "media_id" in the hit).
     if ph:
         best = None
         # Only PHASH_ALGO. A PhotoDNA entry is a 144-byte vector that shares
@@ -279,3 +301,17 @@ def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
         if best:
             return best[1]
     return None
+
+
+def vic_record(db: CaseDB, hit: Mapping[str, object] | None) -> dict | None:
+    """The Project VIC record a hash match came from, as ``files.hashset_vic``
+    holds it, or None when the matched entry has no record (a plain hash list,
+    the hash stash, a perceptual match, or a set imported before records were
+    kept)."""
+    if not hit or hit.get("media_id") is None or hit.get("hashset_id") is None:
+        return None
+    hs_id, mid = int(hit["hashset_id"]), int(hit["media_id"])
+    if hit.get("store") == "global":
+        from . import hashstore
+        return hashstore.vic_details(hs_id, mid)
+    return vicdetails.lookup(db.conn, hs_id, mid)

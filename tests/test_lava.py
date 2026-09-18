@@ -340,7 +340,7 @@ def test_the_run_log_agrees_with_the_artifacts_it_describes(case, tmp_path):
         assert count == artifact["record_count"], artifact["name"]
         assert in_report, artifact["name"]
     # the log describes what was considered, so it is longer than the report
-    assert len(grid) == 13, sorted(grid)
+    assert len(grid) == 14, sorted(grid)
     written = {a["name"] for a in _artifacts(manifest)}
     assert {n for n, (_, yes) in grid.items() if yes} == written
 
@@ -348,7 +348,7 @@ def test_the_run_log_agrees_with_the_artifacts_it_describes(case, tmp_path):
 def test_an_artifact_with_no_rows_is_left_out_of_the_report(case, tmp_path):
     """A zero-row artifact is absent, not empty, and the run log says it was tried.
 
-    An empty table in a report reads as an answer, and on this fixture seven of
+    An empty table in a report reads as an answer, and on this fixture eight of
     them would be answering questions the case never asked. Leaving them out is
     only honest if the run log still records that they were considered, so both
     halves are pinned here.
@@ -361,6 +361,7 @@ def test_an_artifact_with_no_rows_is_left_out_of_the_report(case, tmp_path):
     assert skipped == {"Project VIC Records", "Exact Duplicate Stacks",
                        "Similar Clusters", "Visually Similar Groups",
                        "Known Hash Set Hits", "Known Hash Sets",
+                       "Project VIC Hash-Set Matches",
                        "Location Overview"}, sorted(skipped)
     assert all(grid[name][0] == 0 for name in skipped), grid
     # absent from the manifest, and no empty table left behind in the database
@@ -371,7 +372,8 @@ def test_an_artifact_with_no_rows_is_left_out_of_the_report(case, tmp_path):
             "SELECT name FROM sqlite_master WHERE type='table'")}
     finally:
         db.close()
-    assert not tables & {"project_vic_records", "exact_duplicate_stacks",
+    assert not tables & {"project_vic_records", "project_vic_hashset_matches",
+                         "exact_duplicate_stacks",
                          "similar_clusters", "visually_similar_groups",
                          "known_hash_set_hits", "known_hash_sets",
                          "location_overview"}, sorted(tables)
@@ -831,11 +833,12 @@ def test_key_frames_can_be_turned_off(case, tmp_path):
 
 
 def test_project_vic_flags_say_what_they_can_and_cannot_distinguish(tmp_path):
-    """Three of the five flags cannot tell false from absent, and the notes say so.
+    """Every flag tells false from absent: a flag the record did not carry is
+    blank, never "no".
 
-    ``projectvic.py`` coerces VictimIdentified, OffenderIdentified and IsDistributed
-    with ``bool()``, so a record carrying none of them stores all three as false.
-    IsSuspected and SelfGenerated are kept as the record had them.
+    ``projectvic.py`` used to coerce VictimIdentified, OffenderIdentified and
+    IsDistributed with ``bool()``, so a record carrying none of them stored all
+    three as false, and one carrying the string "false" stored true.
     """
     c = _vic_case(tmp_path)
     out = tmp_path / "lava"
@@ -853,15 +856,15 @@ def test_project_vic_flags_say_what_they_can_and_cannot_distinguish(tmp_path):
         assert rows["9000"][:5] == ("yes", "no", "yes", "no", "no")
         # the record that carried only three: the other two are blank, not false
         assert rows["9001"][:5] == ("no", "yes", "no", "", "")
-        # the record that carried none: three read no anyway, two are blank
-        assert rows["9002"][:5] == ("no", "no", "no", "", "")
+        # the record that carried none: all five blank
+        assert rows["9002"][:5] == ("", "", "", "", "")
         assert rows["9002"][5] == "/DCIM/100APPLE/IMG_0002.JPG"
     finally:
         db.close()
     notes = next(a for a in manifest["meta"]["modules"][0]["artifacts"]
                  if a["tablename"] == "project_vic_records")["notes"]
-    assert "coerces an absent value to false" in notes
-    assert "Suspected and Self-Generated are kept as the record had them" in notes
+    assert "a blank is not a 'no'" in notes
+    assert "coerces" not in notes
 
 
 def test_the_series_and_tags_a_vic_record_carried_are_kept(tmp_path):

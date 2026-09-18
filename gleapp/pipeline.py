@@ -341,9 +341,15 @@ def rematch_hashes(case: Case, *, progress=None) -> int:
         hit = hashdb.match_file(case.db, r, use_stash=use_stash)
         if hit:
             hits += 1
+            # The Project VIC record the entry came from: its MediaID, series,
+            # flags, tags and Exif, as that record states them. Its Exif is
+            # carried as text only and never written to this file's GPS.
+            vic = hashdb.vic_record(case.db, hit)
             case.db.update_file(r["id"], hashset_hit=hit["name"],
                                 hashset_cat=hit["category"],
-                                hashset_kind=hit["kind"])
+                                hashset_kind=hit["kind"],
+                                hashset_vic=json.dumps(vic, ensure_ascii=False)
+                                if vic else None)
             # auto-categorize only an as-yet-uncategorized file:
             #  - a 'known' set asserts its own category
             #  - a 'known-good' hit (NSRL etc.) -> Non-pertinent
@@ -352,9 +358,9 @@ def rematch_hashes(case: Case, *, progress=None) -> int:
                     case.db.update_file(r["id"], category=hit["category"])
                 elif hit["kind"] == "known-good":
                     case.db.update_file(r["id"], category=NONPERTINENT_CATEGORY)
-        elif r["hashset_hit"] is not None:
+        elif r["hashset_hit"] is not None or r["hashset_vic"] is not None:
             case.db.update_file(r["id"], hashset_hit=None, hashset_cat=None,
-                                hashset_kind=None)
+                                hashset_kind=None, hashset_vic=None)
         if i % 500 == 0 or i == total:
             case.db.commit()
             if progress:
