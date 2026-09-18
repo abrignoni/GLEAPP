@@ -577,11 +577,41 @@ an <strong>Add a set</strong> form. Accepts a SQLite <code>.db</code>, an NSRL
 command line <code>gleapp hashset --global ...</code> does the same, from a source
 install.)</p>
 
+<h3>Project VIC hash sets</h3>
+<p>Connect a Project VIC hash set from <strong>&#9776; Menu &rarr; Reference &rarr;
+Project VIC hash sets</strong> (also on the launcher's menu). It has its own
+dialog and list, separate from the NSRL's, and uses the same shared store: the
+set is not copied into any case, and every case matches against it.</p>
+<ul>
+  <li><strong>A match is flagged <span class="tag" style="background:#d9822b">VIC</span>.</strong>
+  If the file has no category yet, it goes into the category Project VIC gave it
+  (for example 1 CAM, 2 Child Exploitative, 3 CGI). A category you have set is
+  never overridden. The change is not silent: the file carries the VIC flag, and
+  the details pane's <em>Matched in</em> row names the set and the category it
+  asserted.</li>
+  <li><strong>A file in more than one place keeps every flag.</strong> A file in a
+  Project VIC set and in your hash stash shows both <span class="tag"
+  style="background:#d9822b">VIC</span> and <span class="tag"
+  style="background:#7c4dff">STASH</span>. If the two disagree on the category,
+  the lower, more severe code is taken. A file in the NSRL and a notable set is
+  never made Non-pertinent.</li>
+  <li><strong>Find them:</strong> the sidebar's <em>Known hashes &rarr; Show</em> has
+  <em>Project VIC hits</em>, <em>Hash stash hits</em> and <em>hit in both</em>. HTML,
+  CSV and JSON reports carry a <em>Hash matches</em> field that says where each file
+  matched.</li>
+  <li><strong>Turn it off for a case:</strong> untick <em>Match against Project VIC
+  sets</em> under <em>Known hashes</em>. Existing VIC flags on the case clear at once
+  (another source that flagged the file stays), and <em>Re-check</em> brings them
+  back after you tick it again. A set imported before this feature is not labeled
+  VIC until it is imported again.</li>
+</ul>
+
 <h3>Importing a Project VIC hash set</h3>
 <p>A Project VIC hash set, such as the one a national VICS portal distributes,
 is a single JSON file whose records carry an MD5 and may carry a SHA-1, a
-PhotoDNA value and the category Project VIC assigned. Import it into the global
-store so every case matches against it: <strong>Reference data ... &#x25b8;
+PhotoDNA value and the category Project VIC assigned. Import it from the
+Project&nbsp;VIC dialog above, or into the global store from the NSRL dialog so
+every case matches against it: <strong>Reference data ... &#x25b8;
 &rarr; Add a set &rarr; Choose...</strong> the <code>.json</code>. Choosing a
 <code>.json</code> switches <strong>Treat matches as</strong> to
 <em>Notable</em> and hides the release/delta choice and <strong>Store</strong>,

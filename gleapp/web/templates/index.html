@@ -115,6 +115,8 @@
   .tile .b.hit{background:var(--danger)}
   .tile .b.good{background:#2f6e4f}
   .tile .b.stash{background:#7c4dff}
+  .tile .b.vic{background:#d9822b}
+  .vicchip{font-size:10px;letter-spacing:.04em;border-radius:3px;padding:0 5px;color:#fff;background:#d9822b}
   .tile .stackn{position:absolute;right:4px;bottom:5px;background:rgba(0,0,0,.8);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:0 5px;font-size:11px;font-weight:700;line-height:1.6}
   .tile .stackn.vis{background:var(--accent);border-color:#fff}
   .tile.stacked{box-shadow:2px 2px 0 0 var(--bg), 3px 3px 0 0 var(--line), 5px 5px 0 0 var(--bg), 6px 6px 0 0 var(--line)}
@@ -256,20 +258,20 @@
   .modal .vbar input[type=range]:disabled{opacity:.4}
   .modal .vbar .amt{width:2.5em;text-align:right;color:var(--muted)}
   /* category editor */
-  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg,#flagDlg,#flagEd{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
-  #hashImportDlg .box,#refDlg .box,#vicExportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  #catEd,#reportDlg,#helpDlg,#snapDlg,#histDlg,#stashDlg,#stashWipeDlg,#hashImportDlg,#refDlg,#vicDlg,#mapsDlg,#logoDlg,#vicExportDlg,#addEvDlg,#flagDlg,#flagEd{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:75;display:none}
+  #hashImportDlg .box,#refDlg .box,#vicDlg .box,#vicExportDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(520px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
   #addEvDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
-  #hashImportDlg h2,#refDlg h2,#vicExportDlg h2,#addEvDlg h2{margin:0 0 4px;font-size:15px}
-  #hashImportDlg .field,#refDlg .field,#addEvDlg .field{margin-top:10px}
-  #hashImportDlg .field label,#refDlg .field>label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
-  #hashImportDlg input[type=text],#refDlg input[type=text],#addEvDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
+  #hashImportDlg h2,#refDlg h2,#vicDlg h2,#vicExportDlg h2,#addEvDlg h2{margin:0 0 4px;font-size:15px}
+  #hashImportDlg .field,#refDlg .field,#vicDlg .field,#addEvDlg .field{margin-top:10px}
+  #hashImportDlg .field label,#refDlg .field>label,#vicDlg .field>label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+  #hashImportDlg input[type=text],#refDlg input[type=text],#vicDlg input[type=text],#addEvDlg input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
   #addEvDlg label{display:block;font-size:12px;color:var(--fg);margin:8px 0}
   #hashImportDlg .kindrow label,#refDlg .refmode label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);margin:3px 0}
   #refDlg select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
-  #caseSets .cs,#refList .cs{display:flex;align-items:center;gap:5px;padding:3px 0}
-  #caseSets .cs b,#refList .cs b{color:var(--danger)}
-  #caseSets .cs .x,#refList .cs .x{cursor:pointer;color:var(--muted);font-weight:700}
-  #caseSets .cs .x:hover,#refList .cs .x:hover{color:var(--danger)}
+  #caseSets .cs,#refList .cs,#vicList .cs{display:flex;align-items:center;gap:5px;padding:3px 0}
+  #caseSets .cs b,#refList .cs b,#vicList .cs b{color:var(--danger)}
+  #caseSets .cs .x,#refList .cs .x,#vicList .cs .x{cursor:pointer;color:var(--muted);font-weight:700}
+  #caseSets .cs .x:hover,#refList .cs .x:hover,#vicList .cs .x:hover{color:var(--danger)}
   .linkish:hover{text-decoration:underline}
   #stashWipeDlg{z-index:101}   /* above #stashDlg (bumped to 100 for the launcher) since it nests inside it */
   #snapDlg .box,#histDlg .box,#stashDlg .box,#mapsDlg .box,#logoDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:82vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
@@ -318,7 +320,7 @@
   #reportDlg .rgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px}
   #reportDlg .rfields{display:grid;grid-template-columns:1fr 1fr;gap:1px 12px;border:1px solid var(--line);border-radius:6px;padding:8px;max-height:180px;overflow:auto}
   #reportDlg .rfields label{margin:2px 0;font-size:12px}
-  #helpDlg,#refDlg,#mapsDlg,#stashDlg,#logoDlg{z-index:100}   /* above the launcher (z-index 95) so Help / Reference data / Maps / Hash stash / Agency logo work pre-case */
+  #helpDlg,#refDlg,#vicDlg,#mapsDlg,#stashDlg,#logoDlg{z-index:100}   /* above the launcher (z-index 95) so Help / Reference data / Maps / Hash stash / Agency logo work pre-case */
   #helpDlg .box{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,94vw);height:88vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   #helpDlg .box>header{display:flex;flex-direction:row;align-items:center;gap:10px;padding:10px 16px;background:var(--panel2);border-bottom:1px solid var(--line);position:static}
   #helpDlg .box>header h2{margin:0;font-size:15px;flex:1}
@@ -487,6 +489,7 @@
       <button id="btnMaps" title="Offline maps: import a basemap file and see geolocated files on it. Nothing is fetched from the internet.">Maps</button>
       <button id="btnStash" title="Save the MD5s of your category 1–3 files to the local hash stash, and re-use them in future cases">Hash stash</button>
       <button id="btnRefStore" title="Add or manage the shared NSRL / reference-hash store">Reference data (NSRL)</button>
+      <button id="btnVicSets" title="Connect a Project VIC hash set: matches are flagged VIC and go into the category Project VIC gave them">Project VIC hash sets</button>
       <div class="hd">Help</div>
       <button data-help="manual">Manual</button>
       <button data-help="history">Processing history</button>
@@ -534,6 +537,7 @@
         <label class="fck"><input type="checkbox" id="fhit"> Any known-hash hit</label>
         <label class="fck"><input type="checkbox" id="fhidegood"> Hide known-NSRL <span id="goodCount" class="muted"></span></label>
         <label class="fck" title="Match this case's files against your hash stash (category 1-3 hashes from past cases). Turn off for a case that isn't CSAM / Project VIC related - any existing stash hits are cleared immediately. Turning it back on needs Re-check to find them again."><input type="checkbox" id="fusestash" checked> Match against my hash stash</label>
+        <label class="fck" title="Match this case's files against your Project VIC hash sets. Turn off for a case that has nothing to do with them - existing VIC hits are cleared immediately. Turning it back on needs Re-check to find them again."><input type="checkbox" id="fusevic" checked> Match against Project VIC sets</label>
         <div class="fbtns">
           <button class="btn sm" id="btnImportHash" title="Browse to an MD5/SHA hash list (e.g. from a CyberTip) and flag matching files">Import hash set…</button>
           <button class="btn sm" id="btnRehash" title="Re-flag every file against every loaded hash set">Re-check</button>
@@ -683,6 +687,7 @@
       <button id="btnMapsLauncher" title="Offline maps: import a basemap file and see geolocated files on it. Nothing is fetched from the internet.">Maps</button>
       <button id="btnStashLauncher" title="Save the MD5s of your category 1–3 files to the local hash stash, and re-use them in future cases">Hash stash</button>
       <button id="btnRefStoreLauncher" title="Add or manage the shared NSRL / reference-hash store">Reference data (NSRL)</button>
+      <button id="btnVicSetsLauncher" title="Connect a Project VIC hash set: matches are flagged VIC and go into the category Project VIC gave them">Project VIC hash sets</button>
       <button id="btnLogoLauncher" title="The default logo on every case's report header, unless that case sets its own">Agency logo</button>
     </div>
     <button class="btn" id="btnHelpLauncher" title="Manual — features, filters, categories, shortcuts">Help / Manual</button>
@@ -930,6 +935,48 @@
   </div>
 </div></div>
 
+<div id="vicDlg"><div class="box">
+  <h2>Project VIC hash sets</h2>
+  <div class="muted" style="font-size:12px">
+    A Project VIC hash set (<code>.json</code>), such as the one a national VICS
+    portal distributes, shared by every case and not copied into any. A file that
+    matches is flagged <b>VIC</b>. If it has no category yet it takes the one
+    Project VIC gave it (for example 1 CAM, 2 Child Exploitative, 3 CGI); a
+    category you have set is never overridden. A file that is also in your hash
+    stash is flagged for both.
+  </div>
+
+  <div id="vicList" style="font-size:12px;margin-top:12px"></div>
+
+  <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Add a set</div>
+    <div class="field">
+      <label>Project VIC hash set (.json)</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="text" id="vicPath" style="flex:1">
+        <button class="btn sm" id="vicBrowse">Choose…</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="vicName" placeholder="e.g. VICS national 2026-09">
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:8px">
+      Matches are always notable. PhotoDNA values are stored but never matched,
+      since comparing them needs a licensed PhotoDNA implementation GLEAPP does
+      not ship. The file is read as it is imported, never loaded whole, and needs
+      free disk space beyond the finished store while it runs. It runs in the
+      background; progress shows under <b>Hash sets</b>.
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:14px;display:flex;gap:6px">
+    <span style="flex:1"></span>
+    <button class="btn" id="vicCancel">Close</button>
+    <button class="btn" id="vicGo">Import</button>
+  </div>
+</div></div>
+
 <div id="refDlg"><div class="box">
   <h2>Reference data</h2>
   <div class="muted" style="font-size:12px">
@@ -982,7 +1029,8 @@
       </label>
     </div>
     <div id="refVicNote" class="muted" style="font-size:11px;margin-top:8px;display:none">
-      A Project VIC hash set carries its own categories, so its matches are
+      Project VIC sets have their own entry: ☰ Menu → Reference → Project VIC
+      hash sets. A Project VIC hash set carries its own categories, so its matches are
       notable, and an uncategorized file that matches takes the category Project
       VIC gave it. Its MD5, SHA-1, SHA-256 and PhotoDNA values are all kept.
       PhotoDNA values are stored but

@@ -26,7 +26,7 @@ _CSV_FIELDS = [
     "md5", "sha1", "sha256", "phash", "width", "height", "duration",
     "gps_lat", "gps_lon", "camera", "faces", "skin_ratio",
     "category", "category_label", "triage", "flags_label",
-    "hashset_hit", "hashset_cat", "hashset_kind",
+    "hashset_hit", "hashset_cat", "hashset_kind", "hash_matches",
     "stack_id", "vstack_id", "cluster_id", "notes",
     "media_id", "orig_name", "orig_path", "mime", "origin", "recorded_times",
     "vic_record_media_id", "vic_series", "vic_flags", "vic_tags", "vic_exif",
@@ -56,8 +56,42 @@ def _rows(case: Case, where: str = "") -> list[dict]:
         d["disk_name"] = _disk_name(d)      # the on-disk (MD5) name
         # the matched Project VIC hash-set record, as an object rather than text
         d["hashset_vic"] = vicdetails.parse(d.get("hashset_vic"))
+        # every source that flagged the file, as a list and as readable text
+        d["hashset_sources"] = _sources(d.get("hashset_sources"))
+        d["hash_matches"] = matched_in(d["hashset_sources"])
         out.append(d)
     return out
+
+
+_SOURCE_LABEL = {"vic": "Project VIC", "stash": "Hash stash",
+                 "other": "Hash set", "good": "Known-good set"}
+
+
+def _sources(raw) -> list[dict]:
+    """``files.hashset_sources`` as a list; empty when absent or unreadable."""
+    if isinstance(raw, list):
+        return raw
+    try:
+        val = json.loads(raw) if raw else []
+    except ValueError:
+        return []
+    return val if isinstance(val, list) else []
+
+
+def matched_in(sources: list[dict]) -> str:
+    """The sources that flagged a file, as one line: ``Project VIC (VICS set,
+    category 2); Hash stash (category 2)``. The stash is never named, since its
+    name is the label."""
+    parts = []
+    for x in sources:
+        label = _SOURCE_LABEL.get(x.get("src"), "Hash set")
+        detail = []
+        if x.get("src") in ("vic", "other", "good") and x.get("name"):
+            detail.append(str(x["name"]))
+        if x.get("category"):
+            detail.append(f"category {x['category']}")
+        parts.append(label + (f" ({', '.join(detail)})" if detail else ""))
+    return "; ".join(parts)
 
 
 def _and(*clauses: str) -> str:
@@ -328,6 +362,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "mime":       ("MIME type",     lambda d: d.get("mime") or "", False),
     "media_id":   ("VIC MediaID",   lambda d: str(d["media_id"]) if d.get("media_id") is not None else "", False),
     "hashset":    ("Known hash",    lambda d: d.get("hashset_hit") or "", False),
+    "hash_matches": ("Hash matches", lambda d: d.get("hash_matches") or "", False),
     # A Project VIC value: the file's own where a VIC import gave it one, else
     # the one on the Project VIC hash-set record the file matched.
     "vic_record": ("VIC record MediaID", lambda d: vicdetails.view(d)["media_id"], False),
@@ -337,7 +372,7 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "vic_exif":   ("VIC Exif (as recorded)", lambda d: vicdetails.view(d)["exif"], False),
     "error":      ("Error",         lambda d: d.get("error") or "", False),
 }
-DEFAULT_REPORT_FIELDS = ["name", "created_dt", "md5", "vic_record", "vic_series",
+DEFAULT_REPORT_FIELDS = ["name", "created_dt", "md5", "hash_matches", "vic_record", "vic_series",
                          "vic_flags", "vic_tags", "vic_exif"]
 
 _HTML_HEAD = """<!doctype html><html class="{blur_cls}"><head><meta charset="utf-8">

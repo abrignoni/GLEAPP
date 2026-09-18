@@ -110,6 +110,53 @@ $("#notifyMenu").addEventListener("click", e => {
   $("#notifyMenu").style.display = "none";
 });
 
+/* Every source that flagged a file (Project VIC, the hash stash, other sets).
+   A file matched before sources were kept has one, read from the old columns. */
+function hashSources(f) {
+  try {
+    const v = f.hashset_sources ? JSON.parse(f.hashset_sources) : null;
+    if (Array.isArray(v) && v.length) return v;
+  } catch (e) { /* fall through to the single-source columns */ }
+  if (!f.hashset_hit) return [];
+  return [{
+    src: f.hashset_hit === "Local Hash Stash" ? "stash"
+      : f.hashset_kind === "known-good" ? "good" : "other",
+    name: f.hashset_hit, kind: f.hashset_kind, category: f.hashset_cat,
+  }];
+}
+function hashBadges(f) {
+  // one badge per kind of source, however many sets of that kind matched
+  const groups = new Map();
+  for (const s of hashSources(f)) {
+    if (!groups.has(s.src)) groups.set(s.src, []);
+    groups.get(s.src).push(s);
+  }
+  const out = [];
+  for (const [src, list] of groups) {
+    const what = list.map(s => s.name + (s.category ? ` — category ${s.category}` : "")).join("; ");
+    if (src === "vic")
+      out.push(`<span class="b vic" title="${esc(`In Project VIC hash set: ${what}`)}">VIC</span>`);
+    else if (src === "stash") {
+      const cat = list[0].category ? ` — category ${list[0].category}` : "";
+      out.push(`<span class="b stash" title="${esc(`In your local hash stash — you previously categorized this file${cat}`)}">STASH</span>`);
+    } else if (src === "good")
+      out.push(`<span class="b good" title="${esc(what)}">${
+        esc(String(list[0].name).split(/[\s_-]/)[0].toUpperCase().slice(0, 6))}</span>`);
+    else
+      out.push(`<span class="b hit" title="${esc(what)}">HASH</span>`);
+  }
+  return out.join("");
+}
+const SRC_LABEL = { vic: "Project VIC", stash: "Hash stash", other: "Hash set", good: "Known-good set" };
+function matchedInText(f) {
+  return hashSources(f).map(s => {
+    const bits = [];
+    if (s.src !== "stash" && s.name) bits.push(s.name);
+    if (s.category) bits.push(`category ${s.category}`);
+    return (SRC_LABEL[s.src] || "Hash set") + (bits.length ? ` (${bits.join(", ")})` : "");
+  }).join("; ");
+}
+
 const fmtDur = s => {
   if (!s && s !== 0) return "";
   s = Math.round(s); const m = Math.floor(s / 60);
@@ -290,14 +337,7 @@ function tileEl(f) {
   // face-match results carry similarity with no "distance" (that's a pHash-only concept)
   const dist = (f.distance != null || f.similarity != null) ? `<span class="b">${f.similarity}%</span>` : "";
   const faces = f.faces ? `<span class="b">${f.faces}\u{1F464}</span>` : "";
-  const hit = f.hashset_hit
-    ? (f.hashset_kind === "known-good"
-        ? `<span class="b good" title="${esc(f.hashset_hit)}">${
-             esc(f.hashset_hit.split(/[\s_-]/)[0].toUpperCase().slice(0, 6))}</span>`
-        : f.hashset_hit === "Local Hash Stash"
-          ? `<span class="b stash" title="In your local hash stash — you previously categorized this file">STASH</span>`
-          : `<span class="b hit" title="${esc(f.hashset_hit)}">HASH</span>`)
-    : "";
+  const hit = hashBadges(f);
   const gps = f.gps_lat != null ? `<span class="b">\u{1F4CD}</span>` : "";
   const err = f.error && !f.thumb ? `<span class="b hit">ERR</span>` : "";
   const flagB = f.flags && f.flags.length
@@ -1287,8 +1327,7 @@ async function showMeta(id) {
     ["Recorded (as stored, no zone)", fmtRecorded(f)],
     ["Camera", f.camera || ""],
     ["Faces", f.faces || 0], ["Skin ratio", f.skin_ratio ?? ""],
-    ["Known hash", f.hashset_hit
-      ? f.hashset_hit + (f.hashset_kind ? ` (${f.hashset_kind})` : "") : ""],
+    ["Matched in", matchedInText(f)],
     ["Exact copies", f.stack && f.stack.length > 1 ? `${f.stack.length}` : "none"],
     ["Visually similar", f.vstack && f.vstack.length > 1 ? `${f.vstack.length} files` : "none"],
     ["Similar-group", f.cluster_id ? `#${f.cluster_id} (${f.cluster_size})` : "—"],
@@ -1881,7 +1920,8 @@ document.addEventListener("keydown", e => {
     $("#helpDlg").style.display = "none"; $("#hexDlg").style.display = "none";
     $("#snapDlg").style.display = "none"; $("#stashDlg").style.display = "none";
     $("#stashWipeDlg").style.display = "none"; $("#hashImportDlg").style.display = "none";
-    $("#refDlg").style.display = "none"; $("#histDlg").style.display = "none";
+    $("#refDlg").style.display = "none"; $("#vicDlg").style.display = "none";
+    $("#histDlg").style.display = "none";
     $("#addEvDlg").style.display = "none"; $("#flagDlg").style.display = "none";
     $("#flagEd").style.display = "none";
     $("#mainMenu").style.display = "none"; $("#notifyMenu").style.display = "none";
@@ -2315,7 +2355,7 @@ async function openReportDlg() {
   $("#rhBlur").checked = p.blur !== false;
   $("#rhMaps").checked = p.maps !== false;
   $("#rhMapsRow").style.display = state.basemap ? "" : "none";
-  const chosen = new Set(p.fields || ["name", "created_dt", "md5", "vic_record",
+  const chosen = new Set(p.fields || ["name", "created_dt", "md5", "hash_matches", "vic_record",
     "vic_series", "vic_flags", "vic_tags", "vic_exif"]);
   $("#rptFields").innerHTML = (p.field_options || []).map(o =>
     `<label><input type="checkbox" class="rfld" value="${esc(o.key)}"${
@@ -2487,7 +2527,25 @@ function updateKnownHash(kh) {
     ? `🔒 Hash stash: ${st.total.toLocaleString()} MD5(s) — click to manage`
     : "🔒 Hash stash: empty — click to add your category 1–3 hashes";
   $("#fusestash").checked = kh.use_stash !== false;
+  $("#fusevic").checked = kh.use_vic !== false;
 }
+$("#fusevic").addEventListener("change", async () => {
+  const on = $("#fusevic").checked;
+  const r = await api("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ use_vic: on })
+  });
+  if (r.error) { $("#fusevic").checked = !on; return toast(r.message || "Could not change this"); }
+  if (on) {
+    toast("Project VIC matching on — click Re-check to check files already in this case");
+  } else {
+    toast(r.cleared
+      ? `Project VIC matching off — ${r.cleared.toLocaleString()} Project VIC hit(s) cleared`
+      : "Project VIC matching off for this case");
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+    load();
+  }
+});
 $("#fusestash").addEventListener("change", async () => {
   const on = $("#fusestash").checked;
   const r = await api("/api/settings", {
@@ -2654,7 +2712,7 @@ function renderCaseSets(sets) {
     el.innerHTML = sets.map(s =>
       `<div class="cs" data-id="${s.id}">` +
       `<span title="${esc(s.source || "")}">${s.kind === "known" ? "<b>⚑</b> " : "· "}` +
-      `${esc(s.name)}</span>` +
+      `${esc(s.name)}${s.vic ? ' <span class="vicchip">VIC</span>' : ""}</span>` +
       `<span class="muted">${(s.count || 0).toLocaleString()} · ${(s.hits || 0).toLocaleString()} hit${s.hits === 1 ? "" : "s"}</span>` +
       pdnaBadge(s.photodna) +
       `<span class="x" title="Remove this set and clear its flags">✕</span></div>`).join("")
@@ -2685,8 +2743,10 @@ function renderCaseSets(sets) {
   if (sel) {
     const cur = sel.value;
     sel.innerHTML = `<option value="">— all files —</option>` +
-      `<option value="*good">Only: NSRL / known-good hits</option>` +
+      `<option value="*vic">Only: Project VIC hits</option>` +
       `<option value="Local Hash Stash">Only: Hash stash hits</option>` +
+      `<option value="*both">Only: hit in both Project VIC and the stash</option>` +
+      `<option value="*good">Only: NSRL / known-good hits</option>` +
       (sets.length ? `<option value="*">Any imported hash set</option>` : "") +
       sets.map(s => `<option value="${esc(s.name)}">Only: ${esc(s.name)}</option>`).join("");
     sel.value = [...sel.options].some(o => o.value === cur) ? cur : "";
@@ -2760,7 +2820,7 @@ function renderRefStore(sets, total) {
   list.innerHTML = sets.length
     ? sets.map(s =>
         `<div class="cs" data-id="${s.id}">` +
-        `<span style="flex:1" title="${esc(s.source || "")}">${esc(s.name)}</span>` +
+        `<span style="flex:1" title="${esc(s.source || "")}">${esc(s.name)}${s.vic ? ' <span class="vicchip">VIC</span>' : ""}</span>` +
         `<span class="muted">${(s.count || 0).toLocaleString()}</span>` +
         pdnaBadge(s.photodna) +
         `<span class="x" title="Remove from the shared store">✕</span></div>`).join("")
@@ -2866,6 +2926,81 @@ $("#refGo").onclick = async () => {
     toast(j.message || "Reference data imported");
     try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
     // this dialog is also reachable pre-case, from the launcher — nothing to reload then
+    if ($("#launcher").style.display !== "block") load();
+  });
+};
+
+/* ---------- Project VIC hash sets (their own dialog, same shared store) ---------- */
+async function renderVicSets() {
+  const s = await api("/api/hashsets").catch(() => ({ sets: [] }));
+  const sets = (s.sets || []).filter(x => x.vic);
+  const list = $("#vicList");
+  list.innerHTML = sets.length
+    ? sets.map(x =>
+        `<div class="cs" data-id="${x.id}">` +
+        `<span style="flex:1" title="${esc(x.source || "")}">${esc(x.name)} <span class="vicchip">VIC</span></span>` +
+        `<span class="muted">${(x.count || 0).toLocaleString()}</span>` +
+        pdnaBadge(x.photodna) +
+        `<span class="x" title="Remove from the shared store">✕</span></div>`).join("")
+    : `<span class="muted">No Project VIC hash set imported yet.</span>`;
+  list.querySelectorAll(".cs .x").forEach(x => x.onclick = async () => {
+    const row = x.closest(".cs"), id = +row.dataset.id;
+    if (!confirm("Remove this Project VIC hash set from the shared store?\n\nEvery case stops matching against it.")) return;
+    row.style.opacity = ".4";
+    const r = await api("/api/hashset/global/remove", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (r.error) { row.style.opacity = ""; return toast(r.message || "Could not remove"); }
+    toast("Project VIC hash set removed");
+    renderVicSets();
+    const after = async () => {
+      try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
+      if ($("#launcher").style.display !== "block") load();
+    };
+    if (r.rematched) trackJob("#rehashInfo", "#taskProg", "Updating flags", after);
+    else after();
+  });
+}
+function openVicDlg() {
+  $("#vicPath").value = ""; $("#vicName").value = "";
+  $("#vicPath").readOnly = !!Lr.native;
+  $("#vicPath").placeholder = Lr.native ? "click “Choose…”" : "paste the path, or Choose…";
+  $("#vicGo").disabled = false;
+  renderVicSets();
+  $("#vicDlg").style.display = "block";
+}
+async function browseVic() {
+  const p = await pick("hashlist", "Path to the Project VIC hash set (.json):");
+  if (!p) return;
+  $("#vicPath").value = p;
+  if (!$("#vicName").value.trim())
+    $("#vicName").value = p.split(/[\\/]/).pop().replace(/\.json$/i, "");
+}
+$("#btnVicSets").onclick = openVicDlg;
+$("#btnVicSetsLauncher").onclick = openVicDlg;
+$("#vicBrowse").onclick = browseVic;
+$("#vicCancel").onclick = () => $("#vicDlg").style.display = "none";
+$("#vicDlg").addEventListener("click", e => {
+  if (e.target.id === "vicDlg") $("#vicDlg").style.display = "none";
+});
+$("#vicGo").onclick = async () => {
+  const path = $("#vicPath").value.trim();
+  if (!path) return toast("Choose the Project VIC hash set first");
+  const name = $("#vicName").value.trim();
+  $("#vicGo").disabled = true;
+  const r = await api("/api/hashset/global/import", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, name, kind: "known", vic: true }),
+  });
+  $("#vicGo").disabled = false;
+  if (r.error) return toast(r.message || "Import failed");
+  $("#vicDlg").style.display = "none";
+  toast(`Importing ${r.name} — this runs in the background`);
+  trackJob("#rehashInfo", "#taskProg", "Importing Project VIC hash set", async (ok, j) => {
+    if (!ok) return;
+    toast(j.message || "Project VIC hash set imported");
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
     if ($("#launcher").style.display !== "block") load();
   });
 };
