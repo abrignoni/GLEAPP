@@ -23,6 +23,7 @@ list held, and ``photodna_note`` states the gap wherever an import is reported.
 from __future__ import annotations
 
 import csv
+import json
 import re
 from pathlib import Path
 from typing import Iterator, Mapping
@@ -167,6 +168,17 @@ def is_vics_hash_record(rec: object) -> bool:
     return "md5" in keys and "mediaid" in keys
 
 
+def is_vics_file(path: str | Path) -> bool:
+    """True when ``path`` is a Project VIC hash set: JSON whose first record
+    has the Project VIC Media shape. Read from the start only, never whole."""
+    if not jsonstream.starts_as_json(path):
+        return False
+    try:
+        return is_vics_hash_record(jsonstream.first_record(path))
+    except (ValueError, OSError):
+        return False
+
+
 def kind_refusal(path: str | Path, kind: str) -> str | None:
     """Why ``kind`` is wrong for this file, or None when it is not.
 
@@ -227,7 +239,8 @@ def import_hashset(
     else:
         entries = _iter_delimited(path)
 
-    hs_id = db.create_hashset(name, source=str(path), kind=kind)
+    hs_id = db.create_hashset(name, source=str(path), kind=kind,
+                              vic=is_vics_file(path))
     try:
         added = db.add_hashset_entries(hs_id, entries, details=details)
     except BaseException:
@@ -244,41 +257,79 @@ def import_hashset(
     return hs_id, added
 
 
-def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
-               use_stash: bool = True) -> dict | None:
-    """Return {'name','kind','category','via'} for the first hit, else None.
+def hit_source(hit: Mapping[str, object]) -> str:
+    """Which kind of source a hit came from: ``vic`` (a Project VIC hash set),
+    ``stash`` (the examiner's own), ``good`` (a known-good set such as the
+    NSRL) or ``other`` (any other notable or flag-only set)."""
+    from . import stash
+    if hit.get("name") == stash.STASH_NAME:
+        return "stash"
+    if hit.get("vic"):
+        return "vic"
+    if hit.get("kind") == "known-good":
+        return "good"
+    return "other"
+
+
+_SOURCE_ORDER = {"vic": 0, "stash": 1, "other": 2, "good": 3}
+
+
+def ordered_hits(hits: list[dict]) -> list[dict]:
+    """Hits with the most notable source first: Project VIC, the hash stash,
+    other notable sets, then known-good. Stable within a source."""
+    return sorted(hits, key=lambda h: _SOURCE_ORDER[hit_source(h)])
+
+
+def match_all(db: CaseDB, row, *, phash_threshold: int = 6,
+              use_stash: bool = True, use_vic: bool = True) -> list[dict]:
+    """Every source that flags this file, each ``{'name','kind','category',
+    'via', 'vic', ...}``. Empty when nothing does.
 
     An exact hash hit also carries ``store`` ('case' or 'global'),
     ``hashset_id`` and ``media_id``, which ``vic_record`` uses to fetch the
-    Project VIC record the entry came from.
+    Project VIC record the entry came from. A file is often in more than one
+    place - a Project VIC set and the examiner's own stash, say - and each is
+    kept, since being in either is a different thing to know.
 
-    Checks the case's own hash sets first, then the shared global store
-    (``gleapp.hashstore`` - where big reference sets like the NSRL RDS live).
+    Checks the case's own hash sets, the examiner's hash stash, then the shared
+    global store (``gleapp.hashstore`` - where big reference sets like the NSRL
+    RDS live). A set is listed once, on the first hash that finds it.
 
     ``use_stash=False`` skips the examiner's own hash stash for this file -
     for a case that isn't CSAM/Project VIC related, where a stashed cat 1-3
-    hash re-flagging unrelated media would be noise, not a hit.
+    hash re-flagging unrelated media would be noise, not a hit. ``use_vic=False``
+    skips every Project VIC hash set the same way.
     """
     from . import hashstore, stash
+
+    hits: list[dict] = []
+    seen: set[str] = set()
+
+    def add(hit: dict) -> None:
+        if hit["name"] in seen:
+            return
+        if hit.get("vic") and not use_vic:
+            return
+        seen.add(hit["name"])
+        hits.append(hit)
 
     for algo in ("sha256", "sha1", "md5"):
         val = row[algo] if algo in row.keys() else None
         if not val:
             continue
-        hit = db.match_hash(algo, val)
-        if hit:
-            return {"name": hit["name"], "kind": hit["kind"],
-                    "category": hit["category"], "via": algo, "store": "case",
-                    "hashset_id": hit["hashset_id"], "media_id": hit["media_id"]}
+        for h in db.match_hash_all(algo, val):
+            add({"name": h["name"], "kind": h["kind"], "category": h["category"],
+                 "via": algo, "store": "case", "vic": bool(h["vic"]),
+                 "hashset_id": h["hashset_id"], "media_id": h["media_id"]})
         if algo == "md5" and use_stash:
-            # the examiner's own stash takes precedence over reference sets
             st = stash.lookup(val)
             if st:
-                return {"name": stash.STASH_NAME, "kind": "known",
-                        "category": st["category"], "via": "md5-stash"}
-        g = hashstore.lookup(algo, val)
-        if g:
-            return g
+                add({"name": stash.STASH_NAME, "kind": "known",
+                     "category": st["category"], "via": "md5-stash", "vic": False})
+        for g in hashstore.lookup_all(algo, val):
+            add(g)
+    if hits:
+        return hits
 
     ph = row["phash"] if "phash" in row.keys() else None
     # A perceptual match is a similar picture, not the recorded file, so it
@@ -289,18 +340,59 @@ def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
         # neither length nor meaning with this 64-bit hash, so Hamming-
         # comparing one would be arithmetic on unrelated values.
         entries = list(db.conn.execute(
-            "SELECT e.value v, e.category c, hs.name n, hs.kind k "
+            "SELECT e.value v, e.category c, hs.name n, hs.kind k, hs.vic vic "
             "FROM hashset_entries e JOIN hashsets hs ON hs.id=e.hashset_id "
             "WHERE e.algo = ?", (PHASH_ALGO,)
         )) + list(hashstore.iter_phash())
         for e in entries:
+            if "vic" in e.keys() and e["vic"] and not use_vic:
+                continue
             d = hamming(ph, e["v"])
             if d <= phash_threshold and (best is None or d < best[0]):
-                best = (d, {"name": e["n"], "kind": e["k"],
-                            "category": e["c"], "via": f"phash~{d}"})
+                best = (d, {"name": e["n"], "kind": e["k"], "category": e["c"],
+                            "via": f"phash~{d}",
+                            "vic": bool("vic" in e.keys() and e["vic"])})
         if best:
-            return best[1]
-    return None
+            return [best[1]]
+    return []
+
+
+def match_file(db: CaseDB, row, *, phash_threshold: int = 6,
+               use_stash: bool = True, use_vic: bool = True) -> dict | None:
+    """The most notable hit for this file (see :func:`match_all`), else None."""
+    hits = ordered_hits(match_all(db, row, phash_threshold=phash_threshold,
+                                  use_stash=use_stash, use_vic=use_vic))
+    return hits[0] if hits else None
+
+
+def source_mask(hits: list[dict]) -> int:
+    """``files.hashset_mask`` for a set of hits."""
+    from .db import MATCH_GOOD, MATCH_OTHER, MATCH_STASH, MATCH_VIC
+    bit = {"vic": MATCH_VIC, "stash": MATCH_STASH, "other": MATCH_OTHER,
+           "good": MATCH_GOOD}
+    mask = 0
+    for h in hits:
+        mask |= bit[hit_source(h)]
+    return mask
+
+
+def sources_json(hits: list[dict]) -> str:
+    """``files.hashset_sources``: one entry per source that flagged the file,
+    most notable first. ``name`` comes second on purpose, so ``db.source_like``
+    can find a set by its name followed by a comma."""
+    return json.dumps(
+        [{"src": hit_source(h), "name": h["name"], "kind": h["kind"],
+          "category": h["category"], "via": h["via"]} for h in ordered_hits(hits)],
+        ensure_ascii=False)
+
+
+def asserted_category(hits: list[dict]) -> int | None:
+    """The category a file takes from its hits, when it has none of its own: the
+    lowest (most severe) one a notable set asserts. None when no notable set
+    asserts one."""
+    cats = [int(h["category"]) for h in hits
+            if h["kind"] == "known" and h["category"]]
+    return min(cats) if cats else None
 
 
 def vic_record(db: CaseDB, hit: Mapping[str, object] | None) -> dict | None:

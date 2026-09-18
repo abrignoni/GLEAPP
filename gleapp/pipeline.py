@@ -326,41 +326,60 @@ def rematch_hashes(case: Case, *, progress=None) -> int:
 
     Standalone so it can be re-run after importing a set without a full
     reprocess.  Clears stale hits first, re-adopts an asserted category only
-    when the file is still uncategorized and the set is 'known'.  Returns the
-    number of current hits.
+    when the file is still uncategorized and a notable set asserts one.  Returns
+    the number of current hits.
+
+    A file is recorded against every source that flags it - a Project VIC set
+    and the examiner's hash stash, say - not just the first, so being in both is
+    kept. It takes the lowest (most severe) category any notable source
+    asserts, and a known-good hit (the NSRL) moves it to Non-pertinent only when
+    no notable source flags it too.
 
     Skips the examiner's hash stash for this run when the case's own
-    ``use_stash`` meta flag is turned off (a non-CSAM case, say) - see
-    ``hashdb.match_file``.
+    ``use_stash`` meta flag is turned off (a non-CSAM case, say), and every
+    Project VIC set when ``use_vic`` is - see ``hashdb.match_all``.
     """
     from .db import NONPERTINENT_CATEGORY
     use_stash = case.db.get_meta("use_stash") != "0"
+    use_vic = case.db.get_meta("use_vic") != "0"
     rows = list(case.db.iter_files("md5 IS NOT NULL OR sha256 IS NOT NULL"))
     total, hits = len(rows), 0
     for i, r in enumerate(rows, 1):
-        hit = hashdb.match_file(case.db, r, use_stash=use_stash)
-        if hit:
+        found = hashdb.match_all(case.db, r, use_stash=use_stash, use_vic=use_vic)
+        if found:
             hits += 1
+            found = hashdb.ordered_hits(found)
+            top = found[0]
             # The Project VIC record the entry came from: its MediaID, series,
             # flags, tags and Exif, as that record states them. Its Exif is
-            # carried as text only and never written to this file's GPS.
-            vic = hashdb.vic_record(case.db, hit)
-            case.db.update_file(r["id"], hashset_hit=hit["name"],
-                                hashset_cat=hit["category"],
-                                hashset_kind=hit["kind"],
-                                hashset_vic=json.dumps(vic, ensure_ascii=False)
-                                if vic else None)
+            # carried as text only and never written to this file's GPS. Taken
+            # from the first source that has one, so the hash stash winning the
+            # headline does not hide it.
+            vic = next((v for v in (hashdb.vic_record(case.db, h) for h in found)
+                        if v), None)
+            asserted = hashdb.asserted_category(found)
+            case.db.update_file(
+                r["id"], hashset_hit=top["name"],
+                hashset_cat=asserted if asserted is not None else top["category"],
+                hashset_kind=top["kind"],
+                hashset_vic=json.dumps(vic, ensure_ascii=False) if vic else None,
+                hashset_sources=hashdb.sources_json(found),
+                hashset_mask=hashdb.source_mask(found))
             # auto-categorize only an as-yet-uncategorized file:
             #  - a 'known' set asserts its own category
-            #  - a 'known-good' hit (NSRL etc.) -> Non-pertinent
+            #  - a 'known-good' hit (NSRL etc.) -> Non-pertinent, unless a
+            #    notable source flags the file as well
             if (r["category"] or 0) == 0:
-                if hit["kind"] == "known" and hit["category"]:
-                    case.db.update_file(r["id"], category=hit["category"])
-                elif hit["kind"] == "known-good":
+                if asserted is not None:
+                    case.db.update_file(r["id"], category=asserted)
+                elif (not any(h["kind"] == "known" for h in found)
+                      and any(h["kind"] == "known-good" for h in found)):
                     case.db.update_file(r["id"], category=NONPERTINENT_CATEGORY)
-        elif r["hashset_hit"] is not None or r["hashset_vic"] is not None:
+        elif (r["hashset_hit"] is not None or r["hashset_vic"] is not None
+              or r["hashset_sources"] is not None):
             case.db.update_file(r["id"], hashset_hit=None, hashset_cat=None,
-                                hashset_kind=None, hashset_vic=None)
+                                hashset_kind=None, hashset_vic=None,
+                                hashset_sources=None, hashset_mask=None)
         if i % 500 == 0 or i == total:
             case.db.commit()
             if progress:

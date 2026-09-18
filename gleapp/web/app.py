@@ -37,7 +37,8 @@ FIELDS = (
     "created_dt, md5, sha1, sha256, "
     "phash, width, height, duration, gps_lat, gps_lon, camera, faces, "
     "skin_ratio, category, triage, reviewed, reviewed_by, reviewed_at, notes, "
-    "hashset_hit, hashset_cat, hashset_kind, stack_id, vstack_id, cluster_id, thumb, error, "
+    "hashset_hit, hashset_cat, hashset_kind, hashset_sources, hashset_mask, "
+    "stack_id, vstack_id, cluster_id, thumb, error, "
     "media_id, orig_name, orig_path, mime, vic_flags, alt_paths, recorded_times, origin"
 )
 
@@ -637,6 +638,15 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                       if a in ("md5", "sha1", "sha256")) or ("md5",)
         if not src or not Path(src).is_file():
             abort(400, description=f"file not found: {src or '(none)'}")
+        if data.get("vic"):
+            # the Project VIC dialog: it takes a Project VIC hash set and nothing
+            # else, and a Project VIC set is always notable, never benign
+            if not hashdb.is_vics_file(src):
+                abort(400, description=(
+                    f"{Path(src).name} is not a Project VIC hash set (a JSON list "
+                    "of Media records carrying an MD5 and a MediaID). Use "
+                    "Reference data for an NSRL or other set."))
+            kind = "known"
         is_delta = bool(base) or src.lower().endswith("_delta.sql")
         if is_delta and not (base and Path(base).is_file()):
             abort(400, description="a quarterly delta needs the previous full "
@@ -983,9 +993,18 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 where.append("hashset_hit IN (SELECT name FROM hashsets)")
             elif _hn == "*good":                 # any NSRL / known-good reference hit
                 where.append("hashset_kind = 'known-good'")
+            elif _hn in ("*vic", "*stash", "*both"):
+                # which kinds of source flagged the file (files.hashset_mask), so
+                # a file that hit both a Project VIC set and the stash is in each
+                from ..db import MATCH_STASH, MATCH_VIC
+                bits = {"*vic": MATCH_VIC, "*stash": MATCH_STASH,
+                        "*both": MATCH_VIC | MATCH_STASH}[_hn]
+                where.append("(hashset_mask & ?) = ?")
+                params.extend([bits, bits])
             elif _hn:                            # one named set (or the hash stash)
-                where.append("hashset_hit = ?")
-                params.append(_hn)
+                from ..db import source_like
+                where.append("(hashset_hit = ? OR hashset_sources LIKE ? ESCAPE '!')")
+                params.extend([_hn, "%" + source_like(_hn) + "%"])
             if q.get("hidegood") == "1":
                 where.append("(hashset_kind IS NULL OR hashset_kind != 'known-good')")
             if q.get("faces") == "1":
@@ -1442,6 +1461,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 "case_sets": [dict(r) for r in case.db.list_hashsets()],
                 "stash": stash_sum,
                 "use_stash": case.db.get_meta("use_stash") != "0",
+                "use_vic": case.db.get_meta("use_vic") != "0",
             },
             "screening": {
                 # screened_at is set by a screening pass or by an ingest with
@@ -1718,16 +1738,27 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 # behind - clear them immediately rather than waiting on a
                 # manual Re-check. The category it may have set is left
                 # alone, same as any other hash-set hit that stops matching.
+                # A file the stash flagged along with another source keeps
+                # that source.
                 from .. import stash
-                cur = case.db.conn.execute(
-                    "UPDATE files SET hashset_hit=NULL, hashset_cat=NULL, "
-                    "hashset_kind=NULL, hashset_vic=NULL WHERE hashset_hit = ?",
-                    (stash.STASH_NAME,))
-                cleared = cur.rowcount
-                case.db.commit()
+                cleared = case.db.drop_sources(name=stash.STASH_NAME)
             case.db.audit_log(case.examiner, "set_use_stash",
                               "on" if on else f"off, {cleared} stash hit(s) cleared")
             return jsonify({"ok": True, "use_stash": on, "cleared": cleared})
+        if "use_vic" in body:
+            # per-case: skip every Project VIC hash set, for a case that has
+            # nothing to do with them
+            case = state["case"]
+            if case is None:
+                abort(409, description="no case open")
+            on = bool(body.get("use_vic"))
+            case.db.set_meta("use_vic", "1" if on else "0")
+            cleared = 0
+            if not on:
+                cleared = case.db.drop_sources(src="vic")
+            case.db.audit_log(case.examiner, "set_use_vic",
+                              "on" if on else f"off, {cleared} Project VIC hit(s) cleared")
+            return jsonify({"ok": True, "use_vic": on, "cleared": cleared})
         if "agency_logo" in body:
             # the app-wide default report-header logo (reachable pre-case, from
             # the launcher's Settings menu) - every case's report uses it

@@ -18,6 +18,24 @@ from . import vicdetails
 
 SCHEMA_VERSION = 17
 
+# Bits of files.hashset_mask: which kinds of source matched a file. A file that
+# matched two places carries both bits, so a filter can ask for either or both.
+MATCH_VIC = 1        # a Project VIC hash set
+MATCH_STASH = 2      # the examiner's local hash stash
+MATCH_OTHER = 4      # any other notable set (a CyberTip list, CAID, ...)
+MATCH_GOOD = 8       # a known-good set (NSRL)
+MATCH_BIT = {"vic": MATCH_VIC, "stash": MATCH_STASH, "other": MATCH_OTHER,
+             "good": MATCH_GOOD}
+
+
+def source_like(name: str) -> str:
+    """The LIKE fragment that finds ``name`` in a ``hashset_sources`` JSON value,
+    for use with ``ESCAPE '!'``. The sources are written with
+    ``ensure_ascii=False``, so a name is matched as it was written."""
+    frag = '"name": ' + json.dumps(name, ensure_ascii=False) + ","
+    return frag.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
 # audit_log actor for anything the app itself triggered - a background
 # timer, a close-time save, a safety-net copy before a restore - as opposed
 # to an examiner's own click. Never used for an action an examiner asked for
@@ -107,6 +125,10 @@ CREATE TABLE IF NOT EXISTS files (
     hashset_kind  TEXT,                   -- 'known' | 'known-good' | 'other'
     hashset_vic   TEXT,                   -- JSON: the matched Project VIC record's
                                           -- MediaID, series, flags, tags, Exif
+    hashset_sources TEXT,                 -- JSON: every source that matched this file
+                                          -- (Project VIC, hash stash, other sets), so a
+                                          -- hit in two places is kept as two
+    hashset_mask  INTEGER,                -- which kinds of source matched; see MATCH_*
     stack_id      INTEGER,                -- exact-duplicate stack (== files.id of stack head)
     vstack_id     INTEGER,                -- visual stack: "same picture to the eye" (== head id)
     cluster_id    INTEGER,                -- looser near-duplicate cluster id
@@ -183,7 +205,8 @@ CREATE TABLE IF NOT EXISTS hashsets (
     source   TEXT,
     kind     TEXT,          -- 'known' (bad) | 'known-good' (ignore) | 'other'
     count    INTEGER DEFAULT 0,
-    imported_at REAL
+    imported_at REAL,
+    vic      INTEGER NOT NULL DEFAULT 0   -- 1 = a Project VIC hash set
 );
 
 CREATE TABLE IF NOT EXISTS hashset_entries (
@@ -324,6 +347,7 @@ class CaseDB:
             ("origin", "TEXT"), ("member_node", "TEXT"),
             ("volume_base", "INTEGER"), ("recorded_times", "TEXT"),
             ("container_id", "INTEGER"), ("hashset_vic", "TEXT"),
+            ("hashset_sources", "TEXT"), ("hashset_mask", "INTEGER"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
@@ -335,6 +359,11 @@ class CaseDB:
         if "locked" not in cat_cols:
             self.conn.execute(
                 "ALTER TABLE categories ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+        hs_cols = {r["name"] for r in self.conn.execute(
+            "PRAGMA table_info(hashsets)")}
+        if "vic" not in hs_cols:
+            self.conn.execute(
+                "ALTER TABLE hashsets ADD COLUMN vic INTEGER NOT NULL DEFAULT 0")
         face_cols = {r["name"] for r in self.conn.execute(
             "PRAGMA table_info(faces)")}
         if "keyframe_id" not in face_cols:
@@ -743,11 +772,14 @@ class CaseDB:
         ).fetchall()
 
     # -- hash sets ----------------------------------------------------
-    def create_hashset(self, name: str, source: str, kind: str) -> int:
+    def create_hashset(self, name: str, source: str, kind: str,
+                       vic: bool = False) -> int:
         cur = self.conn.execute(
-            "INSERT INTO hashsets(name, source, kind, imported_at) VALUES(?,?,?,?) "
-            "ON CONFLICT(name) DO UPDATE SET source=excluded.source, kind=excluded.kind",
-            (name, source, kind, time.time()),
+            "INSERT INTO hashsets(name, source, kind, imported_at, vic) "
+            "VALUES(?,?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET source=excluded.source, "
+            "kind=excluded.kind, vic=excluded.vic",
+            (name, source, kind, time.time(), 1 if vic else 0),
         )
         row = self.conn.execute("SELECT id FROM hashsets WHERE name=?", (name,)).fetchone()
         return int(row["id"])
@@ -815,18 +847,40 @@ class CaseDB:
             (algo, value.lower().strip()),
         ).fetchone()
 
-    def list_hashsets(self) -> list[sqlite3.Row]:
+    def match_hash_all(self, algo: str, value: str) -> list[sqlite3.Row]:
+        """Every set of this case that holds the hash, not just the first."""
+        return self.conn.execute(
+            "SELECT hs.name AS name, hs.kind AS kind, hs.vic AS vic, "
+            "e.category AS category, e.hashset_id AS hashset_id, "
+            "e.media_id AS media_id "
+            "FROM hashset_entries e JOIN hashsets hs ON hs.id = e.hashset_id "
+            "WHERE e.algo=? AND e.value=?",
+            (algo, value.lower().strip()),
+        ).fetchall()
+
+    def list_hashsets(self) -> list[dict[str, Any]]:
         """This case's imported hash sets, with how many files each currently
         flags."""
-        return self.conn.execute(
+        rows = self.conn.execute(
             "SELECT hs.id, hs.name, hs.kind, hs.source, hs.count, hs.imported_at, "
-            "  (SELECT COUNT(*) FROM files f WHERE f.hashset_hit = hs.name) AS hits, "
+            "  hs.vic, "
             # counted separately because these are stored and never matched, so
             # folding them into "count" overstates what the set can flag
             "  (SELECT COUNT(*) FROM hashset_entries e WHERE e.hashset_id = hs.id "
             "     AND e.algo = ?) AS photodna "
             "FROM hashsets hs ORDER BY hs.imported_at DESC", (PHOTODNA_ALGO,)
         ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            # a file that matched two sources names this set in hashset_sources
+            # even when another source is the one hashset_hit shows
+            d["hits"] = self.conn.execute(
+                "SELECT COUNT(*) FROM files WHERE hashset_hit = ? "
+                "OR hashset_sources LIKE ? ESCAPE '!'",
+                (r["name"], "%" + source_like(r["name"]) + "%")).fetchone()[0]
+            out.append(d)
+        return out
 
     def delete_hashset(self, hashset_id: int) -> str | None:
         """Remove an imported set (its entries cascade) and immediately clear the
@@ -843,9 +897,62 @@ class CaseDB:
             self.conn.execute("DELETE FROM hashsets WHERE id=?", (hashset_id,))
             self.conn.execute(
                 "UPDATE files SET hashset_hit=NULL, hashset_cat=NULL, "
-                "hashset_kind=NULL, hashset_vic=NULL WHERE hashset_hit=?", (name,))
+                "hashset_kind=NULL, hashset_vic=NULL, hashset_sources=NULL, "
+                "hashset_mask=NULL WHERE hashset_hit=? OR hashset_sources LIKE ? "
+                "ESCAPE '!'",
+                (name, "%" + source_like(name) + "%"))
             self.conn.commit()
         return name
+
+    def drop_sources(self, *, name: str | None = None, src: str | None = None) -> int:
+        """Take one set (by ``name``) or one kind of source (``src``: ``vic``,
+        ``stash``, ...) off every file that carries it, keeping whatever else
+        matched. A file left with no source is unflagged. Returns how many
+        files lost a source. A category a file adopted from it stays: that is
+        the examiner's now, the same as when a set is removed."""
+        if name is not None:
+            rows = self.conn.execute(
+                "SELECT id, hashset_hit, hashset_sources, hashset_vic FROM files "
+                "WHERE hashset_hit = ? OR hashset_sources LIKE ? ESCAPE '!'",
+                (name, "%" + source_like(name) + "%")).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, hashset_hit, hashset_sources, hashset_vic FROM files "
+                "WHERE hashset_sources LIKE ?",
+                ('%"src": ' + json.dumps(src) + '%',)).fetchall()
+        n = 0
+        with self.lock:
+            for r in rows:
+                try:
+                    have = json.loads(r["hashset_sources"]) if r["hashset_sources"] else []
+                except ValueError:
+                    have = []
+                keep = [x for x in have
+                        if not (x.get("name") == name if name is not None
+                                else x.get("src") == src)]
+                legacy = not have and name is not None and r["hashset_hit"] == name
+                if len(keep) == len(have) and not legacy:
+                    continue
+                n += 1
+                if not keep:
+                    self.conn.execute(
+                        "UPDATE files SET hashset_hit=NULL, hashset_cat=NULL, "
+                        "hashset_kind=NULL, hashset_vic=NULL, hashset_sources=NULL, "
+                        "hashset_mask=NULL WHERE id=?", (r["id"],))
+                    continue
+                top = keep[0]
+                mask = 0
+                for x in keep:
+                    mask |= MATCH_BIT.get(x.get("src"), 0)
+                vic_left = any(x.get("src") == "vic" for x in keep)
+                self.conn.execute(
+                    "UPDATE files SET hashset_hit=?, hashset_cat=?, hashset_kind=?, "
+                    "hashset_sources=?, hashset_mask=?, hashset_vic=? WHERE id=?",
+                    (top["name"], top.get("category"), top.get("kind"),
+                     json.dumps(keep, ensure_ascii=False), mask,
+                     r["hashset_vic"] if vic_left else None, r["id"]))
+            self.conn.commit()
+        return n
 
     # -- audit ------------------------------------------------------
     def audit_log(self, actor: str, action: str, detail: str = "") -> None:

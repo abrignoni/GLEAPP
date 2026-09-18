@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS hashsets (
     source      TEXT,
     kind        TEXT,                 -- 'known' | 'known-good' | 'other'
     count       INTEGER DEFAULT 0,
-    imported_at REAL
+    imported_at REAL,
+    vic         INTEGER NOT NULL DEFAULT 0   -- 1 = a Project VIC hash set
 );
 CREATE TABLE IF NOT EXISTS hashset_entries (
     hashset_id INTEGER NOT NULL REFERENCES hashsets(id) ON DELETE CASCADE,
@@ -86,6 +87,8 @@ def connect() -> sqlite3.Connection:
             c.execute("PRAGMA foreign_keys = ON")
             c.execute("PRAGMA busy_timeout = 5000")
             c.executescript(_SCHEMA)
+            if "vic" not in {r[1] for r in c.execute("PRAGMA table_info(hashsets)")}:
+                c.execute("ALTER TABLE hashsets ADD COLUMN vic INTEGER NOT NULL DEFAULT 0")
             vicdetails.ensure_schema(c)
             c.commit()
             _conn = c
@@ -146,6 +149,25 @@ def lookup(algo: str, value: str) -> dict | None:
             "hashset_id": row["hashset_id"], "media_id": row["media_id"]}
 
 
+def lookup_all(algo: str, value: str) -> list[dict]:
+    """Every set containing this exact hash, not just the first."""
+    if not value:
+        return []
+    with _lock:
+        rows = connect().execute(
+            "SELECT hs.name AS name, hs.kind AS kind, hs.vic AS vic, "
+            "e.category AS category, e.hashset_id AS hashset_id, "
+            "e.media_id AS media_id "
+            "FROM hashset_entries e JOIN hashsets hs ON hs.id = e.hashset_id "
+            "WHERE e.algo = ? AND e.value = ?",
+            (algo, value.strip().lower()),
+        ).fetchall()
+    return [{"name": r["name"], "kind": r["kind"], "category": r["category"],
+             "via": algo, "store": "global", "vic": bool(r["vic"]),
+             "hashset_id": r["hashset_id"], "media_id": r["media_id"]}
+            for r in rows]
+
+
 def vic_details(hashset_id: int, media_id: int) -> dict:
     """The Project VIC record details the global store holds for one record."""
     with _lock:
@@ -172,7 +194,7 @@ def sets() -> list[dict]:
     # the photodna count is a range over the (hashset_id, algo) key prefix, so
     # it costs nothing on a set that holds none, which is every NSRL-style one
     return [dict(r) for r in _ro_query(
-        "SELECT hs.id, hs.name, hs.source, hs.kind, hs.count, hs.imported_at, "
+        "SELECT hs.id, hs.name, hs.source, hs.kind, hs.count, hs.imported_at, hs.vic, "
         "  (SELECT COUNT(*) FROM hashset_entries e WHERE e.hashset_id = hs.id "
         "     AND e.algo = ?) AS photodna "
         "FROM hashsets hs ORDER BY hs.imported_at DESC", (PHOTODNA_ALGO,))]
@@ -209,14 +231,16 @@ def _norm(algo: str, value: object) -> str | None:
     return v
 
 
-def _create_set(name: str, source: str, kind: str) -> int:
+def _create_set(name: str, source: str, kind: str, vic: bool = False) -> int:
     with _lock:
         conn = connect()
         conn.execute(
-            "INSERT INTO hashsets(name, source, kind, imported_at) VALUES(?,?,?,?) "
+            "INSERT INTO hashsets(name, source, kind, imported_at, vic) "
+            "VALUES(?,?,?,?,?) "
             "ON CONFLICT(name) DO UPDATE SET source = excluded.source, "
-            "kind = excluded.kind, imported_at = excluded.imported_at",
-            (name, source, kind, time.time()),
+            "kind = excluded.kind, imported_at = excluded.imported_at, "
+            "vic = excluded.vic",
+            (name, source, kind, time.time(), 1 if vic else 0),
         )
         hs_id = int(conn.execute(
             "SELECT id FROM hashsets WHERE name = ?", (name,)).fetchone()[0])
@@ -394,6 +418,7 @@ def import_sqlite(src_path: str | Path, *, name: str, kind: str = "known-good",
 def _import_entries(name: str, source: str, kind: str, entries,
                     progress: Callable[[int, int], None] | None = None,
                     details: "vicdetails.Stager | None" = None,
+                    vic: bool = False,
                     ) -> tuple[int, int]:
     """Store a stream of (algo, value, category[, media_id]) entries as one set.
 
@@ -413,7 +438,7 @@ def _import_entries(name: str, source: str, kind: str, entries,
     the clustered key in order. ``rowid`` breaks ties, so for a hash listed
     twice the first one in the file is the one kept, as before.
     """
-    hs_id = _create_set(name, source, kind)
+    hs_id = _create_set(name, source, kind, vic)
     _bulk_begin()
     batch: list = []
     staged = seen = 0
@@ -611,10 +636,11 @@ def import_path(path: str | Path, *, name: str | None = None, kind: str = "known
     if refusal:
         raise ValueError(refusal)
     details = None
+    vic = hashdb.is_vics_file(path)
     if jsonstream.starts_as_json(path):
         details = vicdetails.Stager()
         entries = hashdb.iter_json_entries(path, details=details)
     else:
         entries = hashdb._iter_delimited(path)
     return _import_entries(name, str(path), kind, entries, progress=progress,
-                           details=details)
+                           details=details, vic=vic)
