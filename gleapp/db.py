@@ -747,16 +747,38 @@ class CaseDB:
         return int(row["id"])
 
     def add_hashset_entries(self, hashset_id: int, rows: Iterable[tuple[str, str, int | None]]) -> int:
+        """Add entries to a set; returns how many were offered.
+
+        A hash list arrives in random order with respect to the key the table
+        is clustered on, so the rows are appended to a TEMP table first and
+        then copied across in key order, one pass, which keeps a large list
+        from rewriting pages all over the tree. ``rowid`` breaks ties, so for
+        a hash listed twice the first one in the file is the one kept. Nothing
+        is committed until the end, so a caller can roll a failed import back.
+        """
         n = 0
-        for algo, value, category in rows:
-            value = (value.strip() if algo in _CASE_SENSITIVE_ALGOS
-                     else value.lower().strip())
+        batch: list = []
+        self.conn.execute("DROP TABLE IF EXISTS temp._hashset_stage")
+        self.conn.execute("CREATE TEMP TABLE _hashset_stage "
+                          "(algo TEXT NOT NULL, value TEXT NOT NULL, category INTEGER)")
+        try:
+            for algo, value, category in rows:
+                value = (value.strip() if algo in _CASE_SENSITIVE_ALGOS
+                         else value.lower().strip())
+                batch.append((algo, value, category))
+                n += 1
+                if len(batch) >= 50_000:
+                    self.conn.executemany(
+                        "INSERT INTO temp._hashset_stage VALUES(?,?,?)", batch)
+                    batch.clear()
+            if batch:
+                self.conn.executemany("INSERT INTO temp._hashset_stage VALUES(?,?,?)", batch)
             self.conn.execute(
                 "INSERT OR IGNORE INTO hashset_entries(hashset_id, algo, value, category) "
-                "VALUES(?,?,?,?)",
-                (hashset_id, algo, value, category),
-            )
-            n += 1
+                "SELECT ?, algo, value, category FROM temp._hashset_stage "
+                "ORDER BY algo, value, rowid", (hashset_id,))
+        finally:
+            self.conn.execute("DROP TABLE IF EXISTS temp._hashset_stage")
         self.conn.execute(
             "UPDATE hashsets SET count=(SELECT COUNT(*) FROM hashset_entries WHERE hashset_id=?) "
             "WHERE id=?",

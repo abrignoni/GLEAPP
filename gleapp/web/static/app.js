@@ -2734,10 +2734,23 @@ function renderRefStore(sets, total) {
 function refMode() {
   return document.querySelector('input[name=refMode]:checked').value;
 }
+// A Project VIC hash set is JSON. It is read as it is imported, so the NSRL
+// release/delta mode and the Store choice do not apply to it.
+function refIsJson() { return /\.json$/i.test($("#refPath").value.trim()); }
+let refWasJson = false;
 function syncRefDlg() {
-  const delta = refMode() === "delta";
+  const json = refIsJson();
+  const delta = !json && refMode() === "delta";
+  $("#refDlg .refmode").style.display = json ? "none" : "flex";
+  $("#refAlgosLbl").style.display = json ? "none" : "";
+  $("#refVicNote").style.display = json ? "" : "none";
   $("#refBaseRow").style.display = delta ? "" : "none";
-  $("#refFileLbl").textContent = delta ? "Delta script (_delta.sql)" : "Database file";
+  $("#refFileLbl").textContent = json ? "Project VIC hash set (.json)"
+    : delta ? "Delta script (_delta.sql)" : "Database file";
+  // Its entries carry their own categories, so matches are notable, never
+  // benign; the server refuses known-good for a Project VIC set.
+  if (json && !refWasJson) $("#refKind").value = "known";
+  refWasJson = json;
 }
 async function browseRef(target) {
   const p = await pick("hashdb", "Path to the reference database / delta script:");
@@ -2745,7 +2758,8 @@ async function browseRef(target) {
   $(target).value = p;
   if (target === "#refPath" && !$("#refName").value.trim())
     $("#refName").value = p.split(/[\\/]/).pop()
-      .replace(/\.(db|sqlite3?|sql)$/i, "").replace(/_delta$/i, "");
+      .replace(/\.(db|sqlite3?|sql|json)$/i, "").replace(/_delta$/i, "");
+  syncRefDlg();
 }
 function openRefDlg() {
   $("#refPath").value = ""; $("#refBase").value = ""; $("#refName").value = "";
@@ -2754,6 +2768,7 @@ function openRefDlg() {
   $("#refKind").value = "known-good";
   $("#refAlgos").value = "md5";
   $("#refGo").disabled = false;
+  refWasJson = false;
   syncRefDlg();
   $("#refDlg").style.display = "block";
 }
@@ -2769,6 +2784,7 @@ $("#btnRefStoreLauncher").onclick = openRefDlg;
 document.querySelectorAll('input[name=refMode]').forEach(r => r.onchange = syncRefDlg);
 $("#refBrowse").onclick = () => browseRef("#refPath");
 $("#refBaseBrowse").onclick = () => browseRef("#refBase");
+$("#refPath").addEventListener("input", syncRefDlg);
 $("#refCancel").onclick = () => $("#refDlg").style.display = "none";
 $("#refDlg").addEventListener("click", e => {
   if (e.target.id === "refDlg") $("#refDlg").style.display = "none";
@@ -2776,7 +2792,7 @@ $("#refDlg").addEventListener("click", e => {
 $("#refGo").onclick = async () => {
   const path = $("#refPath").value.trim();
   if (!path) return toast("Choose the reference file first");
-  const delta = refMode() === "delta";
+  const delta = !refIsJson() && refMode() === "delta";
   const base = $("#refBase").value.trim();
   if (delta && !base) return toast("A quarterly delta needs the previous full .db");
   const algos = $("#refAlgos").value.split(",");

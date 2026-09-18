@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from . import jsonstream
+
 VIC_SOURCE_NAME = "Project VIC"
 
 
@@ -230,14 +232,32 @@ def is_vic_file(path: str | Path) -> bool:
     if p.suffix.lower() != ".json":
         return False
     try:
-        # utf-8-sig drops a leading BOM if the exporter wrote one
-        head = p.read_text(encoding="utf-8-sig", errors="replace")[:8192]
+        # Only the first 8 KB is read. utf-8-sig drops a leading BOM if the
+        # exporter wrote one.
+        head = jsonstream.sniff(p, 8192)
     except OSError:
         return False
     if "projectvic" in head.lower() or "vicsdatamodel" in head.lower():
         return True
     # structural fallback: a top-level "value" array of case objects with "Media"
     return '"value"' in head and '"Media"' in head
+
+
+def is_hash_set(path: str | Path) -> bool:
+    """True when a VIC file is a hash set rather than a case.
+
+    A Project VIC case keeps its media inside cases (``value[*].Media``, each
+    with its files). A Project VIC hash set, such as the one a national VICS
+    portal distributes, is a list of Media records directly under ``value``,
+    each an MD5 and a MediaID with no file behind it. Only the first record is
+    read to tell them apart.
+    """
+    from .hashdb import is_vics_hash_record
+    try:
+        rec = jsonstream.first_record(path)
+    except (OSError, ValueError):
+        return False
+    return is_vics_hash_record(rec) and "media" not in {str(k).lower() for k in rec}
 
 
 def load(path: str | Path) -> dict:

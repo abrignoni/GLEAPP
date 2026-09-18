@@ -21,7 +21,6 @@ returns perceptual hashes only, so the matching pass cannot reach them.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -33,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import appconfig
+from . import appconfig, jsonstream
 from .db import PHASH_ALGO, PHOTODNA_ALGO
 
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
@@ -380,13 +379,36 @@ def import_sqlite(src_path: str | Path, *, name: str, kind: str = "known-good",
         src.close()
 
 
-def _import_entries(name: str, source: str, kind: str, entries) -> tuple[int, int]:
+def _import_entries(name: str, source: str, kind: str, entries,
+                    progress: Callable[[int, int], None] | None = None,
+                    ) -> tuple[int, int]:
+    """Store a stream of (algo, value, category) entries as one set.
+
+    The entries arrive in the file's order, which for a hash list is random
+    with respect to the ``(hashset_id, algo, value)`` key the table is
+    clustered on. Inserted in that order, every batch touches pages across the
+    whole tree, and with the WAL left unchecked during a bulk import each
+    commit appends those pages again. Measured on a national Project VIC set,
+    the WAL grew to many times the size of the data before a third of it was
+    in, and the inserts kept slowing. So the entries are first
+    appended to a TEMP table,
+    which lives in SQLite's own temp file rather than in this store's WAL, and
+    then copied across in one ``INSERT ... SELECT ... ORDER BY``, which writes
+    the clustered key in order. ``rowid`` breaks ties, so for a hash listed
+    twice the first one in the file is the one kept, as before.
+    """
     hs_id = _create_set(name, source, kind)
     _bulk_begin()
     batch: list = []
-    added = 0
+    staged = seen = 0
     try:
+        with _lock:
+            conn = connect()
+            conn.execute("DROP TABLE IF EXISTS temp._import_stage")
+            conn.execute("CREATE TEMP TABLE _import_stage "
+                         "(algo TEXT NOT NULL, value TEXT NOT NULL, category INTEGER)")
         for algo, value, cat in entries:
+            seen += 1
             if algo == PHASH_ALGO:
                 v = str(value).strip().lower()
             elif algo == PHOTODNA_ALGO:
@@ -397,17 +419,52 @@ def _import_entries(name: str, source: str, kind: str, entries) -> tuple[int, in
                 v = _norm(algo, value)
             if not v:
                 continue
-            batch.append((hs_id, algo, v, cat))
+            batch.append((algo, v, cat))
             if len(batch) >= _BATCH:
-                added += len(batch)
-                _flush(batch)
+                staged += len(batch)
+                _stage(batch)
+                if progress:
+                    progress(seen, staged)
         if batch:
-            added += len(batch)
-            _flush(batch)
+            staged += len(batch)
+            _stage(batch)
+        if progress:
+            progress(seen, staged)
+        with _lock:
+            conn = connect()
+            _retry(lambda: conn.execute(
+                "INSERT OR IGNORE INTO hashset_entries"
+                "(hashset_id, algo, value, category) "
+                "SELECT ?, algo, value, category FROM temp._import_stage "
+                "ORDER BY algo, value, rowid", (hs_id,)))
+            conn.commit()
+    except BaseException:
+        # A file that fails part-way (a truncated download, say) must not leave
+        # a set behind that reads as complete. Nothing of it has reached
+        # hashset_entries yet, but the set row has, so remove it; the error says
+        # why. If the removal itself fails, the original error is still raised.
+        try:
+            delete_set(hs_id)
+        except sqlite3.Error:
+            pass
+        raise
     finally:
+        with _lock:
+            try:
+                connect().execute("DROP TABLE IF EXISTS temp._import_stage")
+            except sqlite3.Error:
+                pass
         _bulk_end()
     return hs_id, _finalize(hs_id)
 
+
+def _stage(batch: list) -> None:
+    """Append a batch to the import's TEMP staging table."""
+    with _lock:
+        connect().executemany(
+            "INSERT INTO temp._import_stage(algo, value, category) VALUES(?,?,?)",
+            batch)
+    batch.clear()
 
 def _sqlite3_cli() -> str | None:
     """Path to a ``sqlite3`` command-line tool, or None.
@@ -524,9 +581,13 @@ def import_path(path: str | Path, *, name: str | None = None, kind: str = "known
         return import_sqlite(path, name=name, kind=kind, table=table,
                              algos=algos, progress=progress)
 
-    text = path.read_text(encoding="utf-8", errors="replace").lstrip()
-    if text[:1] in "[{":
-        entries = hashdb._iter_projectvic(json.loads(text))
+    # Read as it is imported, never whole: a national Project VIC set is one
+    # JSON document of several gigabytes.
+    refusal = hashdb.kind_refusal(path, kind)
+    if refusal:
+        raise ValueError(refusal)
+    if jsonstream.starts_as_json(path):
+        entries = hashdb.iter_json_entries(path)
     else:
         entries = hashdb._iter_delimited(path)
-    return _import_entries(name, str(path), kind, entries)
+    return _import_entries(name, str(path), kind, entries, progress=progress)

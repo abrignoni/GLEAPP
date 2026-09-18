@@ -577,6 +577,50 @@ an <strong>Add a set</strong> form. Accepts a SQLite <code>.db</code>, an NSRL
 command line <code>gleapp hashset --global ...</code> does the same, from a source
 install.)</p>
 
+<h3>Importing a Project VIC hash set</h3>
+<p>A Project VIC hash set, such as the one a national VICS portal distributes,
+is a single JSON file whose records carry an MD5 and may carry a SHA-1, a
+PhotoDNA value and the category Project VIC assigned. Import it into the global
+store so every case matches against it: <strong>Reference data ... &#x25b8;
+&rarr; Add a set &rarr; Choose...</strong> the <code>.json</code>. Choosing a
+<code>.json</code> switches <strong>Treat matches as</strong> to
+<em>Notable</em> and hides the release/delta choice and <strong>Store</strong>,
+which apply to the NSRL and not to this file: its MD5, SHA-1, SHA-256 and
+PhotoDNA values are all kept. From the
+command line: <code>gleapp hashset &lt;file&gt;.json --global --name
+"&lt;a name&gt;"</code>.</p>
+<ul>
+  <li><strong>Import it as notable, never as benign.</strong> Each entry carries
+  its own category, so an uncategorized file that matches takes the category
+  Project VIC gave it. As <em>known-good</em> every match would carry the benign
+  badge and an uncategorized match would be moved to Non-pertinent, so GLEAPP
+  refuses that pairing for a
+  Project VIC hash set, in the dialog and on the command line alike.</li>
+  <li><strong>The file is read as it is imported, never loaded whole.</strong>
+  The entries are staged and sorted before they are written, so the import needs
+  free disk space beyond the finished store while it runs. Progress shows under
+  <em>Hash sets</em>.</li>
+  <li><strong>A value listed more than once in a set is stored once</strong>,
+  keeping the first entry's category, so a set's PhotoDNA count can be lower
+  than the number of PhotoDNA fields in the file: a PhotoDNA value can repeat
+  across entries whose MD5s differ.</li>
+  <li><strong>A file that ends part-way, such as a truncated download, fails the
+  import</strong> and leaves no partial set behind, because a partial set would
+  read as complete. Re-importing under a name the store already holds replaces
+  that set, and its old entries are cleared when the new import starts, so if
+  the new file then fails, that name is gone until a complete file is
+  imported.</li>
+  <li><strong>PhotoDNA values are kept but never matched</strong>; see
+  <em>PhotoDNA is stored, not matched</em> above.</li>
+  <li><strong>Handing it to ingest stops with an explanation.</strong> A hash set
+  has no media files, so <em>Browse for JSON</em> on the launcher, or
+  <code>gleapp ingest</code>, says it is a hash set and points here, instead of
+  reading the file.</li>
+</ul>
+<p>It can also be imported into a single case with <strong>Import hash
+set...</strong>, which stores it inside that case's file only; the global store
+is the place for a set every case should match against.</p>
+
 <h3>Setting up the NSRL RDS</h3>
 <p>The <strong>National Software Reference Library Reference Data Set (RDS)</strong>
 is NIST's public catalogue of hashes of known software: operating systems,
