@@ -1018,6 +1018,39 @@ def _carved_name(hit) -> str:
     return f"carved/{hit.offset:016x}{hit.ext}"
 
 
+def _prime_catalog(walker) -> None:
+    """Read an APFS volume's catalog in one pass before walking it.
+
+    collect() asks the catalog one question per directory and one per file,
+    and each question parses the tree leaf it lands in, so the same leaf is
+    parsed again for every entry that happens to live in it. Reading every
+    leaf once first answers all of those from memory: on a 32 GB macOS
+    acquisition this walk of 485,816 files went from 156 s to 9.5 s. Nothing
+    else changes, and in particular not the order collect() reports files in,
+    which decides the head of every duplicate stack (the lowest files.id).
+    Walkers other than APFS offer no such pass and are walked as before.
+
+    NTFS is deliberately not given the equivalent. Its fast route builds the
+    listing from $MFT instead of from the directory indexes, and the indexes
+    are what give collect() its order; reading the records in one pass
+    without changing the order saved 15% on a 7.4 GB Windows acquisition,
+    not enough to be worth a second route.
+
+    A failure here costs time and nothing else: collect() then searches the
+    catalog one lookup at a time, as it always has, and reports the same files
+    in the same order. So it is not a volume that was not read, and it is not
+    recorded as one. The tests assert the pass is taken, so a change that
+    quietly stopped taking it would still be caught.
+    """
+    prime = getattr(walker, "prime_records", None)
+    if prime is None:
+        return
+    try:
+        prime()
+    except Exception:                                # pylint: disable=broad-except
+        pass
+
+
 def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> int:
     """Register the media in the filesystems an acquisition holds, by walking them.
 
@@ -1053,6 +1086,7 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
             vol = label or f"lba{base // qnxprobe.SECTOR}"
             try:
                 walker = qnxprobe.walker_for(fskind, img, base, size)
+                _prime_catalog(walker)
                 # FAT and exFAT keep a wall-clock reading and no zone, so their
                 # mtime comes back as zero and the readings arrive here instead,
                 # as text, keyed by the same path collect() reports.

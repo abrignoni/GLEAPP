@@ -17,6 +17,7 @@ one is quoted in the module that does it.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import json
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from ewfwriter import write_ewf                        # pylint: disable=import-error
 from fatwriter import build_fat32                      # pylint: disable=import-error
 from gleapp import archive, report
+from gleapp.vendor import qnxprobe
 from gleapp.case import open_case, parse_source_spec
 from gleapp.pipeline import ingest_sources
 
@@ -555,3 +557,72 @@ def test_a_case_written_before_the_column_existed_still_opens(tmp_path):
     assert all("recorded_times" in r for r in after)
     assert {r["orig_path"] for r in after} == {r["orig_path"] for r in before}
     reopened.close()
+
+
+def _walk_order(case):
+    """Every registered row, in the order the walk registered them."""
+    return [(r["id"], r["rel_path"], r["size"], r["member_node"])
+            for r in case.db.conn.execute("SELECT * FROM files ORDER BY id")]
+
+
+def test_an_apfs_volume_is_read_in_one_pass_and_registered_in_the_same_order(
+        monkeypatch, tmp_path):
+    """The catalog is read in one pass, and nothing about the rows changes.
+
+    A walk of an APFS volume asks the catalog one question per directory and one
+    per file, and reading every leaf of the catalog once first answers them all
+    from memory. The order the walk registers files in decides the head of every
+    duplicate stack, which is the lowest files.id, so the rows have to come out
+    in the same order and not merely as the same set. The fixture is an APFS
+    container written by macOS's own driver (qnxprobe's tests/fixtures, where
+    tools/make_apfs_fixture.sh says how), wrapped here in an E01.
+    """
+    raw = gzip.decompress(
+        (Path(__file__).parent / "fixtures" / "apfs-fixture.img.gz").read_bytes())
+    folder = tmp_path / "ev"
+    folder.mkdir()
+    image = Path(write_ewf(folder, "acq", raw)[0])
+
+    real = qnxprobe.ApfsWalker.prime_records
+    primed = []
+
+    def watched(walker, *args, **kwargs):
+        primed.append(walker)
+        return real(walker, *args, **kwargs)
+
+    monkeypatch.setattr(qnxprobe.ApfsWalker, "prime_records", watched)
+    fast, _ = _ingest(tmp_path, image, name="fast", include_other=True)
+    assert primed, "the catalog was walked one lookup at a time"
+
+    monkeypatch.setattr(qnxprobe.ApfsWalker, "prime_records", None)
+    slow, _ = _ingest(tmp_path, image, name="slow", include_other=True)
+
+    fast_rows, slow_rows = _walk_order(fast), _walk_order(slow)
+    assert len(fast_rows) > 400
+    assert fast_rows == slow_rows
+    fast.close()
+    slow.close()
+
+
+def test_a_catalog_that_cannot_be_read_in_one_pass_is_walked_as_before(
+        monkeypatch, tmp_path):
+    """A failed pass costs time and nothing else: the same rows, in the same order."""
+    raw = gzip.decompress(
+        (Path(__file__).parent / "fixtures" / "apfs-fixture.img.gz").read_bytes())
+    folder = tmp_path / "ev"
+    folder.mkdir()
+    image = Path(write_ewf(folder, "acq", raw)[0])
+    whole, _ = _ingest(tmp_path, image, name="whole", include_other=True)
+
+    def broken(walker, *args, **kwargs):
+        raise ValueError("the pass stopped part way")
+
+    monkeypatch.setattr(qnxprobe.ApfsWalker, "prime_records", broken)
+    fallen, _ = _ingest(tmp_path, image, name="fallen", include_other=True)
+    assert _walk_order(fallen) == _walk_order(whole)
+    refused = fallen.db.conn.execute(
+        "SELECT key FROM meta WHERE key LIKE '%:volumes_not_read'").fetchall()
+    assert refused == [], "a slow walk is not a volume that was not read"
+    whole.close()
+    fallen.close()
+
