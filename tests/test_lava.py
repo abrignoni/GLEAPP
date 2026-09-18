@@ -1094,7 +1094,8 @@ def test_the_hits_notes_do_not_promise_an_equal_hash(rich_case, tmp_path):
                     if a["tablename"] == "known_hash_set_hits")
     assert "perceptual" in artifact["description"].lower()
     assert "A match is not always an equal hash" in artifact["notes"]
-    assert "cannot say whether a row matched byte-for-byte" in artifact["notes"]
+    assert "only looked alike and is not byte-identical" in artifact["notes"]
+    assert "cannot say whether it matched byte-for-byte" in artifact["notes"]
     assert "the examiner's local stash" in artifact["notes"]
     assert "'other' neither" in artifact["notes"]
     assert "no imported list held its hash" not in artifact["notes"]
