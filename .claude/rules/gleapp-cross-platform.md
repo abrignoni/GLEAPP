@@ -144,7 +144,7 @@ handling and members nest 20 levels deep; case-variant names cannot collide on a
 case-insensitive volume; and a member name carrying control characters, which real iOS
 zips have, never reaches the filesystem. On-demand copies land through a private temp
 name and `os.replace`, so a partial copy never sits at a final path. One `ZipFile` handle
-per archive per process is shared across threads (zipfile serialises reads on its own
+per archive per process is shared across threads (zipfile serializes reads on its own
 lock), since opening a 14 GiB zip re-reads its central directory. Timestamps come from
 the zip's extended field when present (every member on one Android image, none of the
 media on one iOS image) and the DOS date otherwise; the case's `meta` table records
@@ -159,7 +159,7 @@ messages rather than silently dropping them.
 ## An E01 acquisition is a fourth source, and it is WALKED, not carved
 
 A computer acquisition arrives as an EnCase/EWF set: `image.E01` plus numbered segments
-beside it. `archive_format` recognises it by the `EVF\x09\x0d\x0a\xff\x00` signature
+beside it. `archive_format` recognizes it by the `EVF\x09\x0d\x0a\xff\x00` signature
 before the zip and tar checks, so the extension is never consulted and the first segment of
 a set is enough to open the whole thing.
 
@@ -198,7 +198,7 @@ space manager, and F2FS through the per-block valid map in its segment informati
 
 **One quiet volume is enough, and it is usually the small one.** Every Windows disk carries a
 FAT32 EFI system partition of a fifth of a gigabyte beside its NTFS volumes, so until FAT
-could answer, a tenth of one percent of the disk decided the behaviour of the rest and every
+could answer, a tenth of one percent of the disk decided the behavior of the rest and every
 Windows image fell back to a whole-image carve. A Mac image did the same until APFS could
 answer.
 
@@ -307,10 +307,10 @@ build with `pmtiles extract <build url> out.pmtiles --bbox=W,S,E,N`; measured
 28 MB in 8 s and Puerto Rico 70 MB in 11 s, zoom 0 to 15. A raster `.mbtiles` is the
 fallback for a map an examiner already has: one query per tile, with the row flipped
 because MBTiles count from the bottom (TMS) and the web from the top (XYZ), which the
-fixture test pins by pixel colour. Vector MBTiles are refused: a second schema means a
+fixture test pins by pixel color. Vector MBTiles are refused: a second schema means a
 second style, fonts and sprites.
 
-Vendored under `gleapp/web/static/maps/` (its README lists versions and licences):
+Vendored under `gleapp/web/static/maps/` (its README lists versions and licenses):
 MapLibre GL JS 5.x, because 6.x ships only ES modules plus a module worker and the
 gallery is a classic-script page; pmtiles.js; the Protomaps basemap style layers,
 generated once with `@protomaps/basemaps` into `layers-dark.json` and `layers-light.json`;
@@ -318,12 +318,12 @@ Noto Sans glyphs (768 PBF files, 14 MB, SIL OFL) and the v4 sprites. The style's
 glyph, sprite and source URLs are all local paths, and a test asserts no `http` appears
 in a generated style. Attribution is shown as plain text, "© OpenStreetMap contributors",
 never as a link. `.gitattributes` marks `.pbf`, `.pmtiles` and `.mbtiles` binary so
-line-ending normalisation cannot touch them. The PyInstaller spec bundles all of
+line-ending normalization cannot touch them. The PyInstaller spec bundles all of
 `gleapp/web/static`, so the assets ship with the frozen build unchanged.
 
 The HTML report renders its own location maps from the active basemap and embeds them,
 so a saved report is offline and self-contained. `gleapp/staticmap.py` composites raster
-tiles or rasterises vector tiles (decoded by `gleapp/mvt.py`, a small dependency-free MVT
+tiles or rasterizes vector tiles (decoded by `gleapp/mvt.py`, a small dependency-free MVT
 reader) with Pillow, the only dependency, and `gleapp/basemaps.py` reads a PMTiles tile by
 walking the archive's own root and leaf directories (Hilbert tile id, gzip-decompressed),
 never fetching anything. An overview map of all geolocated files goes near the top and a
@@ -383,7 +383,7 @@ Python 3.12.1 on macOS arm64: Pillow 10.0.1 and 10.1.0 encode a flat white 4x4, 
 and in L mode and with 4:4:4 as well as 4:2:0 subsampling. The headers are identical and
 only the entropy-coded scan differs: one stream is correct, the other has the wrong
 number of bits at the front (28 zero bits prepended on the 4x4 tile, the first 24 bits
-dropped on the 16x16 one), so the tile decodes to grey and noise. Pillow 10.2.0, 10.3.0,
+dropped on the 16x16 one), so the tile decodes to gray and noise. Pillow 10.2.0, 10.3.0,
 10.4.0, 11.0.0 and 12.3.0 give the correct stream 20 of 20 times each.
 
 The cause is in the libjpeg-turbo the wheel bundles, and it is fixed upstream. The
