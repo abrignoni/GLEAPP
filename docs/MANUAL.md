@@ -99,8 +99,8 @@ only inside the case folder.
 
 ## 3. The review gallery
 
-Left: the **filter sidebar**. Center: the **grid** or **details list** (switch
-with the **▦ Grid / ☰ List** toggle in the control bar), with a control bar
+Left: the **filter sidebar**. Center: the **gallery** or **details list** (switch
+with the **▦ Gallery / ☰ List** toggle in the control bar), with a control bar
 across the top (view toggle, Columns, Sort, thumbnails per page, Tile size,
 **Times** timezone, and the shortcut legend) and pagination above and below.
 Right: the **details pane** (toggle with `I` or the button; state is
