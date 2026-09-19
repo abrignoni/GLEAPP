@@ -12,7 +12,8 @@ const state = {
   files: [], total: 0, page: 1, pageSize: 200,
   sel: new Set(), lastClick: null, focus: null,
   similarOf: null, vstack: null, stack: null, ctxIds: [],
-  cats: [],                       // [{code,name,color,notable,position,active}]
+  back: null,                     // where "Back to all" returns: {page, focus, top, left}
+  cats: [],                     // [{code,name,color,notable,position,active}]
   keyframeCache: new Map(),
   metaOpen: false,
   sources: [],
@@ -263,13 +264,41 @@ async function load(opts = {}) {
   if (opts.keepScroll) {
     $("#main").scrollTop = scroll.mainT; $("#main").scrollLeft = scroll.mainL;
     $("#grid").scrollTop = scroll.gridT; $("#grid").scrollLeft = scroll.gridL;
+  } else if (opts.place) {
+    // returning from a search / group view: land where the examiner was
+    $("#main").scrollTop = opts.place.top; $("#main").scrollLeft = opts.place.left;
+    if (opts.place.focus != null && state.files.some(f => f.id === opts.place.focus)) {
+      setFocus(opts.place.focus);
+      const t = document.querySelector(
+        `.tile[data-id="${opts.place.focus}"], .lvrow[data-id="${opts.place.focus}"]`);
+      if (t) t.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
   } else {
     $("#main").scrollTop = 0;
     // list view scrolls horizontally - a new sort/filter shouldn't fling it sideways
     if (state.view === "list") $("#main").scrollLeft = scroll.mainL;
   }
 }
-function reload() { state.page = 1; state.vstack = null; state.stack = null; state.sel.clear(); load(); }
+function reload() {
+  state.page = 1; state.vstack = null; state.stack = null; state.back = null;
+  state.sel.clear(); load();
+}
+
+/* A search (find similar, find matching faces) or a group view replaces the
+   gallery; remember where the examiner was so "Back to all" returns there rather
+   than to the top of page 1. Only the first hop is kept: a search launched from
+   inside another one still returns to the original spot. */
+function rememberPlace(fileId) {
+  if (state.similarOf || state.vstack || state.stack) return;
+  state.back = { page: state.page, focus: fileId != null ? fileId : state.focus,
+                 top: $("#main").scrollTop, left: $("#main").scrollLeft };
+}
+function backToPlace() {
+  const b = state.back;
+  state.back = null; state.vstack = null; state.stack = null;
+  if (b) state.page = b.page;
+  return load(b ? { place: b } : {});
+}
 
 function renderPager() {
   const pages = Math.max(1, Math.ceil(state.total / state.pageSize));
@@ -309,6 +338,7 @@ function gotoPage(n) {
 
 async function showSimilar(id) {
   const d = await api(`/api/similar/${id}?threshold=14`);
+  rememberPlace(id);
   state.similarOf = id;
   state.files = d.files;
   renderFiles(d.files);
@@ -1408,11 +1438,13 @@ async function showMeta(id) {
   if ($("#mFull")) $("#mFull").onclick = () => openViewer(id);
   if ($("#mMapFull")) $("#mMapFull").onclick = () => openSingleMapView(f);
   if ($("#mVstack")) $("#mVstack").onclick = () => {
+    rememberPlace(f.id);
     state.vstack = f.vstack_id; state.page = 1; load();
     $("#simBanner").style.display = "flex";
     $("#simId").textContent = `visual-match group (${f.vstack.length})`;
   };
   if ($("#mStack")) $("#mStack").onclick = () => {
+    rememberPlace(f.id);
     state.stack = f.stack_id; state.page = 1; load();
     $("#simBanner").style.display = "flex";
     $("#simId").textContent = `exact-duplicate group (${f.stack.length})`;
@@ -1604,6 +1636,7 @@ function loadKeyframeFaceBoxes(fileId, film) {
 }
 async function showFaceMatches(faceId) {
   const d = await api(`/api/face-match/${faceId}`);
+  rememberPlace();
   state.similarOf = faceId;   // reuses the same "special result set" plumbing as find-similar
   state.files = d.files;
   renderFiles(d.files);
@@ -1713,9 +1746,11 @@ $("#ctx").addEventListener("click", e => {
     const f0 = state.files.find(x => x.id === ids[0]);
     if (!f0) return;
     if (f0.vstack_id) {
+      rememberPlace(f0.id);
       state.vstack = f0.vstack_id; state.stack = null; state.page = 1; load();
       $("#simId").textContent = `visual-match group (${f0.vstack_count})`;
     } else if (f0.stack_id) {
+      rememberPlace(f0.id);
       state.stack = f0.stack_id; state.vstack = null; state.page = 1; load();
       $("#simId").textContent = `exact-duplicate group (${f0.stack_count})`;
     } else {
@@ -2059,8 +2094,11 @@ function renderFilterChips() {
 $("#fchips").addEventListener("click", e => {
   const btn = e.target.closest("button[data-i]");
   if (!btn) return;
+  const inGroup = !!(state.vstack || state.stack);
   FILTER_DEFS[+btn.dataset.i].clear();
   refreshSections();
+  // dropping a group view returns to where the group was opened from
+  if (inGroup && !state.vstack && !state.stack && state.back) return backToPlace();
   reload();
 });
 function refreshSections() {
@@ -2097,7 +2135,7 @@ $("#fpagesize").addEventListener("change", () => {
   try { localStorage.setItem("gleapp.pagesize", state.pageSize); } catch (e) {}
   state.page = 1; load();
 });
-$("#simBack").onclick = () => { state.vstack = null; state.stack = null; load(); };
+$("#simBack").onclick = backToPlace;
 $("#btnMeta").onclick = () => toggleMeta();
 /* ---------- help / manual ---------- */
 let helpLoaded = false;
