@@ -25,17 +25,17 @@ signals only. Every category decision is the examiner's.</p>
   <a href="#formats">13. Format handling</a><br>
   <a href="#reports">14. Reports &amp; exports</a><br>
   <a href="#save">15. Autosave &amp; snapshots</a><br>
-  <a href="#reprocess">16. Reprocessing</a><br>
+  <a href="#reprocess">16. Reprocessing and recovering deleted media</a><br>
   <a href="#keys">17. Keyboard shortcuts</a><br>
   <a href="#privacy">18. Data &amp; privacy</a><br>
   <a href="#maps">19. Maps (offline basemaps)</a><br>
-  <a href="#credits">20. Credits &amp; acknowledgements</a>
+  <a href="#credits">20. Credits &amp; acknowledgments</a>
 </div>
 
 <h2 id="start">1. Getting started</h2>
 <p>On launch with no case open, GLEAPP shows the <strong>launcher</strong>. The
-<strong>? Help / Manual</strong> button (top-right of the launcher, and in every
-case's header) opens this manual. Its <strong>Download as PDF</strong> button
+<strong>Help / Manual</strong> button (top-right of the launcher; <strong>&#9776; Menu
+&rarr; Help</strong> inside a case) opens this manual. Its <strong>Download as PDF</strong> button
 hands off to your browser/OS print dialog, scoped to just the manual &mdash;
 choose <strong>Save as PDF</strong> as the destination for an offline copy. No
 PDF is generated or stored by GLEAPP itself.</p>
@@ -81,13 +81,13 @@ PDF is generated or stored by GLEAPP itself.</p>
             in entries, so it can exceed the number of rows, and the Source
             panel's import line says both when they differ.</p>
             <p style="margin:8px 0 0">Two case-header fields are deliberately
-            ignored, because exporters do not agree with them.
-            <code>TotalMediaFiles</code> counts Media entries in one export and
-            distinct MD5 values in another, so GLEAPP counts the array instead.
-            <code>IsPrecategorized</code> and <code>TotalPrecategorized</code> are
-            not read at all: one export set <code>IsPrecategorized</code> true on
-            every one of its 19,209 entries while every <code>Category</code> was
-            null. The category you see always comes from <code>Category</code>.</p>
+            ignored, because exporters do not agree with them:
+            <code>TotalMediaFiles</code> (one export counts Media entries, another
+            counts distinct MD5 values, so GLEAPP counts the array itself) and
+            <code>IsPrecategorized</code> / <code>TotalPrecategorized</code> (one
+            export set the former true on every entry while every
+            <code>Category</code> was null). The category you see always comes from
+            <code>Category</code>.</p>
           </li>
         </ul>
       </li>
@@ -113,7 +113,7 @@ finishes; closing the case is blocked until then.</p>
 <p>One case is one folder. Inside it:</p>
 <table>
   <tr><td><code>case.gleapp</code></td><td>the SQLite database: everything GLEAPP learns about a file lives here, so runs are resumable</td></tr>
-  <tr><td><code>thumbs/</code></td><td>generated grid thumbnails and video key frames</td></tr>
+  <tr><td><code>thumbs/</code></td><td>generated gallery thumbnails and video key frames</td></tr>
   <tr><td><code>views/</code></td><td>full-size JPEGs transcoded from formats the browser can't show (HEIC, TIFF, KTX, ...)</td></tr>
   <tr><td><code>extracted/</code></td><td>media unpacked from container files: archives (<code>.zip</code> / <code>.tar</code> / <code>.gz</code>) found in a source, and Snapchat <code>LZC</code> bundles</td></tr>
   <tr><td><code>reports/</code></td><td>exported reports: CSV/JSON, MD5 lists, KMZ, Project VIC exports, LAVA projects</td></tr>
@@ -137,7 +137,7 @@ pane and pagination all work the same in either view.</p>
 <h3>Details list view</h3>
 <p><strong>☰&nbsp;List</strong> shows one row per file with a column for every
 stored detail: built for triage by metadata rather than by eye. Unlike the
-grid, the list <strong>always shows every row</strong>. Exact and visual
+gallery, the list <strong>always shows every row</strong>. Exact and visual
 duplicates are never collapsed, so a photo that is both a loose file and a member
 of a nested archive appears as both rows. The <em>Collapse duplicates</em>
 checkbox is disabled while the list is open.</p>
@@ -180,7 +180,7 @@ checkbox is disabled while the list is open.</p>
     full value). Double-click the border to reset that column.</li>
   <li><strong>Clear column filters</strong>: toolbar button (with the active
     filter count) that drops every column filter at once; sort and column choices
-    stay. The sidebar <strong>Clear filters</strong> clears these as well.</li>
+    stay. The sidebar <strong>Clear</strong> (next to the filter count) clears these as well.</li>
   <li><strong>Columns&nbsp;▾</strong>: choose visible columns; <strong>All</strong>
     / <strong>Defaults</strong> presets, plus <strong>Reset widths</strong>.</li>
   <li>View, visible columns, column widths, sort and column filters are remembered
@@ -204,11 +204,11 @@ always shows where GLEAPP resolved the file on your machine; add it from
     stat atime, or VIC <code>MediaFiles.Accessed</code>.</td></tr>
 </table>
 <p><strong>A Project VIC export decides which of these it carries.</strong>
-Measured on two exports: one wrote created, written and accessed on about
-25,500 of its 34,731 entries; the other wrote written on 6,901, created on 17
-and accessed on none at all. GLEAPP reads every timestamp either one wrote, in
-both the <code>...Z</code> and the <code>...-05:00</code> forms. A sparse
-timestamp column on a VIC case is the export, not a failed parse.</p>
+One export wrote created, written and accessed on most of its entries; another
+wrote written on some, created on almost none and accessed on none. GLEAPP reads
+every timestamp an export wrote, in both the <code>...Z</code> and the
+<code>...-05:00</code> forms, so a sparse timestamp column on a VIC case is the
+export, not a failed parse.</p>
 <p>A filesystem timestamp is not a capture time; GLEAPP never fills
 "Captured" from one. All four show in the details pane, the list view and as
 report fields.</p>
@@ -220,27 +220,33 @@ The choice is saved per case and as your default for new cases, and is stamped
 into the report header. It <strong>never</strong> changes
 <strong>Captured&nbsp;(EXIF)</strong>: that is the camera's own local wall-clock
 time, always shown exactly as recorded.</p>
-<p>Header buttons: Close case, ⚙&nbsp;Categories, Details pane, Snapshots, Maps,
-Hash&nbsp;stash, Export Project&nbsp;VIC (shown for VIC cases), Export report, and
-↻&nbsp;Refresh, which
-re-runs the current filter so files that no longer match it (e.g. ones you just
-categorized) drop out of view.</p>
-<p><strong>?&nbsp;Help&nbsp;▾</strong> opens a small menu with two entries:</p>
+<p><strong>Header.</strong> <strong>&#9776;&nbsp;Menu</strong> groups the case
+tools: under <em>Case</em>, &#9881;&nbsp;Categories, &#9881;&nbsp;Flags, Snapshots and
+Export Project&nbsp;VIC (Project&nbsp;VIC cases only); under <em>Reference</em>,
+Maps, Hash&nbsp;stash, Reference data (NSRL) and Project&nbsp;VIC hash sets; under
+<em>Help</em>, Manual and Processing history. Beside it:</p>
 <ul>
-  <li><strong>Manual</strong>: this document.</li>
-  <li><strong>Processing history</strong>: the case processing log, every
-    ingest, process, screening, hash-set match, carve and examiner edit run
-    against this case, newest first. A <strong>process</strong> run lists each
-    stage (media processing, known-hash match, exact stacking, visual stacking,
-    near-duplicate clustering) with a&nbsp;✓ or&nbsp;✗ for whether it succeeded,
-    so a stage that failed does not hide the ones that worked. The "Show" menu
-    narrows the list to runs, examiner edits, or only runs with a failed stage.
-    This is the same audit log written into the LAVA export.</li>
+  <li><strong>+&nbsp;Add evidence&hellip;</strong> ingests another folder,
+    extraction archive, E01 acquisition or Project&nbsp;VIC / job JSON into this
+    case.</li>
+  <li><strong>&#8676;&nbsp;Close case</strong> (snapshots first),
+    <strong>Details pane</strong>, <strong>Export report</strong>.</li>
+  <li><strong>&#8635;&nbsp;Refresh</strong> re-runs the current filter, so files
+    that no longer match it (e.g. ones you just categorized) drop out of view.</li>
+  <li><strong>&#128276;</strong> lists recent report exports.</li>
 </ul>
+<p><strong>Processing history</strong> (&#9776;&nbsp;Menu &rarr; Help) is the case
+processing log: every ingest, process, screening, hash-set match, carve and examiner
+edit run against this case, newest first. A <strong>process</strong> run lists each
+stage (media processing, known-hash match, exact stacking, visual stacking,
+near-duplicate clustering) with a&nbsp;&#10003; or&nbsp;&#10007; for whether it
+succeeded, so a stage that failed does not hide the ones that worked. The "Show" menu
+narrows the list to runs, examiner edits, or only runs with a failed stage. This is
+the same audit log written into the LAVA export.</p>
 
 <h2 id="tiles">4. Tiles &amp; badges</h2>
-<p>Each tile shows the thumbnail, the file <strong>name</strong>, a coloured bar
-along the bottom with its category name (grey "Uncategorized" if none), and small
+<p>Each tile shows the thumbnail, the file <strong>name</strong>, a colored bar
+along the bottom with its category name (gray "Uncategorized" if none), and small
 badges. The name shown is the <strong>original file name</strong> where it is
 known (e.g. from a Project&nbsp;VIC import, where files are stored on disk under
 their MD5); hover for the full name. The same rule applies to the list view's
@@ -259,7 +265,7 @@ viewer shows the complete image with nothing over it.</p>
   <tr><td>3&#128100;</td><td>face count from screening</td></tr>
   <tr><td>&#128205;</td><td>has GPS coordinates in its metadata</td></tr>
   <tr><td>&#8776;&nbsp;N</td><td>part of a <strong>visual stack</strong> of N: the same picture, re-encoded/resized (blue offset shadow)</td></tr>
-  <tr><td>&#11034;&nbsp;N</td><td>part of an <strong>exact stack</strong> of N: byte-identical copies (grey offset shadow)</td></tr>
+  <tr><td>&#11034;&nbsp;N</td><td>part of an <strong>exact stack</strong> of N: byte-identical copies (gray offset shadow)</td></tr>
   <tr><td>&#10003;</td><td>selected (also a blue outline and slight brightening)</td></tr>
 </table>
 <p>Video tiles show a duration label and a play glyph; hover and move the cursor
@@ -289,10 +295,10 @@ number key, context menu, details pane) applies to the whole selection.</p>
 <h2 id="details">6. The details pane</h2>
 <p>Click a tile with the pane open (<kbd>I</kbd>) and it fills with: a preview and
 "View full size" button; the current category and the category buttons; Find
-similar; Flags; <strong>Hex view</strong> (<kbd>H</kbd>, or right-click &rarr;
-Hex view): a scrolling offset / hex / ASCII dump of the raw file, page through
-it or type an offset (decimal, or <code>0x</code>-prefixed); its flags (click
-&times; on one to remove it); a video key-frame filmstrip; a metadata table (source, type, original name/path, MIME, VIC MediaID and flags, size,
+similar; the file's flags (<strong>+ flag</strong> to add, &times; to remove
+one); <strong>Hex view</strong> (<kbd>H</kbd>, or right-click &rarr; Hex view):
+a scrolling offset / hex / ASCII dump of the raw file, page through it or type
+an offset (decimal, or <code>0x</code>-prefixed); a video key-frame filmstrip; a metadata table (source, type, original name/path, MIME, VIC MediaID and flags, size,
 dimensions, duration, captured date, camera, faces, skin ratio, known-hash,
 exact/visual/near-dup group sizes, error); GPS with a Copy button and, once a basemap
 is imported (section&nbsp;19), an offline map of the spot; MD5 / SHA-1 /
@@ -303,7 +309,7 @@ jump to it; "Show only this group" filters to the visual-match set).</p>
 <h2 id="categories">7. Categories: the mandatory Project&nbsp;VIC scheme</h2>
 <p>Every case is seeded with <strong>codes 0–5</strong>, the Project&nbsp;VIC 2.0 (US)
 category scheme. They are <strong>locked</strong>: they cannot be renamed,
-recoloured, reordered, hidden or deleted (in the ⚙&nbsp;Categories editor they show
+recolored, reordered, hidden or deleted (in the ⚙&nbsp;Categories editor they show
 read-only with a 🔒). Number keys map to them: <kbd>1</kbd>–<kbd>5</kbd>, and
 <kbd>0</kbd> clears a category.</p>
 <table>
@@ -445,6 +451,12 @@ whose date is in July 2024.</p>
   <li><strong>Hide known-NSRL</strong>: hides every file that matched a
   <em>known-good</em> set (NSRL etc.), so OS and app files stop cluttering the
   review. The count beside it is how many are hidden.</li>
+  <li><strong>Match against my hash stash</strong> / <strong>Match against
+  Project&nbsp;VIC sets</strong> (both on by default): untick one for a case that
+  has nothing to do with it. Its existing flags clear at once (a flag from another
+  source stays), and <em>Re-check</em> brings them back after you tick it again. A
+  Project&nbsp;VIC set imported before this option existed is not labeled VIC
+  until it is imported again.</li>
   <li><strong>Import hash set... / Re-check</strong>, the imported-set list, and the
   <strong>Reference data</strong> and <strong>hash stash</strong> lines:
   see section&nbsp;11.</li>
@@ -469,7 +481,7 @@ whose date is in July 2024.</p>
     </table>
   </li>
   <li><strong>Collapse duplicates &amp; visual matches</strong> (on by default):
-  one tile per visual group <strong>in the grid</strong>. The representative is
+  one tile per visual group <strong>in the gallery</strong>. The representative is
   chosen from files that <em>match your other filters</em>, so a group still
   appears when only a non-head member carries the attribute you filtered on.
   Counts reflect groups, not individual files. The <strong>☰&nbsp;List</strong>
@@ -492,7 +504,7 @@ whose date is in July 2024.</p>
 </ul>
 
 <h3>Sort</h3>
-<p>Path, capture date, size, skin ratio (desc), faces (desc), or cluster.
+<p>Path, capture date, size, skin ratio (desc) or faces (desc).
 "Thumbnails per page" (50–1500) and "Tile size" are remembered between sessions.</p>
 
 <h2 id="dupes">9. Duplicates &amp; similarity</h2>
@@ -510,10 +522,17 @@ menu or <kbd>F</kbd>) does an ad-hoc perceptual search around one file.</p>
 <h2 id="screening">10. Face / skin screening</h2>
 <p>Screening runs the <strong>YuNet</strong> face-detection neural network (a small
 bundled ONNX model, via OpenCV) over every thumbnail and records a face count,
-plus a <strong>skin-tone ratio</strong> (the fraction of pixels in a skin-colour
-range). Run it at ingest, or later with <strong>Run screening</strong> in the
-Screening section. These are triage signals to help you prioritise: they are not
-a classifier and make no judgement about content.</p>
+plus a <strong>skin-tone ratio</strong> (the fraction of pixels in a skin-color
+range). Run it at ingest, or later with <strong>Run face / skin screening</strong>
+in the <em>Faces &amp; skin</em> section. These are triage signals to help you
+prioritize: they are not a classifier and make no judgment about content.</p>
+<p><strong>Find matching faces.</strong> When screening also embedded a face with
+the bundled <strong>SFace</strong> model, that face's box in the full-size viewer
+(or in a video's key-frame filmstrip in the details pane) is clickable: click it to
+list every file with a matching face. The results replace the gallery the way
+<em>Find similar</em> does, with a banner and <strong>Back to all</strong>. A face
+drawn without an embedding is not clickable. Matching runs entirely inside the
+case.</p>
 
 <h2 id="knownhash">11. Known-hash matching &amp; NSRL</h2>
 <p>A known-hash list is a set of hashes someone has already identified. GLEAPP
@@ -527,7 +546,7 @@ checks each file's SHA-256, then SHA-1, then MD5 (exact) and then its pHash
 <p>Set <strong>kinds</strong>:</p>
 <table>
   <tr><td><strong>known</strong></td><td>notable / bad. A hit shows the red HASH badge (purple STASH for your <a href="#stash">local hash stash</a>) and, if the file is uncategorized and the set asserts a category, adopts it.</td></tr>
-  <tr><td><strong>known-good</strong></td><td>benign (NSRL, OS/app files). A hit shows the grey NSRL badge, is <strong>auto-categorized Non-pertinent</strong> if uncategorized, and can be hidden with "Hide known-NSRL". Never overrides a category you set.</td></tr>
+  <tr><td><strong>known-good</strong></td><td>benign (NSRL, OS/app files). A hit shows the gray NSRL badge, is <strong>auto-categorized Non-pertinent</strong> if uncategorized, and can be hidden with "Hide known-NSRL". Never overrides a category you set.</td></tr>
   <tr><td><strong>other</strong></td><td>informational only.</td></tr>
 </table>
 
@@ -549,12 +568,12 @@ a set's entry count against that column: the hashes a list can actually match
 against is its entry count minus its PhotoDNA count.</p>
 
 <h3>Importing a hash set into a case (e.g. a CyberTip)</h3>
-<p>Sidebar &rarr; <strong>Hash sets</strong> &rarr; <strong>Import hash set...</strong>.
+<p>Sidebar &rarr; <strong>Known hashes</strong> &rarr; <strong>Import hash set...</strong>.
 A file browser opens; pick the CyberTip file. GLEAPP fills a name in from the
 filename (edit it, e.g. <code>CyberTip 12345678</code>); pick <strong>Flag as
 notable</strong> (default, red HASH badge) or <em>Mark as benign</em>; click
 <strong>Import &amp; flag</strong>. GLEAPP loads the hashes, re-checks every file,
-and jumps the grid to the matches. Each imported set is listed under the button
+and jumps the gallery to the matches. Each imported set is listed under the button
 with its entry / hit counts and an <strong>&times;</strong> to remove it (removing
 clears its flags). Use <strong>Show &rarr; Only: &lt;name&gt;</strong> to view one
 set's hits, or <strong>Any imported hash set</strong> for all of them; matches
@@ -569,8 +588,9 @@ without a full reprocess.</p>
 <p>The <strong>global store</strong> holds large reference sets like the NSRL RDS
 once, shared by every case, at <code>%LOCALAPPDATA%\GLEAPP\hashsets\</code>
 (macOS <code>~/Library/Application&nbsp;Support/GLEAPP/hashsets/</code>, Linux
-<code>~/.config/GLEAPP/hashsets/</code>). Manage it from the sidebar: <strong>Hash
-sets &rarr; the "Reference data: ... &#x25b8;" line</strong> opens a dialog that
+<code>~/.config/GLEAPP/hashsets/</code>). Manage it from <strong>&#9776; Menu &rarr; Reference &rarr; Reference data
+(NSRL)</strong>, or the sidebar's <strong>Known hashes &rarr; "Reference data: ...
+&#x25b8;" line</strong>, which opens a dialog that
 lists the imported sets (each with an <strong>&#x2715;</strong> to remove it) and
 an <strong>Add a set</strong> form. Accepts a SQLite <code>.db</code>, an NSRL
 <code>.sql</code> / delta, Project&nbsp;VIC JSON, CAID JSON, or a hash list. (The
@@ -599,11 +619,6 @@ set is not copied into any case, and every case matches against it.</p>
   <em>Project VIC hits</em>, <em>Hash stash hits</em> and <em>hit in both</em>. HTML,
   CSV and JSON reports carry a <em>Hash matches</em> field that says where each file
   matched.</li>
-  <li><strong>Turn it off for a case:</strong> untick <em>Match against Project VIC
-  sets</em> under <em>Known hashes</em>. Existing VIC flags on the case clear at once
-  (another source that flagged the file stays), and <em>Re-check</em> brings them
-  back after you tick it again. A set imported before this feature is not labeled
-  VIC until it is imported again.</li>
 </ul>
 
 <h3>Importing a Project VIC hash set</h3>
@@ -629,7 +644,7 @@ command line: <code>gleapp hashset &lt;file&gt;.json --global --name
   <li><strong>The file is read as it is imported, never loaded whole.</strong>
   The entries are staged and sorted before they are written, so the import needs
   free disk space beyond the finished store while it runs. Progress shows under
-  <em>Hash sets</em>.</li>
+  <em>Known hashes</em>.</li>
   <li><strong>A value listed more than once in a set is stored once</strong>,
   keeping the first entry's category, so a set's PhotoDNA count can be lower
   than the number of PhotoDNA fields in the file: a PhotoDNA value can repeat
@@ -650,7 +665,7 @@ command line: <code>gleapp hashset &lt;file&gt;.json --global --name
   files that match it:</strong> the MediaID, the Series, the five flags (Victim
   identified, Offender identified, Distributed, Suspected, Self-generated), the
   Tags and the Exif reading the record holds. They are the distributing
-  organisation's record, not findings GLEAPP made. The flags field lists the
+  organization's record, not findings GLEAPP made. The flags field lists the
   flags the record sets true and reads <em>none set</em> when every flag it
   carries is false; the LAVA artifact shows each flag as yes or no, and blank
   when the record does not carry it. The details come only with a match
@@ -688,7 +703,7 @@ is the place for a set every case should match against.</p>
 
 <h3>Setting up the NSRL RDS</h3>
 <p>The <strong>National Software Reference Library Reference Data Set (RDS)</strong>
-is NIST's public catalogue of hashes of known software: operating systems,
+is NIST's public catalog of hashes of known software: operating systems,
 applications, their bundled files. Matching your evidence against it lets you
 <em>eliminate</em> the OS/app noise and concentrate on user content. GLEAPP does
 not ship it; you download it from NIST and import it once.</p>
@@ -708,15 +723,15 @@ software; skip unless you work vintage systems). Each set publishes a
 (distinct SHA-256 only); for that, set <strong>Store</strong> to
 <em>SHA-256 only</em> in step&nbsp;2.</p>
 
-<p><strong>2. First import (a full release).</strong> <strong>Hash sets &rarr;
-Reference data: ... &#x25b8; &rarr; Add a set</strong>: leave
+<p><strong>2. First import (a full release).</strong> <strong>&#9776; Menu &rarr;
+Reference &rarr; Reference data (NSRL)</strong>, then <strong>Add a set</strong>: leave
 <strong>Full release</strong> selected, <strong>Choose...</strong> the unzipped
 <code>.db</code>, edit the <strong>Name</strong> if you like (e.g.
 <code>NSRL Modern 2026.03.1</code>), leave <strong>Treat matches as</strong> on
 <em>Benign: NSRL / known-good</em> and <strong>Store</strong> on
 <em>MD5 only</em>, click <strong>Import</strong>. It runs in the background
 (a full set is tens of millions of hashes): progress shows under
-<em>Hash sets</em>, and you can keep working. Repeat for Android / iOS. The
+<em>Known hashes</em>, and you can keep working. Repeat for Android / iOS. The
 source <code>.db</code> can then be moved or deleted; GLEAPP never reads it
 again, <em>except</em> keep it as the base for the next delta.</p>
 
@@ -730,7 +745,7 @@ quarter's set with its <strong>&#x2715;</strong>; keep the merged <code>.db</cod
 as the base for the next delta. Each year, start over from the new March full.</p>
 
 <p><strong>4. Use it.</strong> Open a case and click <strong>Re-check</strong>
-under <em>Hash sets</em> (or re-run Process). NSRL matches get the grey
+under <em>Known hashes</em> (or re-run Process). NSRL matches get the gray
 <span class="tag" style="background:#2f6e4f">NSRL</span> badge, are auto-categorized
 <strong>Non-pertinent</strong> if still uncategorized, and drop out of view when
 you tick <strong>Hide known-NSRL</strong>.</p>
@@ -775,7 +790,7 @@ holds only hashes of files <em>you</em> categorized.</p>
   <li>Checked automatically during the known-hash matching stage of
     <strong>every case you process</strong>; nothing to import.</li>
   <li>For a case processed <em>before</em> you stashed those hashes: open it and
-    click <strong>Re-check known hashes</strong> (sidebar → <em>Other</em>).</li>
+    click <strong>Re-check</strong> (sidebar → <em>Known hashes</em>).</li>
   <li>A match shows the purple <span class="tag" style="background:#7c4dff">STASH</span>
     badge. An uncategorized file adopts the stashed code; a category you already
     set is never overridden. Stash hits are checked <strong>before</strong> NSRL,
@@ -840,7 +855,7 @@ gleapp stash --clear</code></pre>
       list them. It is still in the case (its own name, path, dates and
       hashes), so a report of that scope can account for every archive in
       evidence.</li>
-      <li><strong>RAR</strong> is recognised but not opened: GLEAPP has no RAR
+      <li><strong>RAR</strong> is recognized but not opened: GLEAPP has no RAR
       reader (they need an external <code>unrar</code> binary a self-contained
       build can't carry), so the container row is flagged so you know to
       extract it separately.</li>
@@ -954,7 +969,7 @@ maps</strong> in the Export dialog, or pass <code>--no-maps</code> to
 <p>The report stays a single self-contained file either way.</p>
 <p>A <strong>Report contents</strong> breakdown near the top gives the file count
 for the report's scope, split by type and by category (with a percentage and a
-colour key matching your categories), a thin composition bar, known-hash matches,
+color key matching your categories), a thin composition bar, known-hash matches,
 and the case total. Outputs land in the case's <code>reports/</code> folder;
 scoped exports get a filename suffix.</p>
 
@@ -976,13 +991,13 @@ text) and size:</p>
     job is running.</li>
 </ul>
 
-<h2 id="reprocess">16. Reprocessing</h2>
+<h2 id="reprocess">16. Reprocessing and recovering deleted media</h2>
 <ul>
   <li><strong>Retry failed files</strong>: re-run processing on files with an error
   (after a fix, or a transient failure). Shows how many were recovered.</li>
   <li><strong>Re-scan for duplicates</strong>: rebuild groupings only.</li>
-  <li><strong>Re-check known hashes</strong>: rebuild hash-set matches only.</li>
-  <li><strong>Run screening</strong>: face/skin pass only.</li>
+  <li><strong>Re-check</strong> (<em>Known hashes</em>): rebuild hash-set matches only.</li>
+  <li><strong>Run face / skin screening</strong>: face/skin pass only.</li>
   <li><strong>Expand archives</strong>: shown below the Source list when the case
   holds any <code>.zip</code> / <code>.tar</code> / <code>.gz</code>. Opens each
   one not expanded yet and processes what comes out; <strong>Re-check
@@ -1038,7 +1053,7 @@ rather than as a nameless carved twin.</p>
   <li><strong>At ingest</strong>: tick <em>Recover media (filesystem records
     and carving)</em> on the launcher. The walk runs first, then the recovery,
     then everything is processed together.</li>
-  <li><strong>Later</strong>: the sidebar's <strong>Source</strong>
+  <li><strong>Later</strong>: the sidebar's <strong>Carving</strong>
     section has a <strong>Carve for deleted media</strong> button for each E01
     (it reads <strong>Carve again</strong> once a source has been carved;
     re-running skips offsets already recovered). The bottom bar follows it and
@@ -1051,7 +1066,7 @@ most of what it returns on a used disk is application assets rather than user
 media. The Source panel shows the split: <em>N walked &middot; M carved
 &middot; K recovered</em> (recovered being the files brought back from deleted
 records), and the sidebar's <strong>How recovered</strong> filter (&sect;8) narrows the
-gallery to just the walked or just the carved rows.</p>
+gallery to walked, recovered-from-a-deleted-record or carved rows.</p>
 
 <h2 id="keys">17. Keyboard shortcuts</h2>
 <table>
@@ -1078,7 +1093,7 @@ re-match, VIC import, hash-stash add / merge / clear) are recorded in the case's
 audit log for defensibility. GLEAPP does not bundle, and cannot identify, any
 illegal content; it identifies <em>known files</em> (via hashes you supply,
 including your own local hash stash) and surfaces <em>signals</em>; the
-categorization is always your professional judgement.</p>
+categorization is always your professional judgment.</p>
 <p>The <strong>local hash stash</strong> (section&nbsp;12) holds MD5 hash values
 only, no file content, names or paths, of files you categorized 1–3, and never
 leaves your machine unless you <strong>Export</strong> it or point it at a shared
@@ -1113,19 +1128,19 @@ works, for a map you already have; vector MBTiles are not accepted. The same act
 exist on the command line as <code>gleapp maps list | import | remove | use |
 extract</code>.</p>
 <p>The Protomaps builds are OpenStreetMap data under the ODbL, and the map shows the
-"&copy; OpenStreetMap contributors" credit that licence asks for, as plain
+"&copy; OpenStreetMap contributors" credit that license asks for, as plain
 text rather than a link, because a link would be the one outbound address on the page.</p>
 
-<h2 id="credits">20. Credits &amp; acknowledgements</h2>
+<h2 id="credits">20. Credits &amp; acknowledgments</h2>
 <p>GLEAPP stands on a lot of other people's work. If GLEAPP is useful to you,
 please support, star and cite the projects below.</p>
 
 <h3>Libraries GLEAPP is built on</h3>
 <table>
-  <tr><td><strong>Python</strong></td><td>the runtime: Python Software Foundation (PSF licence)</td></tr>
+  <tr><td><strong>Python</strong></td><td>the runtime: Python Software Foundation (PSF license)</td></tr>
   <tr><td><strong>Pillow</strong></td><td>image decode/encode, thumbnails, EXIF: Jeffrey&nbsp;A.&nbsp;Clark &amp; contributors, a fork of PIL by Fredrik&nbsp;Lundh (HPND)</td></tr>
   <tr><td><strong>pillow-heif</strong> + <strong>libheif</strong></td><td>HEIC / HEIF / AVIF decoding: Alexander&nbsp;Piskun; libheif by Dirk&nbsp;Farin / struktur&nbsp;AG (BSD-3 / LGPL-3)</td></tr>
-  <tr><td><strong>OpenCV</strong> (opencv-python-headless)</td><td>video decode &amp; key frames, colour-space ops, DNN inference: OpenCV team; wheels by Olli-Pekka&nbsp;Heinisuo (Apache-2.0)</td></tr>
+  <tr><td><strong>OpenCV</strong> (opencv-python-headless)</td><td>video decode &amp; key frames, color-space ops, DNN inference: OpenCV team; wheels by Olli-Pekka&nbsp;Heinisuo (Apache-2.0)</td></tr>
   <tr><td><strong>NumPy</strong></td><td>array math behind hashing and screening: NumPy developers (BSD-3)</td></tr>
   <tr><td><strong>ImageHash</strong></td><td>aHash / pHash / dHash perceptual hashes, the basis of <em>find similar</em>, visual-duplicate stacking and near-duplicate clustering: Johannes&nbsp;Buchner (BSD-2)</td></tr>
   <tr><td><strong>texture2ddecoder</strong></td><td>GPU-texture decode (ASTC / PVRTC / ETC / BCn, KTX): Rudolf&nbsp;Kolbe (K0lb3) (MIT)</td></tr>
@@ -1140,7 +1155,7 @@ please support, star and cite the projects below.</p>
   <tr><td><strong>PMTiles</strong> + <strong>pmtiles.js</strong></td><td>the single-file tileset format the basemap is read from: Protomaps (specification public domain; reference code BSD-3)</td></tr>
   <tr><td><strong>Protomaps basemap style</strong> &amp; sprites</td><td>the map's look: Protomaps (BSD-3; sprite icons derived from the MIT-licensed tangrams/icons)</td></tr>
   <tr><td><strong>Noto Sans</strong></td><td>the map's label glyphs: Google (SIL Open Font License)</td></tr>
-  <tr><td><strong>OpenStreetMap</strong></td><td>the data in a Protomaps basemap you import: &copy; OpenStreetMap contributors (ODbL); credited on the map as the licence asks</td></tr>
+  <tr><td><strong>OpenStreetMap</strong></td><td>the data in a Protomaps basemap you import: &copy; OpenStreetMap contributors (ODbL); credited on the map as the license asks</td></tr>
   <tr><td><strong>Microsoft Edge WebView2</strong></td><td>the webview runtime the desktop window uses on Windows: Microsoft</td></tr>
   <tr><td><strong>PyInstaller</strong></td><td>building <code>GLEAPP.exe</code>: the PyInstaller Development Team (GPL-2.0 with bootloader exception)</td></tr>
   <tr><td><strong>pytest</strong>, <strong>piexif</strong></td><td>development and tests only, not shipped: Holger&nbsp;Krekel &amp; pytest-dev; hMatoba (MIT)</td></tr>
@@ -1165,14 +1180,14 @@ no bundler, no web fonts, nothing loaded from a CDN.</p>
     <strong>Chengrui&nbsp;Wang</strong>, distributed through the
     <strong>OpenCV&nbsp;Zoo</strong> project under the
     <strong>Apache&nbsp;License&nbsp;2.0</strong>. Run on the CPU via OpenCV's
-    DNN module; no face or embedding ever leaves the case. The full licence
+    DNN module; no face or embedding ever leaves the case. The full license
     text ships with the model at <code>gleapp/models/LICENSE-sface</code>, as
-    the licence requires.</li>
+    the license requires.</li>
   <li><strong>Haar cascade</strong> fallback
     (<code>haarcascade_frontalface_default.xml</code>): trained by
     <strong>Rainer&nbsp;Lienhart</strong>; ships inside OpenCV.</li>
   <li><strong>Skin-tone ratio</strong> uses no model: a plain HSV + YCrCb
-    colour-range measurement, the classic approach from the skin-detection
+    color-range measurement, the classic approach from the skin-detection
     literature (e.g. Kovač, Peer &amp; Solina, 2003).</li>
 </ul>
 
@@ -1190,7 +1205,7 @@ GLEAPP's own code, no extra library.</p>
 carving deleted media, and the storage-view collapsing that folds one Android
 photo's several mount-point copies into a single row &mdash; is built on tools
 <strong>Alexis&nbsp;Brignoni</strong> wrote for this purpose and vendored
-verbatim under <code>gleapp/vendor/</code> (each with its own licence file,
+verbatim under <code>gleapp/vendor/</code> (each with its own license file,
 <code>gleapp/vendor/LICENSE-&lt;name&gt;</code>):</p>
 <ul>
   <li><strong><a href="https://github.com/abrignoni/qnxprobe">qnxprobe</a></strong>
@@ -1209,7 +1224,7 @@ storage-view table (<code>gleapp/storage_views.py</code>), which knows that
 credential-encrypted, device-encrypted and shared storage never collapse
 together, is ported from <strong>ALEAPP</strong>'s
 <code>scripts/artifacts/storagePathViews.py</code> (also Alexis&nbsp;Brignoni,
-MIT licence).</p>
+MIT license).</p>
 
 <h3>Data standards &amp; reference data (you supply these, none are bundled)</h3>
 <ul>
@@ -1229,5 +1244,5 @@ parsers, alongside <strong>ALEAPP</strong>, <strong>iLEAPP</strong>,
 <strong>RLEAPP</strong> and the rest, the project started by
 <strong>Alexis&nbsp;Brignoni</strong> and built by a large community of
 contributors. GLEAPP carries on that project's naming, design and philosophy.</p>
-<p><em>Spotted a missing credit or a wrong licence? Please open an issue; it
+<p><em>Spotted a missing credit or a wrong license? Please open an issue; it
 should be fixed.</em></p>

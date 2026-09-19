@@ -9,7 +9,7 @@ screening, matches against known-hash lists, and gives you a fast local **review
 gallery** with right-click *find-similar* and *cursor-scrub video preview*.
 
 > **Scope / intended use.** GLEAPP is a defensive investigative tool for
-> authorised examiners. It does **not** ship, download, or connect to any
+> authorized examiners. It does **not** ship, download, or connect to any
 > illegal-content hash database and it performs **no** content classification —
 > categorization is always a human decision. Every case is seeded with the
 > locked **Project VIC 2.0 (US)** category scheme (codes 0–5); the examiner adds
@@ -26,12 +26,12 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 |---|---|
 | **Ingestion** | Recursive scan of folders / mounted evidence, or a `ingest.json` job spec listing multiple named sources (size caps, symlink policy per source) |
 | **Extractions and acquisitions** | A full-file-system extraction (zip, or tar plain or compressed) is read in place, its media registered by device path. An **EnCase/EWF acquisition** (`.E01` and its segments) has its filesystems **walked** file by file, so each file keeps the name, path and dates the filesystem recorded: ext2/3/4, F2FS, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. Recovering **deleted media** is optional and separate: first from **deleted records** (the NTFS **MFT**, and **FAT32** and **exFAT** directory entries), which bring a deleted file back with its real name and the times its filesystem recorded while its clusters are still free, and on NTFS reach files whose data was resident (which a carve cannot), then by **carving** the free space for signatures. A launcher checkbox does it during ingest, or a Source-panel button (and `gleapp source carve`) later |
-| **Archives inside a source** | A `.zip` / `.7z` / `.tar` / `.tar.gz` / `.gz` / `.bz2` / `.xz` found in a folder or on a walked E01 is opened automatically at ingest — its image and video members (and any archives nested inside) are extracted to `extracted/` and registered as ordinary rows linked to the container. The container file itself is kept for its hashes but **hidden from the gallery and reports** (Type = *archive (container)* to list them). RAR is recognised but not opened (no bundled RAR reader). Re-run on an existing case with **Expand archives** |
+| **Archives inside a source** | A `.zip` / `.7z` / `.tar` / `.tar.gz` / `.gz` / `.bz2` / `.xz` found in a folder or on a walked E01 is opened automatically at ingest — its image and video members (and any archives nested inside) are extracted to `extracted/` and registered as ordinary rows linked to the container. The container file itself is kept for its hashes but **hidden from the gallery and reports** (Type = *archive (container)* to list them). RAR is recognized but not opened (no bundled RAR reader). Re-run on an existing case with **Expand archives** |
 | **Hashing** | MD5 / SHA-1 / SHA-256 in one pass, plus aHash / pHash / dHash perceptual hashes |
 | **Deduplication** | Three tiers: exact-file **stacking** (same hash), **visual stacking** ("same picture to the eye" — pHash *and* dHash agree; collapses like a stack, badged **≈ N**), and a looser browsable **similar-group** cluster. Featureless images (gradients, flat screenshots) are excluded from perceptual grouping |
 | **Project VIC** | Import a Project VIC 2.0 (US) case file directly — registers every `Media` entry, resolves the media folder, keeps MD5 / MediaID / original name & path / MIME / victim-offender flags; **export back** to VIC JSON with your categories filled in |
 | **Known-hash matching** | Import Project VIC JSON, CAID-style, plain CSV/text, or a SQLite database (incl. the **NSRL RDS** — delta merge built in) into a per-case set or the shared **global store**; match on crypto hash then pHash. A `known-good` (NSRL) hit auto-categorizes an uncategorized file **Non-pertinent** and can be hidden with **Hide known-NSRL**. A match against a Project VIC hash set carries that record's MediaID, series, flags, tags and Exif (as text) into the gallery, the HTML, CSV and JSON reports, and LAVA |
-| **Robustness at scale** | Tens of thousands of files: LSH-banded near-dup clustering (not O(n²)); video *and* GPU-texture decode isolated in child processes (a corrupt clip or a texture-decoder segfault can't crash the run — video batches are bisected and retried); HEIC/HEIF/TIFF/RAW decoded for viewing; **KTX** GPU textures (ASTC/PVRTC/ETC/BC) decoded to images; Apple's proprietary LZFSE assets labelled honestly rather than shown broken; **Retry failed files** re-runs just the errored ones |
+| **Robustness at scale** | Tens of thousands of files: LSH-banded near-dup clustering (not O(n²)); video *and* GPU-texture decode isolated in child processes (a corrupt clip or a texture-decoder segfault can't crash the run — video batches are bisected and retried); HEIC/HEIF/TIFF/RAW decoded for viewing; **KTX** GPU textures (ASTC/PVRTC/ETC/BC) decoded to images; Apple's proprietary LZFSE assets labeled honestly rather than shown broken; **Retry failed files** re-runs just the errored ones |
 | **Metadata** | EXIF capture time, camera make/model, GPS → decimal degrees; filesystem-time fallback; capture **timeline** via sort |
 | **Video** | Dimensions/duration (OpenCV, no ffmpeg needed), evenly-spaced **key-frame** extraction, per-frame pHash so a still can find its source video |
 | **Visual screening** | **YuNet** DNN face detection + broad **skin-tone ratio** as triage aids (pluggable — swap in another model behind the same functions) |
@@ -322,9 +322,9 @@ did when they were tagged.
 
 ## Known-hash lists
 
-Import into **this case** (sidebar **Hash sets → Import hash set…**, or
+Import into **this case** (sidebar **Known hashes → Import hash set…**, or
 `gleapp -c CASE hashset FILE`) or the **global store** shared by every case
-(sidebar **Hash sets → Reference data → Add a set**, or
+(sidebar **Known hashes → Reference data → Add a set**, or
 `gleapp hashset --global FILE`). Formats auto-detected:
 
 * **Project VIC JSON** – objects with `MD5` / `SHA1` / `SHA256` and optional `Category`.
@@ -364,7 +364,7 @@ column of the **Known Hash Sets** artifact in the LAVA export. Read a set's entr
 count against that column: the hashes a list could match against is its entry count
 minus its PhotoDNA count.
 
-A set imported before this separation existed holds those values labelled `phash`.
+A set imported before this separation existed holds those values labeled `phash`.
 They were inert either way, since a PhotoDNA value never matched a perceptual hash,
 so this only affects the count. To relabel a **case** set, remove it and import the
 list again: a case import adds to a set of the same name rather than replacing it,
@@ -422,12 +422,12 @@ in the Export dialog, or pass `--no-maps` to `gleapp report`, to leave them out.
 of image tiles made with QGIS, MapTiler Desktop or a GIS shop's own tooling. GLEAPP
 serves its tiles one query at a time. Vector MBTiles are not accepted.
 
-**Licences**. The Protomaps builds are OpenStreetMap data under the ODbL, distributed as
-a produced work, and the map shows "© OpenStreetMap contributors" as that licence asks
+**Licenses**. The Protomaps builds are OpenStreetMap data under the ODbL, distributed as
+a produced work, and the map shows "© OpenStreetMap contributors" as that license asks
 (as plain text, because a link would be the one outbound address on the page). MapLibre
 GL JS and PMTiles are BSD-3-Clause; the PMTiles specification is public domain; the
 Noto Sans glyphs are under the SIL Open Font License. All of it is vendored under
-`gleapp/web/static/maps/` with its licence texts, and the page loads nothing else.
+`gleapp/web/static/maps/` with its license texts, and the page loads nothing else.
 
 ## CLI reference
 
@@ -488,7 +488,7 @@ folders / a JSON job, then watch processing progress — no CLI needed.
 
 Each tile shows a **color bar with the category name** along its bottom, tinted
 to the category's auto color, with a matching border. A tile standing in for a
-group gets a layered-page shadow and a corner badge: **⬚ N** grey = N byte-identical
+group gets a layered-page shadow and a corner badge: **⬚ N** gray = N byte-identical
 copies; **≈ N** blue = N visually-matching files (hover says "visually similar").
 The details pane shows a
 preview, filename, full path, source, size, dimensions, dates, camera, GPS (with
@@ -582,7 +582,7 @@ python tools/make_test_media.py test_media
 
 GLEAPP is built on Pillow, OpenCV, NumPy, ImageHash, Flask, SQLite, the YuNet
 face detector and the SFace face-recognition model (both OpenCV Zoo; SFace is
-Apache-2.0, its licence shipped at `gleapp/models/LICENSE-sface`),
+Apache-2.0, its license shipped at `gleapp/models/LICENSE-sface`),
 pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. E01
 acquisitions are walked with [qnxprobe](https://github.com/abrignoni/qnxprobe),
 read with [ewfprobe](https://github.com/abrignoni/ewfprobe) and carved with
@@ -591,10 +591,10 @@ vendored under `gleapp/vendor/`. GLEAPP is part of the **xLEAPP** family
 (ALEAPP / iLEAPP / RLEAPP …), the project started by Alexis Brignoni &
 contributors, and its Android storage-view table is ported from ALEAPP. It
 reads the **Project VIC** data model and the **NSRL RDS** (NIST). Full
-attributions and licences: **section 20 of the manual** (`docs/MANUAL.md`, or
+attributions and licenses: **section 20 of the manual** (`docs/MANUAL.md`, or
 **? Help** in the app).
 
 ## License
 
-MIT — see `LICENSE`. Bundled third-party components keep their own licences;
+MIT — see `LICENSE`. Bundled third-party components keep their own licenses;
 see the manual's credits section.

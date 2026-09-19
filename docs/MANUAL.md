@@ -10,15 +10,16 @@ a fast keyboard-driven review gallery with a locked Project VIC category scheme.
 > classification.** Face detection and skin-tone ratio are investigative signals
 > only. Every category decision is the examiner's.
 
-This manual is also available in the app: **? Help** in the header, or press `?`.
+This manual is also available in the app: **☰ Menu → Help → Manual** in a case,
+**Help / Manual** on the launcher, or press `?`.
 (The in-app copy is `gleapp/web/static/help.html`; keep the two in sync.)
 
 ---
 
 ## 1. Getting started
 
-On launch with no case open, GLEAPP shows the **launcher**. The **? Help / Manual**
-button (top-right of the launcher, and in every case's header) opens this manual.
+On launch with no case open, GLEAPP shows the **launcher**. The **Help / Manual**
+button (top-right of the launcher; **☰ Menu → Help** inside a case) opens this manual.
 Its **Download as PDF** button hands off to your browser/OS print dialog, scoped
 to just the manual &mdash; choose **Save as PDF** as the destination for an
 offline copy. No PDF is generated or stored by GLEAPP itself.
@@ -39,10 +40,10 @@ offline copy. No PDF is generated or stored by GLEAPP itself.
       archive unless you tick *Copy media out of extraction archives*; a
       compressed tar is always copied out.
     - An **E01 acquisition** (`.E01` with its numbered segments beside it).
-      Its filesystems are walked file by file, so each file keeps the name,
-      path and dates the filesystem recorded: ext2, ext3, ext4, F2FS, FAT32,
-      exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A volume
-      that cannot be read is named in the Source panel afterwards.
+      Its filesystems (NTFS, FAT32, exFAT, HFS+, APFS, ext2/3/4, F2FS and the
+      QNX ones; §16 has the full list) are walked file by file, so each file
+      keeps the name, path and dates the filesystem recorded. A volume that
+      cannot be read is named in the Source panel afterwards.
       **Recovering deleted media** is optional and separate from the walk:
       tick *Recover media (filesystem records and carving)* to do it during
       this ingest, or run it later from the Source panel (see §16).
@@ -58,11 +59,11 @@ offline copy. No PDF is generated or stored by GLEAPP itself.
     panel's import line says both when they differ.
 
     Two case-header fields are deliberately ignored, because exporters do not
-    agree with them. `TotalMediaFiles` counts Media entries in one export and
-    distinct MD5 values in another, so GLEAPP counts the array instead.
-    `IsPrecategorized` and `TotalPrecategorized` are not read at all: one export
-    set `IsPrecategorized` true on every one of its 19,209 entries while every
-    `Category` was null. The category you see always comes from `Category`.
+    agree with them: `TotalMediaFiles` (one export counts Media entries, another
+    counts distinct MD5 values, so GLEAPP counts the array itself) and
+    `IsPrecategorized` / `TotalPrecategorized` (one export set the former true
+    on every entry while every `Category` was null). The category you see always
+    comes from `Category`.
 
 Ingest options: **Face / skin tone pre-processing** (on by default; can be run
 later), **video preview key frames** (default 6), **Copy media out of
@@ -87,7 +88,7 @@ One case is one folder. Inside it:
 | Path | Contents |
 |---|---|
 | `case.gleapp` | the SQLite database: everything GLEAPP learns lives here, so runs are resumable |
-| `thumbs/` | grid thumbnails and video key frames |
+| `thumbs/` | gallery thumbnails and video key frames |
 | `views/` | full-size JPEGs transcoded from formats the browser can't show (HEIC, TIFF, KTX, ...) |
 | `extracted/` | media unpacked from container files: archives (`.zip` / `.tar` / `.gz`) found in a source, and Snapchat `LZC` bundles |
 | `reports/` | exported reports: CSV/JSON, MD5 lists, KMZ, Project VIC exports, LAVA projects |
@@ -100,9 +101,9 @@ only inside the case folder.
 ## 3. The review gallery
 
 Left: the **filter sidebar**. Center: the **gallery** or **details list** (switch
-with the **▦ Gallery / ☰ List** toggle in the control bar), with a control bar
-across the top (view toggle, Columns, Sort, thumbnails per page, Tile size,
-**Times** timezone, and the shortcut legend) and pagination above and below.
+with the **▦ Gallery / ☰ List** toggle in the control bar). The control bar also
+holds Columns (list view), Sort, thumbnails per page, Tile size, the **Times**
+timezone and the shortcut legend, with pagination above and below the files.
 Right: the **details pane** (toggle with `I` or the button; state is
 remembered).
 
@@ -112,7 +113,7 @@ details pane and pagination all work the same in either view.
 ### Details list view
 
 **☰ List** shows one row per file with a column for every stored detail. It is
-built for triage by metadata rather than by eye. Unlike the grid, the list
+built for triage by metadata rather than by eye. Unlike the gallery, the list
 **always shows every row**: exact and visual duplicates are never collapsed, so
 a photo that is both a loose file and a member of a nested archive appears as
 both rows. The **Collapse duplicates** checkbox is disabled while the list is
@@ -148,8 +149,8 @@ open.
   cell for the full text). Double-click the border to reset that column.
 - **Clear column filters**: the toolbar button (shows the active filter count)
   removes every column filter at once; sorting and column choices are left
-  alone. The sidebar's **Clear filters** clears these too, along with the
-  sidebar filters.
+  alone. The sidebar's **Clear** (next to the filter count) clears these too, along
+  with the sidebar filters.
 - **Columns ▾**: choose which columns are shown; **All** / **Defaults**
   presets, and **Reset widths** to put every column back to its default size.
 - The choice of view, visible columns, column widths, sort and column filters
@@ -175,12 +176,11 @@ its files all three stay blank and the readings appear as **Recorded (as
 stored, no zone)** instead: in the list view, in the HTML report, in the CSV as
 `recorded_times` and in the LAVA tables. See §16.
 
-**A Project VIC export decides which of these it carries.** Measured on two
-exports: one wrote created, written and accessed on about 25,500 of its 34,731
-entries; the other wrote written on 6,901, created on 17 and accessed on none at
-all. GLEAPP reads every timestamp either one wrote, in both the `...Z` and the
-`...-05:00` forms. A sparse timestamp column on a VIC case is the export, not a
-failed parse.
+**A Project VIC export decides which of these it carries.** One export wrote
+created, written and accessed on most of its entries; another wrote written on
+some, created on almost none and accessed on none. GLEAPP reads every timestamp
+an export wrote, in both the `...Z` and the `...-05:00` forms, so a sparse
+timestamp column on a VIC case is the export, not a failed parse.
 
 A filesystem timestamp is **not** a capture time; GLEAPP never fills "Captured"
 from one. All four appear in the details pane, the list view and as report
@@ -194,27 +194,31 @@ saved per case and as your default for new cases, and it is stamped into the
 report header. It **never** changes **Captured (EXIF)** values: those are the
 camera's own local wall-clock time and are always shown exactly as recorded.
 
-Header buttons: Close case, ⚙ Categories, Details pane, Snapshots, Maps, Hash
-stash, Export Project VIC (VIC cases), Export report, ? Help, and ↻ Refresh,
-which re-runs the current filter so files that no longer match it (e.g. ones
-you just categorized) drop out of view.
+**Header.** **☰ Menu** groups the case tools: under *Case*, ⚙ Categories,
+⚙ Flags, Snapshots and Export Project VIC (Project VIC cases only); under
+*Reference*, Maps, Hash stash, Reference data (NSRL) and Project VIC hash sets;
+under *Help*, Manual and Processing history. Beside it:
 
-**? Help ▾** opens a small menu with two entries:
+- **+ Add evidence…** ingests another folder, extraction archive, E01
+  acquisition or Project VIC / job JSON into this case.
+- **⇤ Close case** (snapshots first), **Details pane**, **Export report**.
+- **↻ Refresh** re-runs the current filter, so files that no longer match it
+  (e.g. ones you just categorized) drop out of view.
+- **🔔** lists recent report exports.
 
-- **Manual**: this document.
-- **Processing history**: the case processing log, every ingest, process,
-  screening, hash-set match, carve and examiner edit run against this case,
-  newest first. A **process** run lists each stage (media processing,
-  known-hash match, exact stacking, visual stacking, near-duplicate clustering)
-  with a ✓ or ✗ for whether it succeeded, so a stage that failed does not hide
-  the ones that worked. The "Show" menu narrows the list to runs, examiner
-  edits, or only runs with a failed stage. This is the same audit log written
-  into the LAVA export.
+**Processing history** (☰ Menu → Help) is the case processing log: every
+ingest, process, screening, hash-set match, carve and examiner edit run against
+this case, newest first. A **process** run lists each stage (media processing,
+known-hash match, exact stacking, visual stacking, near-duplicate clustering)
+with a ✓ or ✗ for whether it succeeded, so a stage that failed does not hide
+the ones that worked. The "Show" menu narrows the list to runs, examiner edits,
+or only runs with a failed stage. This is the same audit log written into the
+LAVA export.
 
 ## 4. Tiles & badges
 
 Each tile shows the thumbnail, the file **name**, a colored bar with its
-category name (grey "Uncategorized" if none), and small badges. The name shown
+category name (gray "Uncategorized" if none), and small badges. The name shown
 is the **original file name** where it is known (e.g. from a Project VIC import,
 where files are stored on disk under their MD5); hover the tile for the full
 name. The same rule applies in the list view's **Name** column and in the
@@ -237,7 +241,7 @@ full-size viewer shows the complete image with nothing over it.
 | `N 👤` | face count from screening |
 | `📍` | has GPS coordinates |
 | `≈ N` | in a **visual stack** of N: same picture re-encoded/resized (blue offset shadow) |
-| `⬚ N` | in an **exact stack** of N: byte-identical copies (grey offset shadow) |
+| `⬚ N` | in an **exact stack** of N: byte-identical copies (gray offset shadow) |
 | `✓` | selected |
 
 Video tiles show a duration label; hover and move left-to-right to **scrub**
@@ -267,16 +271,20 @@ the whole selection.
 
 ## 6. The details pane
 
-Opens on click when toggled on (`I`). Shows: a preview with "View full size";
-the current category and the category buttons; Find similar; Flags; its flags
-(× to remove one); a video key-frame filmstrip; a metadata table (source,
-type, original name/path, MIME, VIC MediaID and flags, size, dimensions,
-duration, captured date, camera, faces, skin ratio, known-hash, exact/visual/
-near-dup group sizes, error); GPS with a Copy button and, once a basemap is
-imported (§19), an offline map of the spot; MD5 / SHA-1 / SHA-256 / pHash; a
-**Notes** box that autosaves as you type; and filmstrips of exact copies and
-visually-similar files (click to jump; "Show only this group" filters to the
-visual-match set).
+Opens on click when toggled on (`I`). It shows:
+
+- a preview with **View full size**, and for a video a key-frame filmstrip;
+- the current category and the category buttons;
+- **Find similar**, and the file's flags (**+ flag** to add, × to remove one);
+- a metadata table: source, type, original name and path, MIME, VIC MediaID and
+  flags, size, dimensions, duration, captured date, camera, faces, skin ratio,
+  known-hash, exact/visual/near-dup group sizes, error;
+- GPS with a **Copy** button and, once a basemap is imported (§19), an offline
+  map of the spot;
+- MD5 / SHA-1 / SHA-256 / pHash;
+- a **Notes** box that autosaves as you type;
+- filmstrips of exact copies and visually-similar files (click to jump; **Show
+  only this group** filters to the visual-match set).
 
 Marking a file reviewed no longer exists; **categorizing is the review step**.
 
@@ -383,6 +391,12 @@ error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and flags.
 - **Hide known-NSRL**: hides every file that matched a *known-good* set (NSRL
   etc.), so OS/app files stop cluttering review. The count is how many are
   hidden.
+- **Match against my hash stash** / **Match against Project VIC sets** (both on
+  by default): turn one off for a case that has nothing to do with it. Its
+  existing flags are cleared at once (a flag from another source stays), and
+  **Re-check** brings them back after you turn it on again. A Project VIC set
+  imported before this option existed is not labeled VIC until it is imported
+  again.
 - **Import hash set... / Re-check**, the imported-set list, and the
   **Reference data** and **hash stash** lines: see section 11 for the full
   workflow.
@@ -403,10 +417,10 @@ error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and flags.
   | Has a visual copy | the same picture, re-encoded or resized |
 
 - **Collapse duplicates & visual matches** (on by default): one tile per
-  visual group in the **grid**. The representative is chosen from files that
+  visual group in the **gallery**. The representative is chosen from files that
   *match your other filters*, so a group still appears when only a non-head
   member carries the attribute you filtered on. Counts reflect groups, not
-  individual files. This applies to the grid only; the **☰ List** view always
+  individual files. This applies to the gallery only; the **☰ List** view always
   shows every row.
 - **Re-scan for duplicates**: rebuild the exact / visual / near-dup groupings
   without a full reprocess.
@@ -420,7 +434,7 @@ error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and flags.
 - **Has GPS**: has latitude/longitude in its metadata.
 
 ### Sort
-Path, capture date, size, skin ratio (desc), faces (desc), or cluster.
+Path, capture date, size, skin ratio (desc) or faces (desc).
 "Thumbnails per page" and "Tile size" are remembered between sessions.
 
 ## 9. Duplicates & similarity
@@ -442,8 +456,15 @@ from grouping because their perceptual hashes are meaningless. "Find similar"
 Screening runs the **YuNet** face-detection neural network (a small bundled
 ONNX model, via OpenCV) over every thumbnail and records a face count, plus a
 **skin-tone ratio** (fraction of pixels in a skin-color range). Run it at
-ingest or later with **Run screening**. These are triage signals, not a
-classifier, and make no judgement about content.
+ingest or later with **Run face / skin screening**. These are triage signals, not a
+classifier, and make no judgment about content.
+
+**Find matching faces.** When screening also embedded a face with the bundled
+**SFace** model, that face's box in the full-size viewer (or in a video's
+key-frame filmstrip in the details pane) is clickable: click it to list every
+file with a matching face. The results replace the gallery the way *Find
+similar* does, with a banner and **Back to all**. A face drawn without an
+embedding is not clickable. Matching runs entirely inside the case.
 
 ## 11. Known-hash matching & NSRL
 
@@ -460,7 +481,7 @@ Set **kinds**:
 | Kind | A hit... |
 |---|---|
 | **known** | shows the red `HASH` badge (purple `STASH` for the local hash stash); if the file is uncategorized and the set asserts a category, adopts it |
-| **known-good** | shows the grey `NSRL` badge; **auto-categorizes Non-pertinent** if uncategorized; can be hidden with "Hide known-NSRL"; never overrides a category you set |
+| **known-good** | shows the gray `NSRL` badge; **auto-categorizes Non-pertinent** if uncategorized; can be hidden with "Hide known-NSRL"; never overrides a category you set |
 | **other** | informational only |
 
 ### PhotoDNA is stored, not matched
@@ -483,13 +504,13 @@ entry count minus its PhotoDNA count.
 
 ### Importing a hash set into a case (e.g. a CyberTip)
 
-Sidebar → **Hash sets** → **Import hash set...**. A file browser opens; pick
+Sidebar → **Known hashes** → **Import hash set...**. A file browser opens; pick
 the CyberTip file. GLEAPP fills in a name from the filename (edit it if you
 like, e.g. `CyberTip 12345678`); choose **Flag as notable** (the default, red
 `HASH` badge) or *Mark as benign*; click **Import & flag**.
 
 GLEAPP loads the hashes and re-checks every file in the case immediately.
-Matches get the badge, and the grid jumps to them. Each imported set is listed
+Matches get the badge, and the gallery jumps to them. Each imported set is listed
 under the button with its entry count and current hit count and an **✕** to
 remove it (removing clears its flags). Use **Show → Only: &lt;name&gt;** in
 that section to see one set's hits, or **Any imported hash set** for all of
@@ -513,37 +534,56 @@ reference sets like the NSRL RDS once, instead of copying them into every
 `case.gleapp`. Accepted inputs: a SQLite `.db`, an NSRL `.sql` dump or
 `_delta.sql`, a Project VIC JSON, a CAID export, or a plain hash list.
 
-Manage it from the sidebar: **Hash sets → the "Reference data: ... ▸" line**
-opens the **Reference data** dialog, which lists the imported sets (each with
+Manage it from **☰ Menu → Reference → Reference data (NSRL)**, or the sidebar's
+**Known hashes → "Reference data: ... ▸" line**, which opens the
+**Reference data** dialog, which lists the imported sets (each with
 an **✕** to remove it; every case then stops matching against it) and an **Add
 a set** form below. The command line (`gleapp hashset --global ...`, from a
 source install) does the same thing.
+
+### Project VIC hash sets
+
+Connect a Project VIC hash set from **☰ Menu → Reference → Project VIC hash
+sets** (the launcher has the same button): **Choose...** the `.json`, name it,
+**Import**. The dialog has its own list, separate from the NSRL's, and uses the
+same shared store: the set is not copied into any case, and every case matches
+against it.
+
+- **A match is flagged *VIC*.** If the file has no category yet, it goes into the
+  category Project VIC gave it (for example 1 CAM, 2 Child Exploitative, 3 CGI).
+  A category you have set is never overridden. The change is not silent: the
+  file carries the VIC flag, and the details pane's *Matched in* row names the
+  set and the category it asserted.
+- **A file in more than one place keeps every flag.** A file in a Project VIC
+  set and in your hash stash shows both *VIC* and *STASH*. If the two disagree
+  on the category, the lower, more severe code is taken. A file in the NSRL and
+  a notable set is never made Non-pertinent.
+- **Find them:** the sidebar's *Known hashes → Show* has *Project VIC hits*,
+  *Hash stash hits* and *hit in both*. HTML, CSV and JSON reports carry a *Hash
+  matches* field that says where each file matched.
 
 ### Importing a Project VIC hash set
 
 A Project VIC hash set, such as the one a national VICS portal distributes, is
 a single JSON file whose records carry an MD5 and may carry a SHA-1, a
-PhotoDNA value and the category Project VIC assigned. Import it into the
-global store so every case matches against it: **Reference data ... ▸ → Add a
-set → Choose...** the `.json`. Choosing a `.json` switches **Treat matches as**
-to *Notable* and hides the release/delta choice and **Store**, which apply to
-the NSRL and not to this file: its MD5, SHA-1, SHA-256 and PhotoDNA values
-are kept, except the hashes of an empty file. From the command line:
+PhotoDNA value and the category Project VIC assigned. Import it from the dialog
+above, or into the global store from the NSRL dialog: **Reference data ... ▸ →
+Add a set → Choose...** the `.json`. Choosing a `.json` there switches **Treat
+matches as** to *Notable* and hides the release/delta choice and **Store**,
+which apply to the NSRL and not to this file. From the command line:
 `gleapp hashset <file>.json --global --name "<a name>"`.
 
-- **Import it as notable, never as benign.** Each entry carries its own
-  category, so an uncategorized file that matches takes the category Project
-  VIC gave it. As *known-good* every match would carry the benign badge and an
-  uncategorized match would be moved to Non-pertinent, so GLEAPP refuses that
-  pairing for a Project VIC hash set,
-  in the dialog and on the command line alike.
-- **The file is read as it is imported, never loaded whole.** The entries are
-  staged and sorted before they are written, so the import needs free disk space
-  beyond the finished store while it runs. Progress shows under *Hash sets*.
-- **A value listed more than once in a set is stored once**, keeping the first
-  entry's category, so a set's PhotoDNA count can be lower than the number of
-  PhotoDNA fields in the file: a PhotoDNA value can repeat across entries whose
-  MD5s differ.
+- **Import it as notable, never as benign.** As *known-good* every match would
+  carry the benign badge and an uncategorized match would be moved to
+  Non-pertinent, so GLEAPP refuses that pairing for a Project VIC hash set, in
+  the dialog and on the command line alike.
+- **Reading the file.** It is read as it is imported, never loaded whole. The
+  entries are staged and sorted before they are written, so the import needs
+  free disk space beyond the finished store while it runs. A value listed more
+  than once in a set is stored once, keeping the first entry's category, so a
+  set's PhotoDNA count can be lower than the number of PhotoDNA fields in the
+  file. Its MD5, SHA-1, SHA-256 and PhotoDNA values are kept, except the hashes
+  of an empty file.
 - **A file that ends part-way, such as a truncated download, fails the
   import** and leaves no partial set behind, because a partial set would read
   as complete. Re-importing under a name the store already holds replaces that
@@ -551,20 +591,19 @@ are kept, except the hashes of an empty file. From the command line:
   new file then fails, that name is gone until a complete file is imported.
 - **PhotoDNA values are kept but never matched**; see *PhotoDNA is stored, not
   matched* above.
-- **Handing it to ingest stops with an explanation.** A hash set has no media
-  files, so *Browse for JSON* on the launcher, or `gleapp ingest`, says it is a
-  hash set and points here, instead of reading the file.
-- **Each record's details are kept with the set and carried onto the files
-  that match it:** the MediaID, the Series, the five flags (Victim identified,
-  Offender identified, Distributed, Suspected, Self-generated), the Tags and the
-  Exif reading the record holds. They are the distributing organisation's
-  record, not findings GLEAPP made. The flags field lists the flags the record
-  sets true and reads *none set* when every flag it carries is false; the LAVA
-  artifact shows each flag as yes or no, and blank when the record does not
-  carry it. The details come only with a match on SHA-256,
-  SHA-1 or MD5; a perceptual match is a similar picture and carries none. A set
-  imported before GLEAPP kept these details matches as before but shows none
-  until it is imported again.
+- **It is not evidence to ingest.** A hash set has no media files, so *Browse
+  for JSON* on the launcher, or `gleapp ingest`, says it is a hash set and
+  points here instead of reading the file.
+- **Each record's details travel with a match:** the MediaID, the Series, the
+  five flags (Victim identified, Offender identified, Distributed, Suspected,
+  Self-generated), the Tags and the Exif the record holds. They are the
+  distributing organization's record, not findings GLEAPP made. The flags field
+  lists the flags the record sets true and reads *none set* when every flag it
+  carries is false; the LAVA artifact shows each flag as yes or no, and blank
+  when the record does not carry it. The details come only with a match on
+  SHA-256, SHA-1 or MD5; a perceptual match is a similar picture and carries
+  none. A set imported before GLEAPP kept these details matches as before but
+  shows none until it is imported again.
 - **The record's Exif is shown as text only.** The Project VIC 2.0 model keys
   each Exif row to its record's MD5, so it is the set's record of that file, not
   a reading GLEAPP took. A location in it is never written to the matching
@@ -580,13 +619,13 @@ are kept, except the hashes of an empty file. From the command line:
   has them, ahead of any hash-set record it matches; the JSON export keeps both,
   and the LAVA artifact shows the hash-set record's.
 - **Keeping an HTML report small.** Untick any of those fields under **Fields
-  under each image** to leave them out of a report. **Project VIC matches**
-  under **Which files** (shown once a case has any) keeps them (the default),
-  reports only them, or leaves them out, and it narrows whichever **Which files**
-  choice is selected. The CSV, JSON, KMZ, MD5 list and LAVA report written in the
-  same export follow the same choice; the Project VIC JSON export is not narrowed
-  by it. From the command line: `gleapp report --vic-matches only|exclude`
-  and `--no-vic-details`.
+  under each image** to leave them out. **Project VIC matches** under **Which
+  files** (shown once a case has any) keeps them (the default), reports only
+  them, or leaves them out, and it narrows whichever **Which files** choice is
+  selected. The CSV, JSON, KMZ, MD5 list and LAVA report written in the same
+  export follow the same choice; the Project VIC JSON export is not narrowed by
+  it. From the command line: `gleapp report --vic-matches only|exclude` and
+  `--no-vic-details`.
 
 It can also be imported into a single case with **Import hash set...**, which
 stores it inside that case's file only; the global store is the place for a set
@@ -595,7 +634,7 @@ every case should match against.
 ### Setting up the NSRL RDS
 
 The **National Software Reference Library Reference Data Set (RDS)** is NIST's
-public catalogue of hashes of known software: operating systems, applications
+public catalog of hashes of known software: operating systems, applications
 and their bundled files. Matching your evidence against it lets you *eliminate*
 the OS/app noise and concentrate on user content. GLEAPP does not ship it; you
 download it from NIST and import it once.
@@ -617,8 +656,8 @@ Unzip what you download. **Modern** also offers a much smaller *minimal*
 database (distinct SHA-256 only); for that, set **Store** to *SHA-256 only* in
 step 2.
 
-**2. First import, a full release.** Sidebar → **Hash sets → Reference data
-... ▸ → Add a set**:
+**2. First import, a full release.** **☰ Menu → Reference → Reference data
+(NSRL)**, then **Add a set**:
 
 - leave **Full release** selected; **Choose...** the unzipped `.db`;
 - **Name**: auto-filled from the filename; edit to taste (e.g. `NSRL Modern
@@ -627,7 +666,7 @@ step 2.
 - **Store**: leave *MD5 only* (every ingested file has one; roughly halves the
   store vs. all three);
 - **Import**. It runs in the background, so you can keep working; progress
-  shows under *Hash sets*. A full set is tens of millions of hashes and takes a
+  shows under *Known hashes*. A full set is tens of millions of hashes and takes a
   while.
 
 Repeat for Android / iOS. The source `.db` can then be moved or deleted;
@@ -648,8 +687,8 @@ it. Remove the previous quarter's set with its **✕**. Keep the new merged
 `.db` as the base for the next delta. Each year, download the new March full
 release and start over.
 
-**4. Use it.** Open a case and click **Re-check** under *Hash sets* (or re-run
-Process). NSRL matches get the grey `NSRL` badge, are auto-categorized
+**4. Use it.** Open a case and click **Re-check** under *Known hashes* (or re-run
+Process). NSRL matches get the gray `NSRL` badge, are auto-categorized
 **Non-pertinent** if still uncategorized, and drop out of view when you tick
 **Hide known-NSRL**.
 
@@ -694,7 +733,7 @@ decision; the stash holds only hashes of files **you** categorized.
 - It is checked during the **known-hash matching** stage of **every case you
   process**; nothing to import.
 - For a case that was processed *before* you stashed those hashes, open it and
-  click **Re-check known hashes** (sidebar → *Other*).
+  click **Re-check** (sidebar → *Known hashes*).
 - A stash match shows the purple **STASH** badge. If the file is still
   uncategorized it adopts the stashed code; a category you already set is
   never overridden. Stash hits are checked **before** NSRL, so your own call
@@ -757,14 +796,14 @@ Beyond ordinary JPEG/PNG/GIF/WebP/BMP/TIFF and video, GLEAPP decodes:
     reports**; set the Type filter to *archive (container)* to see the list
     of them. It is still in the case (its own name, path, dates and hashes),
     so a report of that scope can account for every archive in evidence.
-  - **RAR** is recognised but not opened: GLEAPP has no RAR reader (they need
+  - **RAR** is recognized but not opened: GLEAPP has no RAR reader (they need
     an external `unrar` binary a self-contained build can't carry), so the
     container row is flagged so you know to extract it separately.
   - Encrypted members (and password-protected `.7z`) are skipped and counted.
   - To run this on a case that was ingested earlier, use **Expand archives**
     in the sidebar (§16).
 
-macOS sidecars are recognised and left out. Copying a file onto a FAT or exFAT
+macOS sidecars are recognized and left out. Copying a file onto a FAT or exFAT
 card, or onto most network shares, makes macOS write a second file named
 `._<name>` beside it holding the resource fork and Finder info. It takes the
 whole name of the file it belongs to, so `._holiday.jpg` ends in an image
@@ -894,12 +933,12 @@ date, label (`auto`, `manual`, or your text) and size:
   state is written to a `pre-restore` snapshot first, so a restore is itself
   undoable; the case then reloads. Restore is blocked while a job is running.
 
-## 16. Reprocessing
+## 16. Reprocessing and recovering deleted media
 
 - **Retry failed files**: re-run processing on files with an error.
 - **Re-scan for duplicates**: rebuild groupings only.
-- **Re-check known hashes**: rebuild hash-set matches only.
-- **Run screening**: face/skin pass only.
+- **Re-check** (*Known hashes*): rebuild hash-set matches only.
+- **Run face / skin screening**: face/skin pass only.
 - **Expand archives**: appears below the Source list when the case holds any
   `.zip` / `.tar` / `.gz` etc. Opens each one that has not been expanded yet
   and processes what comes out; **Re-check archives** re-opens them all (use
@@ -914,7 +953,7 @@ from the command line: `gleapp process --force`.
 
 Only an **E01 acquisition** can be carved. A mobile extraction is an archive
 with a list of members in it, so there is nothing to recover that enumerating
-it does not already give you. The E01 is recognised by its own signature, so
+it does not already give you. The E01 is recognized by its own signature, so
 the extension does not matter and the first segment of a set is all you point
 at. Raw `dd` images, split `.001` sets, VHD and VMDK are not accepted.
 
@@ -961,10 +1000,7 @@ walk cannot reach, in two steps that produce different kinds of row.
 
 The deleted-record pass runs first, so a deleted file comes back with its name
 rather than as a nameless carved twin, and the offsets it recovered are handed
-to the carver to skip. Measured on the repository's own NTFS fixture, which
-holds two deleted JPEGs and no live ones: carving alone recovers one nameless
-file, and the resident one only ever comes back through the deleted-record
-pass, with its name.
+to the carver to skip.
 
 **What the carver looks for.** Seven signatures and nothing else: JPEG, PNG,
 GIF, WebP and HEIC/AVIF as images, AVI and MP4/MOV as video. No documents, no
@@ -1024,9 +1060,7 @@ scoped carve you know they sat in space no volume claimed at acquisition, which
 is a real statement and not the same as "the user deleted this". It finds
 contiguous files, so a fragmented file recovers only as far as its first
 fragment, which is why a carved image can render half way down and then turn to
-garbage. And the carver knows internally whether a length came from the file's
-own header, from walking its structure, or from a cap, but the case does not
-currently carry that distinction onto the row.
+garbage.
 
 The Source panel shows the split per acquisition: *N walked · K recovered from
 deleted records · M carved*. The sidebar's **How recovered** filter (§8) narrows the gallery to
@@ -1066,7 +1100,7 @@ Examiner actions (categorize, snapshot, import, re-match, VIC import,
 defensibility. GLEAPP does not bundle, and cannot identify, any illegal
 content; it identifies *known files* (via hashes you supply, including your
 own **local hash stash**) and surfaces *signals*, and the categorization is
-always your professional judgement.
+always your professional judgment.
 
 The **local hash stash** (section 12) contains MD5 hash values only, no file
 content, names or paths, of files you categorized 1-3. It never leaves your
@@ -1113,10 +1147,9 @@ Two formats are accepted:
 
   Write the box with the `=`, because a western longitude starts with a minus
   sign and the shell would otherwise read it as another flag. That reads only
-  the tiles inside the box, at every zoom level from 0 to 15. Measured on
-  2026-09-04 against the 137.7 GB planet build: the box above came out at 28 MB
-  in 8 s, and all of Puerto Rico (`--bbox=-67.30,17.85,-65.20,18.55`) at 70 MB
-  in 11 s. Add `--maxzoom=13` for a smaller file when street-level detail is
+  the tiles inside the box, at every zoom level from 0 to 15. The box above comes
+  out at about 28 MB, and all of Puerto Rico
+  (`--bbox=-67.30,17.85,-65.20,18.55`) at about 70 MB. Add `--maxzoom=13` for a smaller file when street-level detail is
   not needed. `gleapp maps extract --bbox=W,S,E,N --out area.pmtiles --build
   URL` runs the same command when the tool is on your PATH; without `--build`
   it prints the command for you to run and changes nothing.
@@ -1166,32 +1199,27 @@ size** button, above the GPS row and its **Copy** button.
 ### Coverage: a file outside the box gets no map
 
 Before drawing a locator, GLEAPP asks the basemap whether it holds a tile at
-that point, and skips the file when it does not. An uncovered point renders as
-the background colour with a marker on it, which reads as a real place with
-nothing around it: measured on a regional basemap, a point outside its coverage
-drew an image that was 98.3% a single colour against 11% for a point inside it.
+that point, and skips the file when it does not: an uncovered point would render
+as a background color with a marker on it, which reads as a real place with
+nothing around it. The HTML report and the LAVA project both skip those files
+and both count them, so two reports built from one case agree.
 
-The HTML report and the LAVA project both skip those files and both count them,
-so two reports built from one case agree. A card with no locator map therefore
-means the basemap does not cover it, no basemap is imported, the 400-file cap
-was reached, or the draw failed, and the report names which. It never means the
-location is unknown: the coordinates are still on the row, in the CSV and JSON
-exports, and in the KMZ.
+A card with no locator map therefore means the basemap does not cover it, no
+basemap is imported, the 400-file cap was reached, or the draw failed, and the
+report names which. It never means the location is unknown: the coordinates are
+still on the row, in the CSV and JSON exports, and in the KMZ. The KMZ holds
+placemarks and bundled thumbnails and no map of its own, so it needs no basemap
+and shows every geolocated file wherever it sits.
 
 ### What the reports carry
 
-§14 has the detail. In short: the HTML report embeds a **Locations** overview
-and a locator on each covered geolocated file, with a note counting the files
-that got none and why; the LAVA project carries a **Media Locations** artifact
-with a Map column, a **Location Overview** artifact, the basemap name and hash
-on Device Info, and the same tally on its Screen Output page; and both name the
-basemap and its SHA-256 so a reader can obtain the same file and see the same
-map. Untick **Draw location maps** in the Export dialog, or pass `--no-maps` to
-`gleapp report`, to leave them out.
-
-The KMZ is the exception: it holds placemarks and bundled thumbnails and no map
-of its own, so it needs no basemap, is not limited by one's coverage, and is
-the export that shows every geolocated file wherever it sits.
+The HTML report embeds a **Locations** overview and a locator on each covered
+geolocated file, with a note counting the files that got none and why (§14). The
+LAVA project carries a **Media Locations** artifact with a Map column, a
+**Location Overview** artifact, the basemap name and hash on Device Info, and the
+same tally on its Screen Output page. Both name the basemap and its SHA-256, so
+a reader can obtain the same file and see the same map. **Draw location maps** in
+the Export dialog, or `gleapp report --no-maps`, leaves them out.
 
 ### What the mapping does not do
 
@@ -1205,26 +1233,26 @@ the one outbound address on the page.
 ### Licenses
 
 The Protomaps builds are OpenStreetMap data under the ODbL, and the map shows
-"© OpenStreetMap contributors" as that licence asks. A basemap whose metadata
+"© OpenStreetMap contributors" as that license asks. A basemap whose metadata
 names no source is credited "Basemap supplied by the examiner" rather than
 guessed at. MapLibre GL JS and PMTiles are BSD-3-Clause; the PMTiles
 specification is public domain; the Noto Sans glyphs are under the SIL Open
 Font License. All of it is vendored under `gleapp/web/static/maps/` with its
 license texts, and the page loads nothing else.
 
-## 20. Credits & acknowledgements
+## 20. Credits & acknowledgments
 
 GLEAPP stands on a lot of other people's work. If GLEAPP is useful to you,
 please support, star and cite the projects below.
 
 ### Libraries GLEAPP is built on
 
-| Component | What GLEAPP uses it for | Authors / project | Licence |
+| Component | What GLEAPP uses it for | Authors / project | License |
 |---|---|---|---|
 | **Python** | the runtime | Python Software Foundation | PSF |
-| **Pillow** | image decode/encode, thumbnails, EXIF read | Jeffrey A. Clark & contributors, a fork of PIL by Fredrik Lundh | HPND (PIL licence) |
+| **Pillow** | image decode/encode, thumbnails, EXIF read | Jeffrey A. Clark & contributors, a fork of PIL by Fredrik Lundh | HPND (PIL license) |
 | **pillow-heif** + **libheif** | HEIC / HEIF / AVIF decoding | Alexander Piskun (pillow-heif); libheif by Dirk Farin / struktur AG | BSD-3 / LGPL-3 |
-| **OpenCV** (`opencv-python-headless`) | video decode & key-frame sampling, colour-space ops, DNN inference | OpenCV team; PyPI wheels by Olli-Pekka Heinisuo | Apache-2.0 |
+| **OpenCV** (`opencv-python-headless`) | video decode & key-frame sampling, color-space ops, DNN inference | OpenCV team; PyPI wheels by Olli-Pekka Heinisuo | Apache-2.0 |
 | **NumPy** | array math behind hashing and screening | NumPy developers | BSD-3 |
 | **ImageHash** | aHash / pHash / dHash perceptual hashes: the basis of *find similar*, visual-duplicate stacking and near-duplicate clustering | Johannes Buchner | BSD-2 |
 | **texture2ddecoder** | GPU-texture decode (ASTC / PVRTC / ETC / BCn, KTX) | Rudolf Kolbe (K0lb3) | MIT |
@@ -1239,7 +1267,7 @@ please support, star and cite the projects below.
 | **PMTiles** + **pmtiles.js** | the single-file tileset format the basemap is read from | Protomaps | Specification public domain; reference code BSD-3 |
 | **Protomaps basemap style** & sprites | the map's look | Protomaps (sprite icons derived from the MIT-licensed tangrams/icons) | BSD-3 |
 | **Noto Sans** | the map's label glyphs | Google | SIL Open Font License |
-| **OpenStreetMap** | the data in a Protomaps basemap you import | © OpenStreetMap contributors, credited on the map as the licence asks | ODbL |
+| **OpenStreetMap** | the data in a Protomaps basemap you import | © OpenStreetMap contributors, credited on the map as the license asks | ODbL |
 | **Microsoft Edge WebView2** | the webview runtime the desktop window uses on Windows | Microsoft | proprietary runtime |
 | **PyInstaller** | building `GLEAPP.exe` | the PyInstaller Development Team | GPL-2.0 with bootloader exception |
 | **pytest**, **piexif** | development and tests only, not shipped | Holger Krekel & pytest-dev; hMatoba | MIT |
@@ -1252,7 +1280,7 @@ no bundler, no web fonts, nothing loaded from a CDN.
 - **YuNet**: the bundled face detector (`face_detection_yunet_2023mar.onnx`,
   ~230 KB). A lightweight face-detection CNN by **Shiqi Yu**, **Wei Wu** and
   **Yuantao Feng**, distributed through the **OpenCV Zoo** project (MIT
-  licence). GLEAPP runs the March-2023 model on the CPU through OpenCV's DNN
+  license). GLEAPP runs the March-2023 model on the CPU through OpenCV's DNN
   module.
 - **SFace**: the bundled face-recognition model that powers "find matching
   faces" (`face_recognition_sface_2021dec.onnx`, ~39 MB). Contributed by
@@ -1262,11 +1290,11 @@ no bundler, no web fonts, nothing loaded from a CDN.
   by **Chengrui Wang**, distributed through the **OpenCV Zoo** project under
   the **Apache License 2.0**. GLEAPP runs it on the CPU through OpenCV's DNN
   module and never sends a face or its embedding anywhere; matching happens
-  entirely inside the case. The full licence text ships alongside the model
-  at `gleapp/models/LICENSE-sface`, as the licence requires.
+  entirely inside the case. The full license text ships alongside the model
+  at `gleapp/models/LICENSE-sface`, as the license requires.
 - **Haar cascade** fallback (`haarcascade_frontalface_default.xml`): trained
   by **Rainer Lienhart**; ships inside OpenCV.
-- **Skin-tone ratio** uses no model: it is a plain HSV + YCrCb colour-range
+- **Skin-tone ratio** uses no model: it is a plain HSV + YCrCb color-range
   measurement, the classic approach from the skin-detection literature
   (e.g. Kovač, Peer & Solina, 2003).
 
@@ -1286,7 +1314,7 @@ Reading an **E01 acquisition** — walking its filesystems, carving deleted
 media, and the storage-view collapsing that folds one Android photo's several
 mount-point copies into a single row — is built on tools **Alexis Brignoni**
 wrote for this purpose and vendored verbatim under `gleapp/vendor/` (each with
-its own licence file, `gleapp/vendor/LICENSE-<name>`):
+its own license file, `gleapp/vendor/LICENSE-<name>`):
 
 - **[qnxprobe](https://github.com/abrignoni/qnxprobe)** reads the filesystems
   inside an acquisition (NTFS, APFS, HFS+, ext, F2FS, FAT32, exFAT and more).
@@ -1300,7 +1328,7 @@ All three are MIT licensed, © Alexis Brignoni. GLEAPP's Android storage-view
 table (`gleapp/storage_views.py`), which knows that credential-encrypted,
 device-encrypted and shared storage never collapse together, is ported from
 **ALEAPP**'s `scripts/artifacts/storagePathViews.py` (also Alexis Brignoni,
-MIT licence).
+MIT license).
 
 ### Data standards & reference data (you supply these, none are bundled)
 
@@ -1320,5 +1348,5 @@ alongside **ALEAPP**, **iLEAPP**, **RLEAPP** and the rest, the project started
 by **Alexis Brignoni** and built by a large community of contributors. GLEAPP
 carries on that project's naming, design and philosophy.
 
-*Spotted a missing credit or a wrong licence? Please open an issue; it should
+*Spotted a missing credit or a wrong license? Please open an issue; it should
 be fixed.*

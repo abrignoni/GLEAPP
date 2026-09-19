@@ -4,7 +4,7 @@ Everything the gallery's map needs, served by GLEAPP's own server. Nothing here 
 fetched from the network at run time, and no basemap data ships with GLEAPP: the
 examiner imports a basemap file after installation (see the README's Maps section).
 
-| file | source | version | licence |
+| file | source | version | license |
 |---|---|---|---|
 | maplibre-gl.js, maplibre-gl.css | npm maplibre-gl (dist) | 5.24.0 | BSD-3-Clause, LICENSE-maplibre-gl.txt |
 | pmtiles.js | npm pmtiles (dist) | 4.5.0 | BSD-3-Clause, LICENSE-pmtiles.txt |
