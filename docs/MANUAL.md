@@ -18,20 +18,15 @@ This manual is also available in the app: **☰ Menu → Help → Manual** in a 
 
 ## 1. Getting started
 
-On launch with no case open, GLEAPP shows the **launcher**. The **Help / Manual**
-button (top-right of the launcher; **☰ Menu → Help** inside a case) opens this manual.
-Its **Download as PDF** button hands off to your browser/OS print dialog, scoped
-to just the manual &mdash; choose **Save as PDF** as the destination for an
-offline copy. No PDF is generated or stored by GLEAPP itself.
+On launch with no case open, GLEAPP shows the **launcher**.
 
 - **Recent cases**: click to reopen. Only cases that contain files are listed;
   each shows its live file count.
 - **Open existing case**: point at a folder containing a `case.gleapp` file, or
-  at the `case.gleapp` file itself &mdash; **Browse to folder…** and
-  **Browse to file…** cover either.
+  at the `case.gleapp` file itself.
 - **New case**: give it a name, a folder (created if missing) and your examiner
-  name, then add one or more **evidence sources** under *Evidence to ingest*
-  &mdash; paste a path and click **Add**, or use the two browse buttons. Add as
+  name, then add one or more **evidence sources** under *Evidence to ingest*:
+  paste a path and click **Add**, or use the two browse buttons. Add as
   many sources as you like; they all ingest together into the one case.
   - **Browse to folder…**: scanned recursively for media.
   - **Browse to file…**, which accepts any of:
@@ -1242,8 +1237,7 @@ license texts, and the page loads nothing else.
 
 ## 20. Credits & acknowledgments
 
-GLEAPP stands on a lot of other people's work. If GLEAPP is useful to you,
-please support, star and cite the projects below.
+GLEAPP stands on a lot of other people's work.
 
 ### Libraries GLEAPP is built on
 
@@ -1310,9 +1304,9 @@ library.
 
 ### Disk-image reading & Android storage views (sections 1 & 16)
 
-Reading an **E01 acquisition** — walking its filesystems, carving deleted
+Reading an **E01 acquisition** (walking its filesystems, carving deleted
 media, and the storage-view collapsing that folds one Android photo's several
-mount-point copies into a single row — is built on tools **Alexis Brignoni**
+mount-point copies into a single row) is built on tools **Alexis Brignoni**
 wrote for this purpose and vendored verbatim under `gleapp/vendor/` (each with
 its own license file, `gleapp/vendor/LICENSE-<name>`):
 
@@ -1343,10 +1337,7 @@ MIT license).
 
 ### Inspiration
 
-GLEAPP is part of the **xLEAPP** family of open-source forensic parsers,
+GLEAPP is part of the **LEAPP** family of open-source forensic parsers,
 alongside **ALEAPP**, **iLEAPP**, **RLEAPP** and the rest, the project started
 by **Alexis Brignoni** and built by a large community of contributors. GLEAPP
 carries on that project's naming, design and philosophy.
-
-*Spotted a missing credit or a wrong license? Please open an issue; it should
-be fixed.*

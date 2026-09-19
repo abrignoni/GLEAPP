@@ -1,6 +1,6 @@
-# GLEAPP — Graphics · Logs · Examination · Automated Processing · Parsing
+# GLEAPP: Graphics · Logs · Examination · Automated Processing · Parsing
 
-An open-source toolkit for **triaging and analysing large sets of images and
+An open-source toolkit for **triaging and analyzing large sets of images and
 video** in a digital-forensics workflow.
 
 GLEAPP ingests media from folders (or a JSON job file), hashes and de-duplicates
@@ -10,12 +10,12 @@ gallery** with right-click *find-similar* and *cursor-scrub video preview*.
 
 > **Scope / intended use.** GLEAPP is a defensive investigative tool for
 > authorized examiners. It does **not** ship, download, or connect to any
-> illegal-content hash database and it performs **no** content classification —
+> illegal-content hash database and it performs **no** content classification:
 > categorization is always a human decision. Every case is seeded with the
 > locked **Project VIC 2.0 (US)** category scheme (codes 0–5); the examiner adds
 > their own categories (code 6+) as needed.
 
-A full **manual** is built into the app — the **? Help** button, or press `?` —
+A full **manual** is built into the app (the **? Help** button, or press `?`)
 and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 
 ---
@@ -26,20 +26,20 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 |---|---|
 | **Ingestion** | Recursive scan of folders / mounted evidence, or a `ingest.json` job spec listing multiple named sources (size caps, symlink policy per source) |
 | **Extractions and acquisitions** | A full-file-system extraction (zip, or tar plain or compressed) is read in place, its media registered by device path. An **EnCase/EWF acquisition** (`.E01` and its segments) has its filesystems **walked** file by file, so each file keeps the name, path and dates the filesystem recorded: ext2/3/4, F2FS, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. Recovering **deleted media** is optional and separate: first from **deleted records** (the NTFS **MFT**, and **FAT32** and **exFAT** directory entries), which bring a deleted file back with its real name and the times its filesystem recorded while its clusters are still free, and on NTFS reach files whose data was resident (which a carve cannot), then by **carving** the free space for signatures. A launcher checkbox does it during ingest, or a Source-panel button (and `gleapp source carve`) later |
-| **Archives inside a source** | A `.zip` / `.7z` / `.tar` / `.tar.gz` / `.gz` / `.bz2` / `.xz` found in a folder or on a walked E01 is opened automatically at ingest — its image and video members (and any archives nested inside) are extracted to `extracted/` and registered as ordinary rows linked to the container. The container file itself is kept for its hashes but **hidden from the gallery and reports** (Type = *archive (container)* to list them). RAR is recognized but not opened (no bundled RAR reader). Re-run on an existing case with **Expand archives** |
+| **Archives inside a source** | A `.zip` / `.7z` / `.tar` / `.tar.gz` / `.gz` / `.bz2` / `.xz` found in a folder or on a walked E01 is opened automatically at ingest: its image and video members (and any archives nested inside) are extracted to `extracted/` and registered as ordinary rows linked to the container. The container file itself is kept for its hashes but **hidden from the gallery and reports** (Type = *archive (container)* to list them). RAR is recognized but not opened (no bundled RAR reader). Re-run on an existing case with **Expand archives** |
 | **Hashing** | MD5 / SHA-1 / SHA-256 in one pass, plus aHash / pHash / dHash perceptual hashes |
-| **Deduplication** | Three tiers: exact-file **stacking** (same hash), **visual stacking** ("same picture to the eye" — pHash *and* dHash agree; collapses like a stack, badged **≈ N**), and a looser browsable **similar-group** cluster. Featureless images (gradients, flat screenshots) are excluded from perceptual grouping |
-| **Project VIC** | Import a Project VIC 2.0 (US) case file directly — registers every `Media` entry, resolves the media folder, keeps MD5 / MediaID / original name & path / MIME / victim-offender flags; **export back** to VIC JSON with your categories filled in |
-| **Known-hash matching** | Import Project VIC JSON, CAID-style, plain CSV/text, or a SQLite database (incl. the **NSRL RDS** — delta merge built in) into a per-case set or the shared **global store**; match on crypto hash then pHash. A `known-good` (NSRL) hit auto-categorizes an uncategorized file **Non-pertinent** and can be hidden with **Hide known-NSRL**. A match against a Project VIC hash set carries that record's MediaID, series, flags, tags and Exif (as text) into the gallery, the HTML, CSV and JSON reports, and LAVA |
-| **Robustness at scale** | Tens of thousands of files: LSH-banded near-dup clustering (not O(n²)); video *and* GPU-texture decode isolated in child processes (a corrupt clip or a texture-decoder segfault can't crash the run — video batches are bisected and retried); HEIC/HEIF/TIFF/RAW decoded for viewing; **KTX** GPU textures (ASTC/PVRTC/ETC/BC) decoded to images; Apple's proprietary LZFSE assets labeled honestly rather than shown broken; **Retry failed files** re-runs just the errored ones |
+| **Deduplication** | Three tiers: exact-file **stacking** (same hash), **visual stacking** ("same picture to the eye": pHash *and* dHash agree; collapses like a stack, badged **≈ N**), and a looser browsable **similar-group** cluster. Featureless images (gradients, flat screenshots) are excluded from perceptual grouping |
+| **Project VIC** | Import a Project VIC 2.0 (US) case file directly: registers every `Media` entry, resolves the media folder, keeps MD5 / MediaID / original name & path / MIME / victim-offender flags; **export back** to VIC JSON with your categories filled in |
+| **Known-hash matching** | Import Project VIC JSON, CAID-style, plain CSV/text, or a SQLite database (incl. the **NSRL RDS**, delta merge built in) into a per-case set or the shared **global store**; match on crypto hash then pHash. A `known-good` (NSRL) hit auto-categorizes an uncategorized file **Non-pertinent** and can be hidden with **Hide known-NSRL**. A match against a Project VIC hash set carries that record's MediaID, series, flags, tags and Exif (as text) into the gallery, the HTML, CSV and JSON reports, and LAVA |
+| **Robustness at scale** | Tens of thousands of files: LSH-banded near-dup clustering (not O(n²)); video *and* GPU-texture decode isolated in child processes (a corrupt clip or a texture-decoder segfault can't crash the run: video batches are bisected and retried); HEIC/HEIF/TIFF/RAW decoded for viewing; **KTX** GPU textures (ASTC/PVRTC/ETC/BC) decoded to images; Apple's proprietary LZFSE assets labeled honestly rather than shown broken; **Retry failed files** re-runs just the errored ones |
 | **Metadata** | EXIF capture time, camera make/model, GPS → decimal degrees; filesystem-time fallback; capture **timeline** via sort |
 | **Video** | Dimensions/duration (OpenCV, no ffmpeg needed), evenly-spaced **key-frame** extraction, per-frame pHash so a still can find its source video |
-| **Visual screening** | **YuNet** DNN face detection + broad **skin-tone ratio** as triage aids (pluggable — swap in another model behind the same functions) |
+| **Visual screening** | **YuNet** DNN face detection + broad **skin-tone ratio** as triage aids (pluggable: swap in another model behind the same functions) |
 | **Similarity search** | *Right-click → Find similar* across stills **and** video key frames; also on the CLI |
-| **Categories** | Locked **Project VIC 2.0 (US)** presets (codes 0–5) in every case; examiner adds their own (code 6+ — rename / delete / reorder, auto colors); shown as a color bar + name on every tile |
-| **Flags** | Independent of category — a file can carry any number (Evidence, Bondage, whatever the case calls for); examiner-defined, none preseeded or locked; searchable, filterable, and shown as colored labels in every report |
+| **Categories** | Locked **Project VIC 2.0 (US)** presets (codes 0–5) in every case; examiner adds their own (code 6+: rename / delete / reorder, auto colors); shown as a color bar + name on every tile |
+| **Flags** | Independent of category: a file can carry any number (Evidence, Bondage, whatever the case calls for); examiner-defined, none preseeded or locked; searchable, filterable, and shown as colored labels in every report |
 | **Saving** | Every action commits to `case.gleapp` immediately (SQLite WAL); notes autosave; header shows save status; timestamped snapshots in `<case>/backups/` on a timer, on close, and on demand |
-| **Review workflow** | Filter to Uncategorized and work the backlog — categorizing *is* the review step, cursor auto-advances, ↻ Refresh clears done files; flags, per-file notes, audit log of every action |
+| **Review workflow** | Filter to Uncategorized and work the backlog: categorizing *is* the review step, cursor auto-advances, ↻ Refresh clears done files; flags, per-file notes, audit log of every action |
 | **Reporting** | HTML contact-sheet, CSV, JSON, **KMZ** of geolocated media (thumbnails embedded, for Google Earth), MD5 list, Project VIC round-trip, and a **LAVA** project the LEAPP family's viewer opens |
 | **Web gallery** | Filter sidebar, multi-select, keyboard categorization, docked metadata pane (single-click), filmstrip + duplicate stack, one-click export, built-in manual |
 
@@ -121,7 +121,7 @@ version is read from `gleapp/__init__.py`, so it cannot drift from the app. Phas
 macOS also produces `dist/GLEAPP.app`, unsigned; sign it with `codesign` before phase 2.
 A Linux AppImage is not wired up yet.
 
-The build bundles Python, OpenCV, Pillow, NumPy, SciPy, Flask and pywebview —
+The build bundles Python, OpenCV, Pillow, NumPy, SciPy, Flask and pywebview:
 ~110–140 MB one-folder, ~90 MB one-file. It does **not** bundle the WebView2
 runtime; see `packaging/installer.iss` for how to chain the Evergreen
 bootstrapper if you need to support machines without it.
@@ -194,12 +194,11 @@ Re-running `ingest` / `process` skips already-processed files; add `--force` to 
 ### Saving
 
 Nothing needs an explicit save. Every categorize / flag / rename commits
-to `case.gleapp` the instant you do it (SQLite in WAL mode — survives a hard
+to `case.gleapp` the instant you do it (SQLite in WAL mode: survives a hard
 kill), and notes autosave a second after you stop typing. The header shows
 **"All changes saved · HH:MM"**, or **"Saving…"** / **"⚠ Save failed"**.
 
-On top of that, GLEAPP writes **snapshots** — full standalone copies of the case
-— to `<case>/backups/`:
+On top of that, GLEAPP writes **snapshots** (full standalone copies of the case) to `<case>/backups/`:
 
 * automatically every 10 minutes if anything changed, and when the case closes
 * on demand via the **Save snapshot** button (optional label)
@@ -242,7 +241,7 @@ Relative `path`s are resolved against the JSON file's location.
 
 ## Project VIC
 
-Pass a Project VIC 2.0 (US) `.json` file wherever you'd pass a folder — the
+Pass a Project VIC 2.0 (US) `.json` file wherever you'd pass a folder: the
 launcher's **"Browse for JSON"**, the typed-path box, or `gleapp ingest FILE`.
 GLEAPP auto-detects it (by the `@odata.context` / `value[].Media` shape),
 registers every `Media` entry, and resolves each `RelativeFilePath` against the
@@ -252,16 +251,16 @@ error flag so the counts still line up for export.
 Each file carries its VIC MD5 (processing trusts it, skips re-hashing), MediaID,
 original filename and device path, MIME type, victim/offender/distributed flags,
 and the Series and Tags the record carried, kept apart from the examiner's own flags. Existing `Category` values are imported; GLEAPP category codes map 1:1 to
-VIC codes (0 = uncategorized = `null`) — the codes 1–5 GLEAPP seeds *are* the
+VIC codes (0 = uncategorized = `null`): the codes 1–5 GLEAPP seeds *are* the
 Project VIC scheme, so an imported category lands on the matching locked preset.
 
 **Export back:** the **Export Project VIC** button (or `gleapp report --format vic`)
 re-reads the original file and writes `reports/projectvic_export.json` with each
-entry's `Category` (and `Comments` from your notes) updated — ready to load back
+entry's `Category` (and `Comments` from your notes) updated, ready to load back
 into Project VIC. You choose all-media or categorized-only.
 
 Processing 30k+ files takes a while (thumbnails, perceptual hashes, optional
-face/skin screening) but is resumable — re-run `process` / reopen the case to
+face/skin screening) but is resumable: re-run `process` / reopen the case to
 continue. Turning off screening in the launcher roughly halves the time.
 
 ## LAVA report
@@ -344,7 +343,7 @@ Import into **this case** (sidebar **Known hashes → Import hash set…**, or
   `--rm ID` (or the sidebar list) manage the global store.
 
 `--kind known` flags matches as notable; `--kind known-good` marks benign files
-(NSRL etc.) — a hit auto-categorizes an uncategorized file **Non-pertinent** and
+(NSRL etc.): a hit auto-categorizes an uncategorized file **Non-pertinent** and
 is hidden by the sidebar's **Hide known-NSRL**. **Re-check known hashes** in the
 gallery re-runs matching without a full reprocess.
 
@@ -458,7 +457,7 @@ gleapp -c CASE  desktop   # native window (offline)
 
 `web` and `desktop` both start at a **launcher** if the case doesn't exist yet:
 pick a recent case, open an existing one, or create a new case and add evidence
-folders / a JSON job, then watch processing progress — no CLI needed.
+folders / a JSON job, then watch processing progress, no CLI needed.
 
 `--where` takes a raw SQL predicate on the `files` table, e.g.
 `--where "category IN (1,2) AND faces > 0"`.
@@ -471,16 +470,16 @@ folders / a JSON job, then watch processing progress — no CLI needed.
 |---|---|
 | Select | click; Ctrl-click add; Shift-click range; `←`/`→` move; `A` select all |
 | **See details** | **single-click** a file → the right pane fills instantly (no double-click). Toggle the pane with `I` or the header button |
-| Manage categories | **⚙ Categories** in the header — presets 0–5 are locked; add / rename / delete / reorder your own (order = the `1`–`9` keys) |
+| Manage categories | **⚙ Categories** in the header: presets 0–5 are locked; add / rename / delete / reorder your own (order = the `1`–`9` keys) |
 | Categorize | keys `1`–`9` by category order (`1`–`5` = VIC presets), `0` to clear, or the selection bar / right-click menu / details pane |
 | **Find similar** | **right-click → Find similar images**, key `F`, or the details-pane button |
-| **Scrub a video** | move the cursor left→right across a video tile — it steps through the key frames; a bar shows position |
+| **Scrub a video** | move the cursor left→right across a video tile: it steps through the key frames; a bar shows position |
 | View full size | **View full size** button in the details pane, or double-click a tile |
-| Notes | type in the details pane — autosaves ~1s after you stop |
+| Notes | type in the details pane: autosaves ~1s after you stop |
 | Snapshot | **Save snapshot** button → timestamped copy in `<case>/backups/` |
 | Switch case | **⇤ Close case** button → snapshots, closes, returns to the launcher (recent / open / new) |
 | Pages | **Thumbnails per page** in the sidebar (50–1500); pager bar has First/Prev/Next/Last and a jump-to-page box; `PageUp`/`PageDown` keys, `Ctrl+Home`/`Ctrl+End` |
-| Search | sidebar box — matches file name, path, original device path/name, MD5/SHA/pHash (partial ok), capture date, camera, MIME, source, notes, flags. Space-separated words all have to match |
+| Search | sidebar box: matches file name, path, original device path/name, MD5/SHA/pHash (partial ok), capture date, camera, MIME, source, notes, flags. Space-separated words all have to match |
 | Filters | sidebar: **Clear all filters**; search, type, category, source, cluster, **duplicates** (any / exact / visual / near-dup), has-faces, min skin ratio, has-GPS, known-hash hit, **hide known-NSRL**, processing error, collapse duplicates. Sort / per-page / tile-size live on the grid's top bar |
 | Export | **Export report** button → dialog: pick scope (All / **Categorized only** / **Uncategorized only** / Selected) and formats (HTML, CSV, JSON, KMZ, **MD5 list**, Project VIC). Scoped files get a suffixed name (`report_categorized.csv`) |
 | Manual | **? Help** in the header, or press `?` |
@@ -562,10 +561,10 @@ pip install pytest piexif
 pytest -q
 ```
 
-* `tests/test_pipeline.py` — unit coverage: ingestion, hashing, exact/visual
+* `tests/test_pipeline.py`: unit coverage of ingestion, hashing, exact/visual
   stacking, clustering, similarity search, hash-set matching, categories,
   Project VIC import/export, the web API, snapshots.
-* `tests/test_regression.py` — drives a full pipeline run over the collection
+* `tests/test_regression.py`: drives a full pipeline run over the collection
   from **`tools/make_test_media.py`** (30-odd deliberately-varied files +
   a `manifest.json` of expectations) and checks the scenarios that have bitten
   us: native decoder crashes on corrupt video, featureless-image false grouping,
@@ -587,7 +586,7 @@ pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. E01
 acquisitions are walked with [qnxprobe](https://github.com/abrignoni/qnxprobe),
 read with [ewfprobe](https://github.com/abrignoni/ewfprobe) and carved with
 [mediacarve](https://github.com/abrignoni/mediacarve), all three MIT and
-vendored under `gleapp/vendor/`. GLEAPP is part of the **xLEAPP** family
+vendored under `gleapp/vendor/`. GLEAPP is part of the **LEAPP** family
 (ALEAPP / iLEAPP / RLEAPP …), the project started by Alexis Brignoni &
 contributors, and its Android storage-view table is ported from ALEAPP. It
 reads the **Project VIC** data model and the **NSRL RDS** (NIST). Full
@@ -596,5 +595,5 @@ attributions and licenses: **section 20 of the manual** (`docs/MANUAL.md`, or
 
 ## License
 
-MIT — see `LICENSE`. Bundled third-party components keep their own licenses;
+MIT. See `LICENSE`. Bundled third-party components keep their own licenses;
 see the manual's credits section.

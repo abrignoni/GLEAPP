@@ -33,22 +33,15 @@ signals only. Every category decision is the examiner's.</p>
 </div>
 
 <h2 id="start">1. Getting started</h2>
-<p>On launch with no case open, GLEAPP shows the <strong>launcher</strong>. The
-<strong>Help / Manual</strong> button (top-right of the launcher; <strong>&#9776; Menu
-&rarr; Help</strong> inside a case) opens this manual. Its <strong>Download as PDF</strong> button
-hands off to your browser/OS print dialog, scoped to just the manual &mdash;
-choose <strong>Save as PDF</strong> as the destination for an offline copy. No
-PDF is generated or stored by GLEAPP itself.</p>
+<p>On launch with no case open, GLEAPP shows the <strong>launcher</strong>.</p>
 <ul>
   <li><strong>Recent cases</strong>: click to reopen. Only cases that contain files
   are listed; each shows its live file count.</li>
   <li><strong>Open existing case</strong>: point at a folder that contains a
-  <code>case.gleapp</code> file, or at the <code>case.gleapp</code> file itself
-  &mdash; <strong>Browse to folder&hellip;</strong> and <strong>Browse to
-  file&hellip;</strong> cover either.</li>
+  <code>case.gleapp</code> file, or at the <code>case.gleapp</code> file itself.</li>
   <li><strong>New case</strong>: give it a name, a folder (created if missing), and
   your examiner name, then add one or more <strong>evidence sources</strong> under
-  <em>Evidence to ingest</em> &mdash; paste a path and click <strong>Add</strong>,
+  <em>Evidence to ingest</em>: paste a path and click <strong>Add</strong>,
   or use the two browse buttons. Add as many sources as you like; they all ingest
   together into the one case.
     <ul>
@@ -368,13 +361,13 @@ export; code 0 exports as <code>null</code>.</p>
 
 <h3 id="flags">Flags: an independent, per-file label</h3>
 <p>A file's <strong>category</strong> is always exactly one value. <strong>Flags</strong>
-are separate and additive: a file can carry any number of them &mdash; Evidence,
-Bondage, Priority, whatever your workflow needs &mdash; on top of its category, and
+are separate and additive: a file can carry any number of them (Evidence,
+Bondage, Priority, whatever your workflow needs) on top of its category, and
 a flag never changes what the category is. Open the picker from a tile's details
 pane ("+ flag") or right-click &rarr; Flags&hellip;; checking a box applies it
 immediately, unchecking removes it. The <strong>⚙&nbsp;Flags</strong> editor (Menu
 &rarr; Case) manages the list itself: add, rename, recolor, drag to reorder, delete.
-Unlike categories, <strong>no flag is preseeded or locked</strong> &mdash; the list is
+Unlike categories, <strong>no flag is preseeded or locked</strong>: the list is
 empty until you add to it, so the vocabulary is entirely yours. Flags are
 searchable (the free-text search box matches flag names), filterable (the
 sidebar's Flag dropdown), sortable as a details-list column, and appear in every
@@ -1132,8 +1125,7 @@ extract</code>.</p>
 text rather than a link, because a link would be the one outbound address on the page.</p>
 
 <h2 id="credits">20. Credits &amp; acknowledgments</h2>
-<p>GLEAPP stands on a lot of other people's work. If GLEAPP is useful to you,
-please support, star and cite the projects below.</p>
+<p>GLEAPP stands on a lot of other people's work.</p>
 
 <h3>Libraries GLEAPP is built on</h3>
 <table>
@@ -1201,9 +1193,9 @@ near-dup clustering out of O(n&sup2;), and per-key-frame video matching, is
 GLEAPP's own code, no extra library.</p>
 
 <h3>Disk-image reading &amp; Android storage views (sections&nbsp;1&nbsp;&amp;&nbsp;16)</h3>
-<p>Reading an <strong>E01 acquisition</strong> &mdash; walking its filesystems,
+<p>Reading an <strong>E01 acquisition</strong> (walking its filesystems,
 carving deleted media, and the storage-view collapsing that folds one Android
-photo's several mount-point copies into a single row &mdash; is built on tools
+photo's several mount-point copies into a single row) is built on tools
 <strong>Alexis&nbsp;Brignoni</strong> wrote for this purpose and vendored
 verbatim under <code>gleapp/vendor/</code> (each with its own license file,
 <code>gleapp/vendor/LICENSE-&lt;name&gt;</code>):</p>
@@ -1239,10 +1231,8 @@ MIT license).</p>
 </ul>
 
 <h3>Inspiration</h3>
-<p>GLEAPP is part of the <strong>xLEAPP</strong> family of open-source forensic
+<p>GLEAPP is part of the <strong>LEAPP</strong> family of open-source forensic
 parsers, alongside <strong>ALEAPP</strong>, <strong>iLEAPP</strong>,
 <strong>RLEAPP</strong> and the rest, the project started by
 <strong>Alexis&nbsp;Brignoni</strong> and built by a large community of
 contributors. GLEAPP carries on that project's naming, design and philosophy.</p>
-<p><em>Spotted a missing credit or a wrong license? Please open an issue; it
-should be fixed.</em></p>
