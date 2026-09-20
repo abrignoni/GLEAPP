@@ -237,16 +237,20 @@ cropped), which matters when text is burned into the top or bottom of a screensh
 or Snap. Small corner badges still sit over the image corners; the full-size
 viewer shows the complete image with nothing over it.</p>
 <table>
-  <tr><td><span class="tag" style="background:#e5484d">HASH</span></td><td>matched a known-hash set of kind <em>known</em> (notable)</td></tr>
-  <tr><td><span class="tag" style="background:#2f6e4f">NSRL</span></td><td>matched a <em>known-good</em> set (the badge shows the set's first word); auto-categorized <strong>Non-pertinent</strong> if still uncategorized</td></tr>
+  <tr><td><span class="tag" style="background:#d9822b">VIC</span></td><td>matched a <strong>Project&nbsp;VIC hash set</strong> (hover for the set name and category)</td></tr>
+  <tr><td><span class="tag" style="background:#2563eb">HASH</span></td><td>matched an imported hash set that is not Project&nbsp;VIC, known-good or your stash (kind <em>known</em> or <em>other</em>)</td></tr>
+  <tr><td><span class="tag" style="background:#2f6e4f">NSRL</span></td><td>matched a <em>known-good</em> set (the badge shows the set name's first word, uppercased, cut to 6 characters); auto-categorized <strong>Non-pertinent</strong> if still uncategorized</td></tr>
   <tr><td><span class="tag" style="background:#7c4dff">STASH</span></td><td>matched your <strong>local hash stash</strong>: a file you categorized 1&ndash;3 in another case. Adopts that category if still uncategorized</td></tr>
-  <tr><td><span class="tag" style="background:#e5484d">ERR</span></td><td>a processing error: the file could not be decoded (hover the tile / open details for the reason)</td></tr>
-  <tr><td>3&#128100;</td><td>face count from screening</td></tr>
+  <tr><td><span class="tag" style="background:#e5484d">ERR</span></td><td>a processing error and no thumbnail: the file could not be decoded (hover the tile / open details for the reason)</td></tr>
+  <tr><td><span class="tag" style="background:#0e7490">3&#128100;</span></td><td>face count from screening</td></tr>
   <tr><td>&#128205;</td><td>has GPS coordinates in its metadata</td></tr>
   <tr><td>&#8776;&nbsp;N</td><td>part of a <strong>visual stack</strong> of N: the same picture, re-encoded/resized (blue offset shadow)</td></tr>
   <tr><td>&#11034;&nbsp;N</td><td>part of an <strong>exact stack</strong> of N: byte-identical copies (gray offset shadow)</td></tr>
   <tr><td>&#10003;</td><td>selected (also a blue outline and slight brightening)</td></tr>
 </table>
+<p>A file can be in both kinds of stack. Both badges then show side by side in the
+tile's lower-right corner (<code>&#8776;&nbsp;N</code> first, then
+<code>&#11034;&nbsp;N</code>), and the offset shadow shows the visual stack.</p>
 <p>Video tiles show a duration label and a play glyph; hover and move the cursor
 left-to-right across a video tile to <strong>scrub</strong> through its key frames.</p>
 <p>Single-click selects. Double-click opens the <strong>full-size viewer</strong>
@@ -530,7 +534,7 @@ checks each file's SHA-256, then SHA-1, then MD5 (exact) and then its pHash
 </ul>
 <p>Set <strong>kinds</strong>:</p>
 <table>
-  <tr><td><strong>known</strong></td><td>notable / bad. A hit shows the red HASH badge (purple STASH for your <a href="#stash">local hash stash</a>) and, if the file is uncategorized and the set asserts a category, adopts it.</td></tr>
+  <tr><td><strong>known</strong></td><td>notable / bad. A hit shows the blue HASH badge (purple STASH for your <a href="#stash">local hash stash</a>) and, if the file is uncategorized and the set asserts a category, adopts it.</td></tr>
   <tr><td><strong>known-good</strong></td><td>benign (NSRL, OS/app files). A hit shows the gray NSRL badge, is <strong>auto-categorized Non-pertinent</strong> if uncategorized, and can be hidden with "Hide known-NSRL". Never overrides a category you set.</td></tr>
   <tr><td><strong>other</strong></td><td>informational only.</td></tr>
 </table>
@@ -556,7 +560,7 @@ against is its entry count minus its PhotoDNA count.</p>
 <p>Sidebar &rarr; <strong>Known hashes</strong> &rarr; <strong>Import hash set...</strong>.
 A file browser opens; pick the CyberTip file. GLEAPP fills a name in from the
 filename (edit it, e.g. <code>CyberTip 12345678</code>); pick <strong>Flag as
-notable</strong> (default, red HASH badge) or <em>Mark as benign</em>; click
+notable</strong> (default, blue HASH badge) or <em>Mark as benign</em>; click
 <strong>Import &amp; flag</strong>. GLEAPP loads the hashes, re-checks every file,
 and jumps the gallery to the matches. Each imported set is listed under the button
 with its entry / hit counts and an <strong>&times;</strong> to remove it (removing
