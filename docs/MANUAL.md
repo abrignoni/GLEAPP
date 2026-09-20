@@ -1404,7 +1404,8 @@ This product includes software developed by SecureAuth Corporation
 | **Protomaps basemap style** & sprites | the map's look | Protomaps (sprite icons derived from the MIT-licensed tangrams/icons) | BSD-3 |
 | **Noto Sans** | the map's label glyphs | Google | SIL Open Font License |
 | **OpenStreetMap** | the data in a Protomaps basemap you import | © OpenStreetMap contributors, credited on the map as the license asks | ODbL |
-| **Microsoft Edge WebView2** | the webview runtime the desktop window uses on Windows | Microsoft | proprietary runtime |
+| **Microsoft Edge WebView2 Runtime** | the webview the desktop window uses on Windows. Ships with Windows and is **not** bundled | Microsoft | proprietary, not redistributed |
+| **WebView2 SDK assemblies** | bundled by pywebview: `Microsoft.Web.WebView2.Core.dll`, `.WinForms.dll` and `WebView2Loader.dll`, byte-identical to NuGet `Microsoft.Web.WebView2` 1.0.3856.49 | Microsoft | BSD-3-Clause, text carried in the notices |
 | **PyInstaller** | building `GLEAPP.exe` | the PyInstaller Development Team | GPL-2.0 with bootloader exception |
 | **pytest**, **piexif** | development and tests only, not shipped | Holger Krekel & pytest-dev; hMatoba | MIT |
 | **pillow-heif** | development only, not shipped: writes the HEIC test fixture, which needs the x265 encoder pi-heif leaves out | Alexander Piskun | BSD-3 source; GPLv2 wheels (x265) |

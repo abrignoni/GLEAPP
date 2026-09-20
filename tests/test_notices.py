@@ -113,6 +113,37 @@ def test_build_only_packages_are_not_credited(only_fakes):
     assert entries == [], "build-only packages must not appear in the notices"
 
 
+def test_the_webview2_terms_travel_with_the_binaries_that_need_them(only_fakes):
+    """pywebview ships Microsoft's WebView2 assemblies and none of their terms.
+
+    Those DLLs are byte-identical to the NuGet package Microsoft.Web.WebView2
+    1.0.3856.49, whose licence is BSD-3-Clause, and its second clause asks for the
+    notice in a binary distribution. pywebview carries only its own BSD licence, so
+    the text has to come from this repo or it does not ship at all.
+    """
+    only_fakes([_FakeDist("pywebview", "6.2.1", License="BSD 3-Clause License")])
+    text, unknown = make_notices.build_notices(only={"pywebview"}, root=ROOT)
+    assert unknown == []
+    assert "Microsoft.Web.WebView2.Core.dll" in text
+    assert "1.0.3856.49" in text
+    # the licence text itself, not merely a mention of it
+    assert "Copyright (C) Microsoft Corporation. All rights reserved." in text
+    assert "Redistributions in binary form must reproduce the above" in text
+    # the Runtime is a different thing and is not bundled; say so rather than imply it
+    assert "NOT bundled" in text
+
+
+def test_the_webview2_licence_text_is_the_one_microsoft_ships():
+    """Kept verbatim: an edited licence is not the licence."""
+    text = (ROOT / "packaging" / "licenses" / "LICENSE-webview2.txt").read_text(encoding="utf-8")
+    assert text.startswith("Copyright (C) Microsoft Corporation. All rights reserved.")
+    for clause in ("Redistributions of source code must retain",
+                   "Redistributions in binary form must reproduce",
+                   "may not be used to endorse or promote products"):
+        assert clause in text, f"missing BSD-3-Clause term: {clause}"
+    assert "\r" not in text, "must be LF, like every tracked text file"
+
+
 def test_the_notices_route_says_what_to_do_when_no_file_is_built():
     """A source checkout has no notices file, and that is not a missing feature."""
     from gleapp.web.app import create_app  # pylint: disable=import-outside-toplevel
