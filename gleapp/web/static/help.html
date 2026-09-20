@@ -84,6 +84,9 @@ signals only. Every category decision is the examiner's.</p>
   <li><em>Copy media out of extraction archives</em>: off keeps the case small but the
   archive must stay in place. On makes the case self-contained.</li>
   <li><em>Recover media</em>: disk images only, off by default (&sect;16).</li>
+  <li><em>Enable hash stash matching</em>: on by default. Turn it off for a case that isn't
+  CSAM / Project VIC related, so an old stashed hit can't re-flag unrelated media. You can
+  change it later from the <em>Known hashes</em> section (&sect;12).</li>
 </ul>
 <p>Click <strong>Create case &amp; ingest</strong>.</p>
 <p>The gallery opens as soon as files are registered, and a progress bar along the
@@ -99,13 +102,24 @@ is blocked until then.</p>
   <tr><td><code>case.gleapp</code></td><td>the SQLite database: everything GLEAPP learns about a file lives here, so runs are resumable</td></tr>
   <tr><td><code>thumbs/</code></td><td>generated gallery thumbnails and video key frames</td></tr>
   <tr><td><code>views/</code></td><td>full-size JPEGs transcoded from formats the browser can't show (HEIC, TIFF, KTX, ...)</td></tr>
+  <tr><td><code>cache/</code></td><td>on-demand copies for the viewer (bounded, oldest evicted)</td></tr>
+  <tr><td><code>tmp/</code></td><td>on-demand copies for processing, removed after use</td></tr>
+  <tr><td><code>staged/</code></td><td>archive members copied into the case, when <em>Copy media out of extraction archives</em> is on</td></tr>
   <tr><td><code>extracted/</code></td><td>media unpacked from container files: archives (<code>.zip</code> / <code>.tar</code> / <code>.gz</code>) found in a source, and Snapchat <code>LZC</code> bundles</td></tr>
   <tr><td><code>reports/</code></td><td>exported reports: CSV/JSON, MD5 lists, KMZ, Project VIC exports, LAVA projects</td></tr>
   <tr><td><code>backups/</code></td><td>timestamped snapshot copies of <code>case.gleapp</code></td></tr>
 </table>
 <p>Switch cases with <strong>⇤ Close case</strong> (snapshots first, returns to the
-launcher). The original evidence is never modified: GLEAPP reads it and writes
-only inside the case folder.</p>
+launcher). The original evidence is never modified: GLEAPP only reads it. Case
+data is written inside the case folder. Your settings, the shared hash store,
+your hash stash and imported basemaps live in your user data folders instead
+(section&nbsp;18).</p>
+<p><strong>Command line.</strong> A command that works on a case takes the case folder as
+<code>-c &lt;case folder&gt;</code>, written before the subcommand:
+<code>gleapp -c &lt;case folder&gt; process --force</code>. Without <code>-c</code>, GLEAPP
+looks for a folder named <code>case</code> in the current directory. The <code>maps</code>
+commands, <code>hashset --global</code> and <code>stash</code> (except
+<code>stash --add</code>) do not use a case.</p>
 
 <h2 id="gallery">3. The review gallery</h2>
 <table>
@@ -399,38 +413,45 @@ local hash stash, which key on category alone.</p>
 </ul>
 
 <h3>Search</h3>
-<p>Free text. Every whitespace-separated word must match somewhere (AND); within a
-word it matches across <em>all</em> of: relative path, absolute path, original
-device name and path, camera, notes, MIME, source, capture date, examiner,
-known-hash name, error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work),
-and flags. So <code>dcim 2024-07</code> finds files whose path mentions DCIM and
-whose date is in July 2024.</p>
+<p>Free text. Each whitespace-separated word must match somewhere (AND). Within a word, it
+matches across all of:</p>
+<ul>
+  <li><strong>Names and paths:</strong> relative path, absolute path, original device name and
+  path</li>
+  <li><strong>Metadata:</strong> camera, notes, MIME, source, capture date, examiner</li>
+  <li><strong>Hashes and matches:</strong> known-hash name, MD5 / SHA-1 / SHA-256 / pHash
+  (partial hashes work)</li>
+  <li><strong>Other:</strong> error text, flags</li>
+</ul>
+<p>So <code>dcim 2024-07</code> finds files whose path mentions DCIM and whose date is in July
+2024.</p>
 
 <h3>Category / Type / Source</h3>
-<ul>
-  <li><strong>Category</strong>: <strong>Any</strong>, a specific category
-  (presets and your own, hidden ones marked), or <strong>Uncategorized</strong>,
-  which enables the auto-advance review flow.</li>
-  <li><strong>Type</strong>: <strong>image</strong>, <strong>video</strong>, or
-  <strong>other</strong> (not decodable media: documents, unknown formats). A
-  fourth value, <strong>archive (container)</strong>, is the only way to see the
-  <code>.zip</code> / <code>.tar</code> / <code>.gz</code> files themselves: they
-  are <strong>hidden from the gallery and reports by default</strong>; only the
-  image and video members found inside them are shown.</li>
-  <li><strong>Source</strong>: restrict to one ingest source (folder name, or the
-  Project VIC source).</li>
-</ul>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><strong>Category</strong></td><td><strong>Any</strong>, a specific category (presets and your own, hidden ones marked), or <strong>Uncategorized</strong>, which enables the auto-advance review flow.</td></tr>
+  <tr><td><strong>Type</strong></td><td><strong>image</strong>, <strong>video</strong>, or <strong>other</strong> (non-decodable, documents, unknown formats). A fourth value, <strong>archive (container)</strong>, is the only way to see the <code>.zip</code> / <code>.tar</code> / <code>.gz</code> files themselves: they are <strong>hidden from the gallery and reports by default</strong>; only the image and video members found inside them are shown.</td></tr>
+  <tr><td><strong>Source</strong></td><td>Restrict to one ingest source (folder name, or the Project&nbsp;VIC source).</td></tr>
+</table>
 
 <h3>Carving <em>(disk images only)</em></h3>
 <ul>
-  <li><strong>How recovered</strong>: <em>All</em>, <em>Walked</em> (files read
-  out of a filesystem, with names and dates), <em>Recovered</em> (a deleted file
-  rebuilt from the record that still named it, an NTFS MFT record or a FAT32 or
-  exFAT directory entry, with its real name) or <em>Carved</em> (recovered by
-  signature from unallocated space, no name or date).</li>
-  <li>Below it, each disk image with its <em>walked</em> / <em>carved</em> counts and a
-  <strong>Carve for deleted media</strong> / <strong>Carve again</strong> button:
-  see &sect;16.</li>
+  <li><strong>How recovered</strong> has four choices:
+    <ul>
+      <li><em>All</em></li>
+      <li><em>Walked, still listed</em>: files a filesystem still lists, with names and dates</li>
+      <li><em>Recovered from a deleted record</em>: a deleted file rebuilt from the record that
+        still named it, an NTFS MFT record or a FAT32 or exFAT directory entry, with its real
+        name</li>
+      <li><em>Carved from unclaimed space</em>: found by signature in space no volume claims, no
+        name or date</li>
+    </ul>
+  </li>
+  <li>The <strong>&#9776;&nbsp;List</strong> view offers the same as a <strong>How
+    recovered</strong> column, off by default.</li>
+  <li>Below it, each disk image in the case with its <em>walked</em> / <em>recovered from deleted
+    records</em> / <em>carved</em> counts and a <strong>Carve for deleted media</strong> /
+    <strong>Carve again</strong> button: see &sect;16.</li>
 </ul>
 
 <h3>Archives <em>(when the case holds any <code>.zip</code> / <code>.7z</code> / <code>.tar</code> / <code>.gz</code>)</em></h3>
@@ -442,54 +463,37 @@ whose date is in July 2024.</p>
 </ul>
 
 <h3>Known hashes</h3>
-<ul>
-  <li><strong>Show</strong>: <em>all files</em> (default), <em>any imported hash
-  set</em>, or <em>only</em> one named set (e.g. one CyberTip). Filters to the
-  files that set flagged.</li>
-  <li><strong>Any known-hash hit</strong>: matched <em>any</em> hash set,
-  including the global store (NSRL) and the local hash stash.</li>
-  <li><strong>Hide known-NSRL</strong>: hides every file that matched a
-  <em>known-good</em> set (NSRL etc.), so OS and app files stop cluttering the
-  review. The count beside it is how many are hidden.</li>
-  <li><strong>Match against my hash stash</strong> / <strong>Match against
-  Project&nbsp;VIC sets</strong> (both on by default): untick one for a case that
-  has nothing to do with it. Its existing flags clear at once (a flag from another
-  source stays), and <em>Re-check</em> brings them back after you tick it again. A
-  Project&nbsp;VIC set imported before this option existed is not labeled VIC
-  until it is imported again.</li>
-  <li><strong>Import hash set... / Re-check</strong>, the imported-set list, and the
-  <strong>Reference data</strong> and <strong>hash stash</strong> lines:
-  see section&nbsp;11.</li>
-</ul>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><strong>Show</strong></td><td><em>all files</em> (default), <em>any imported hash set</em>, or <em>only</em> one named set (e.g. one CyberTip). Filters to the files that set flagged.</td></tr>
+  <tr><td><strong>Any known-hash hit</strong></td><td>Matched <em>any</em> hash set at all, including the global store (NSRL) and the local hash stash.</td></tr>
+  <tr><td><strong>Hide known-NSRL</strong></td><td>Hides every file that matched a <em>known-good</em> set (NSRL etc.), so OS and app files stop cluttering the review. The count beside it is how many are hidden.</td></tr>
+  <tr><td><strong>Match against my hash stash</strong> / <strong>Match against Project&nbsp;VIC sets</strong></td><td>Both on by default. Untick one for a case that has nothing to do with it. Its existing flags clear at once (a flag from another source stays), and <em>Re-check</em> brings them back after you tick it again. A Project&nbsp;VIC set imported before this option existed is not labeled VIC until it is imported again.</td></tr>
+  <tr><td><strong>Import hash set... / Re-check</strong>, the imported-set list, and the <strong>Reference data</strong> and <strong>hash stash</strong> lines</td><td>See section&nbsp;11 for the full workflow.</td></tr>
+</table>
 
 <h3>Faces &amp; skin</h3>
-<ul>
-  <li><strong>Has faces</strong>: <code>faces &gt; 0</code> from YuNet. Needs
-  screening to have run.</li>
-  <li><strong>Skin-tone ratio</strong>: <strong>Any</strong>, or 10&nbsp;% /
-  30&nbsp;% / 50&nbsp;% or more of the frame skin-toned. Needs screening.</li>
-  <li><strong>Run face / skin screening</strong>: runs it now if it hasn't.</li>
-</ul>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><strong>Has faces</strong></td><td><code>faces &gt; 0</code> from YuNet. Needs screening to have run.</td></tr>
+  <tr><td><strong>Skin-tone ratio</strong></td><td><strong>Any</strong>, or 10&nbsp;% / 30&nbsp;% / 50&nbsp;% or more of the frame skin-toned. Needs screening.</td></tr>
+  <tr><td><strong>Run face / skin screening</strong></td><td>Runs it now if it hasn't run.</td></tr>
+</table>
 
 <h3>Duplicates</h3>
-<ul>
-  <li><strong>Show</strong>: only files that have a relative in the collection:
-    <table>
-      <tr><td>Has any duplicate</td><td>in a &ge;2 exact stack, a visual stack, or a near-dup cluster</td></tr>
-      <tr><td>Has an exact copy</td><td>a byte-identical twin exists (same MD5)</td></tr>
-      <tr><td>Has a visual copy</td><td>the same picture, re-encoded or resized</td></tr>
-    </table>
-  </li>
-  <li><strong>Collapse duplicates &amp; visual matches</strong> (on by default):
-  one tile per visual group <strong>in the gallery</strong>. The representative is
-  chosen from files that <em>match your other filters</em>, so a group still
-  appears when only a non-head member carries the attribute you filtered on.
-  Counts reflect groups, not individual files. The <strong>☰&nbsp;List</strong>
-  view always shows every row.</li>
-  <li><strong>Re-scan for duplicates</strong>: rebuild the exact / visual /
-  near-dup groupings without a full reprocess (use after importing, or on an older
-  case).</li>
-</ul>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><strong>Show</strong></td><td>Only files that have a relative in the collection. The options are in the table below.</td></tr>
+  <tr><td><strong>Collapse duplicates &amp; visual matches</strong></td><td>On by default: one tile per visual group <strong>in the gallery</strong>. The representative is chosen from files that <em>match your other filters</em>, so a group still appears when only a non-head member carries the attribute you filtered on. Counts reflect groups, not individual files. The <strong>&#9776;&nbsp;List</strong> view always shows every row.</td></tr>
+  <tr><td><strong>Re-scan for duplicates</strong></td><td>Rebuild the exact / visual / near-dup groupings without a full reprocess (use after importing, or on an older case).</td></tr>
+</table>
+<p>The <strong>Show</strong> options:</p>
+<table>
+  <tr><th>Option</th><th>Matches</th></tr>
+  <tr><td>Has any duplicate</td><td>in a &ge;2 exact stack, a visual stack, or a near-dup cluster</td></tr>
+  <tr><td>Has an exact copy</td><td>a byte-identical twin exists (same MD5)</td></tr>
+  <tr><td>Has a visual copy</td><td>the same picture, re-encoded or resized</td></tr>
+</table>
 
 <h3>Errors</h3>
 <ul>
@@ -505,7 +509,7 @@ whose date is in July 2024.</p>
 
 <h3>Sort</h3>
 <p>Path, capture date, size, skin ratio (desc) or faces (desc).
-"Thumbnails per page" (50–1500) and "Tile size" are remembered between sessions.</p>
+"Thumbnails per page" (50&ndash;1500) and "Tile size" are remembered between sessions.</p>
 
 <h2 id="dupes">9. Duplicates &amp; similarity</h2>
 <p>GLEAPP builds three levels of grouping during processing, strongest to loosest:</p>
@@ -546,26 +550,19 @@ checks each file's SHA-256, then SHA-1, then MD5 (exact) and then its pHash
 <p>Set <strong>kinds</strong>:</p>
 <table>
   <tr><td><strong>known</strong></td><td>notable / bad. A hit shows the blue HASH badge (purple STASH for your <a href="#stash">local hash stash</a>) and, if the file is uncategorized and the set asserts a category, adopts it.</td></tr>
-  <tr><td><strong>known-good</strong></td><td>benign (NSRL, OS/app files). A hit shows the gray NSRL badge, is <strong>auto-categorized Non-pertinent</strong> if uncategorized, and can be hidden with "Hide known-NSRL". Never overrides a category you set.</td></tr>
+  <tr><td><strong>known-good</strong></td><td>benign (NSRL, OS/app files). A hit shows the green NSRL badge, is <strong>auto-categorized Non-pertinent</strong> if uncategorized, and can be hidden with "Hide known-NSRL". Never overrides a category you set.</td></tr>
   <tr><td><strong>other</strong></td><td>informational only.</td></tr>
 </table>
 
-<h3>PhotoDNA is stored, not matched</h3>
-<p>A Project&nbsp;VIC or CAID list often carries a <strong>PhotoDNA</strong> value
-beside the cryptographic hashes. PhotoDNA is a 144-byte robust hash, not the
-64-bit perceptual hash GLEAPP computes, so the two cannot be compared; comparing
-two PhotoDNA values needs a licensed PhotoDNA implementation, which GLEAPP does
-not ship.</p>
-<p>Those entries are kept under their own <code>photodna</code> algo, so a set's
-total says what the list actually held, and the matching pass reads
-<code>phash</code> entries only, so nothing tries to compare them.
-<strong>A PhotoDNA entry can never flag a file.</strong> The count is stated
-wherever the set is: after a <code>gleapp hashset</code> import and in
-<code>gleapp hashset --list</code>, on the set's row in the sidebar (a "N
-PhotoDNA, not matched" note), in the case audit log, and as the <em>PhotoDNA
-(not matched)</em> column of the Known Hash Sets table in the LAVA export. Read
-a set's entry count against that column: the hashes a list can actually match
-against is its entry count minus its PhotoDNA count.</p>
+<p><strong>Which one do I use?</strong></p>
+<table>
+  <tr><th>I want to...</th><th>Use</th><th>Read</th></tr>
+  <tr><td>Flag files from a CyberTip or another one-off list, in this case only</td><td><strong>Import hash set...</strong> in the sidebar's <em>Known hashes</em> section</td><td><em>Importing a hash set into a case</em></td></tr>
+  <tr><td>Match every case against a Project&nbsp;VIC hash set</td><td><strong>&#9776;&nbsp;Menu &rarr; Reference &rarr; Project&nbsp;VIC hash sets</strong></td><td><em>Project VIC hash sets</em></td></tr>
+  <tr><td>Hide operating system and app files</td><td>Import the NSRL: <strong>&#9776;&nbsp;Menu &rarr; Reference &rarr; Reference data (NSRL)</strong></td><td><em>Setting up the NSRL RDS</em></td></tr>
+  <tr><td>Match files I categorized 1&ndash;3 in past cases</td><td>The <a href="#stash">local hash stash</a></td><td>&sect;12</td></tr>
+  <tr><td>Re-run matching without reprocessing</td><td><strong>Re-check</strong></td><td><em>Importing a hash set into a case</em></td></tr>
+</table>
 
 <h3>Importing a hash set into a case (e.g. a CyberTip)</h3>
 <p>Sidebar &rarr; <strong>Known hashes</strong> &rarr; <strong>Import hash set...</strong>.
@@ -598,10 +595,29 @@ command line <code>gleapp hashset --global ...</code> does the same, from a sour
 install.)</p>
 
 <h3>Project VIC hash sets</h3>
-<p>Connect a Project VIC hash set from <strong>&#9776; Menu &rarr; Reference &rarr;
-Project VIC hash sets</strong> (also on the launcher's menu). It has its own
-dialog and list, separate from the NSRL's, and uses the same shared store: the
-set is not copied into any case, and every case matches against it.</p>
+<p>A Project&nbsp;VIC hash set, such as the one a national VICS portal distributes, is a
+single JSON file whose records carry an MD5 and may carry a SHA-1, a PhotoDNA value and the
+category Project&nbsp;VIC assigned.</p>
+
+<p><strong>Import it</strong></p>
+<ul>
+  <li><strong>From the menu:</strong> <strong>&#9776;&nbsp;Menu &rarr; Reference &rarr;
+    Project&nbsp;VIC hash sets</strong> (also on the launcher's menu). It has its own dialog and
+    list, separate from the NSRL's, and uses the same shared store: the set is not copied into
+    any case, and every case matches against it.</li>
+  <li><strong>From the NSRL dialog:</strong> <strong>Reference data ... &#x25b8; &rarr; Add a set
+    &rarr; Choose...</strong> the <code>.json</code>, so every case matches against it. Choosing a
+    <code>.json</code> switches <strong>Treat matches as</strong> to <em>Notable</em> and hides the
+    release/delta choice and <strong>Store</strong>, which apply to the NSRL and not to this
+    file.</li>
+  <li><strong>Command line:</strong> <code>gleapp hashset &lt;file&gt;.json --global --name
+    "&lt;a name&gt;"</code>.</li>
+  <li><strong>Into one case only:</strong> <strong>Import hash set...</strong> stores it inside
+    that case's file only. The global store is the place for a set every case should match
+    against.</li>
+</ul>
+
+<p><strong>What a match does</strong></p>
 <ul>
   <li><strong>A match is flagged <span class="tag" style="background:#d9822b">VIC</span>.</strong>
   If the file has no category yet, it goes into the category Project VIC gave it
@@ -621,85 +637,84 @@ set is not copied into any case, and every case matches against it.</p>
   matched.</li>
 </ul>
 
-<h3>Importing a Project VIC hash set</h3>
-<p>A Project VIC hash set, such as the one a national VICS portal distributes,
-is a single JSON file whose records carry an MD5 and may carry a SHA-1, a
-PhotoDNA value and the category Project VIC assigned. Import it from the
-Project&nbsp;VIC dialog above, or into the global store from the NSRL dialog so
-every case matches against it: <strong>Reference data ... &#x25b8;
-&rarr; Add a set &rarr; Choose...</strong> the <code>.json</code>. Choosing a
-<code>.json</code> switches <strong>Treat matches as</strong> to
-<em>Notable</em> and hides the release/delta choice and <strong>Store</strong>,
-which apply to the NSRL and not to this file: its MD5, SHA-1, SHA-256 and
-PhotoDNA values are kept, except the hashes of an empty file. From the
-command line: <code>gleapp hashset &lt;file&gt;.json --global --name
-"&lt;a name&gt;"</code>.</p>
+<p><strong>Import rules</strong></p>
 <ul>
-  <li><strong>Import it as notable, never as benign.</strong> Each entry carries
-  its own category, so an uncategorized file that matches takes the category
-  Project VIC gave it. As <em>known-good</em> every match would carry the benign
-  badge and an uncategorized match would be moved to Non-pertinent, so GLEAPP
-  refuses that pairing for a
-  Project VIC hash set, in the dialog and on the command line alike.</li>
-  <li><strong>The file is read as it is imported, never loaded whole.</strong>
-  The entries are staged and sorted before they are written, so the import needs
-  free disk space beyond the finished store while it runs. Progress shows under
-  <em>Known hashes</em>.</li>
-  <li><strong>A value listed more than once in a set is stored once</strong>,
-  keeping the first entry's category, so a set's PhotoDNA count can be lower
-  than the number of PhotoDNA fields in the file: a PhotoDNA value can repeat
-  across entries whose MD5s differ.</li>
-  <li><strong>A file that ends part-way, such as a truncated download, fails the
-  import</strong> and leaves no partial set behind, because a partial set would
-  read as complete. Re-importing under a name the store already holds replaces
-  that set, and its old entries are cleared when the new import starts, so if
-  the new file then fails, that name is gone until a complete file is
-  imported.</li>
-  <li><strong>PhotoDNA values are kept but never matched</strong>; see
-  <em>PhotoDNA is stored, not matched</em> above.</li>
-  <li><strong>Handing it to ingest stops with an explanation.</strong> A hash set
-  has no media files, so <em>Browse for JSON</em> on the launcher, or
-  <code>gleapp ingest</code>, says it is a hash set and points here, instead of
-  reading the file.</li>
-  <li><strong>Each record's details are kept with the set and carried onto the
-  files that match it:</strong> the MediaID, the Series, the five flags (Victim
-  identified, Offender identified, Distributed, Suspected, Self-generated), the
-  Tags and the Exif reading the record holds. They are the distributing
-  organization's record, not findings GLEAPP made. The flags field lists the
-  flags the record sets true and reads <em>none set</em> when every flag it
-  carries is false; the LAVA artifact shows each flag as yes or no, and blank
-  when the record does not carry it. The details come only with a match
-  on SHA-256, SHA-1 or MD5; a perceptual match is a similar picture and carries
-  none. A set imported before GLEAPP kept these details matches as before but
-  shows none until it is imported again.</li>
-  <li><strong>The record's Exif is shown as text only.</strong> The Project VIC
-  2.0 model keys each Exif row to its record's MD5, so it is the set's record of
-  that file, not a reading GLEAPP took. A location in it is never written to the
-  matching file's coordinates, drawn on a map or placed in a KMZ. Each row's
-  property name and value are kept, in the order stored; a row with no property
-  name, and a PropertyGroup value, are not.</li>
-  <li><strong>Where the details show:</strong> the file's details pane (the Exif
-  under <em>VIC Exif, as recorded</em>), the HTML report's fields under each
-  image (<em>VIC record MediaID</em>, <em>VIC series</em>, <em>VIC flags</em>,
-  <em>VIC tags</em>, <em>VIC Exif (as recorded)</em>), the CSV and JSON exports,
-  and the LAVA report's <em>Project VIC Hash-Set Matches</em> artifact. In the
-  details pane, the HTML report and the CSV, a file imported from a Project VIC
-  case export shows its own series, flags and tags where it has them, ahead of
-  any hash-set record it matches; the JSON export keeps both, and the LAVA
-  artifact shows the hash-set record's.</li>
-  <li><strong>Keeping an HTML report small.</strong> Untick any of those fields
-  under <strong>Fields under each image</strong> to leave them out of a report.
-  <strong>Project VIC matches</strong> under <strong>Which files</strong> (shown
-  once a case has any) keeps them (the default), reports only them, or leaves
-  them out, and it narrows whichever <strong>Which files</strong> choice is
-  selected. The CSV, JSON, KMZ, MD5 list and LAVA report written in the same
-  export follow the same choice; the Project VIC JSON export is not narrowed by
-  it. From the command line: <code>gleapp report --vic-matches
-  only|exclude</code> and <code>--no-vic-details</code>.</li>
+  <li><strong>Import it as notable, never as benign.</strong> Each entry carries its own
+  category, so an uncategorized file that matches takes the category Project VIC gave it. As
+  <em>known-good</em> every match would carry the benign badge and an uncategorized match would
+  be moved to Non-pertinent, so GLEAPP refuses that pairing for a Project VIC hash set, in the
+  dialog and on the command line alike.</li>
+  <li><strong>The file is read as it is imported, never loaded whole.</strong> The entries are
+  staged and sorted before they are written, so the import needs free disk space beyond the
+  finished store while it runs. Progress shows under <em>Known hashes</em>.</li>
+  <li><strong>A value listed more than once in a set is stored once</strong>, keeping the first
+  entry's category, so a set's PhotoDNA count can be lower than the number of PhotoDNA fields
+  in the file: a PhotoDNA value can repeat across entries whose MD5s differ.</li>
+  <li><strong>What is kept:</strong> MD5, SHA-1, SHA-256 and PhotoDNA values, except the hashes
+  of an empty file.</li>
+  <li><strong>A file that ends part-way, such as a truncated download, fails the import</strong>
+  and leaves no partial set behind, because a partial set would read as complete.</li>
+  <li><strong>Re-importing under a name the store already holds replaces that set.</strong> Its
+  old entries are cleared when the new import starts, so if the new file then fails, that name
+  is gone until a complete file is imported.</li>
+  <li><strong>It is not evidence to ingest.</strong> A hash set has no media files, so
+  <em>Browse for JSON</em> on the launcher, or <code>gleapp ingest</code>, says it is a hash set
+  and points here, instead of reading the file.</li>
 </ul>
-<p>It can also be imported into a single case with <strong>Import hash
-set...</strong>, which stores it inside that case's file only; the global store
-is the place for a set every case should match against.</p>
+
+<p><strong>Details that travel with a match</strong></p>
+<p>Each record's details are kept with the set and carried onto the files that match it. They
+are the distributing organization's record, not findings GLEAPP made.</p>
+<table>
+  <tr><th>Detail</th><th>Notes</th></tr>
+  <tr><td><strong>MediaID, Series, Tags</strong></td><td>Kept with the set and shown on the matching file.</td></tr>
+  <tr><td><strong>Five flags</strong></td><td>Victim identified, Offender identified, Distributed, Suspected, Self-generated. The flags field lists the flags the record sets true and reads <em>none set</em> when every flag it carries is false. The LAVA artifact shows each flag as yes or no, and blank when the record does not carry it.</td></tr>
+  <tr><td><strong>Exif</strong></td><td>Shown as text only. The Project VIC 2.0 model keys each Exif row to its record's MD5, so it is the set's record of that file, not a reading GLEAPP took. A location in it is never written to the matching file's coordinates, drawn on a map or placed in a KMZ. Each row's property name and value are kept, in the order stored; a row with no property name, and a PropertyGroup value, are not.</td></tr>
+  <tr><td><strong>When they come</strong></td><td>Only with a match on SHA-256, SHA-1 or MD5. A perceptual match is a similar picture and carries none.</td></tr>
+  <tr><td><strong>Older sets</strong></td><td>A set imported before GLEAPP kept these details matches as before but shows none until it is imported again.</td></tr>
+</table>
+
+<p><strong>Where the details show</strong></p>
+<table>
+  <tr><th>Where</th><th>What shows</th></tr>
+  <tr><td><strong>Details pane</strong></td><td>The record's details, with the Exif under <em>VIC Exif, as recorded</em></td></tr>
+  <tr><td><strong>HTML report</strong></td><td>Fields under each image: <em>VIC record MediaID</em>, <em>VIC series</em>, <em>VIC flags</em>, <em>VIC tags</em>, <em>VIC Exif (as recorded)</em></td></tr>
+  <tr><td><strong>CSV and JSON exports</strong></td><td>The details</td></tr>
+  <tr><td><strong>LAVA report</strong></td><td>The <em>Project VIC Hash-Set Matches</em> artifact</td></tr>
+</table>
+<p>In the details pane, the HTML report and the CSV, a file imported from a Project VIC case
+export shows its own series, flags and tags where it has them, ahead of any hash-set record it
+matches. The JSON export keeps both, and the LAVA artifact shows the hash-set record's.</p>
+
+<p><strong>Keeping an HTML report small</strong></p>
+<ul>
+  <li>Untick any of those fields under <strong>Fields under each image</strong> to leave them
+  out of a report.</li>
+  <li><strong>Project VIC matches</strong> under <strong>Which files</strong> (shown once a case
+  has any) keeps them (the default), reports only them, or leaves them out, and it narrows
+  whichever <strong>Which files</strong> choice is selected.</li>
+  <li>The CSV, JSON, KMZ, MD5 list and LAVA report written in the same export follow the same
+  choice. The Project VIC JSON export is not narrowed by it.</li>
+  <li>From the command line: <code>gleapp report --vic-matches only|exclude</code> and
+  <code>--no-vic-details</code>.</li>
+</ul>
+
+<h3>PhotoDNA is stored, not matched</h3>
+<p>A Project&nbsp;VIC or CAID list often carries a <strong>PhotoDNA</strong> value beside the
+cryptographic hashes.</p>
+<ul>
+  <li>PhotoDNA is a 144-byte robust hash, not the 64-bit perceptual hash GLEAPP computes, so the
+    two cannot be compared. Comparing two PhotoDNA values needs a licensed PhotoDNA
+    implementation, which GLEAPP does not ship.</li>
+  <li>Those entries are kept under their own <code>photodna</code> algo, so a set's total says
+    what the list actually held, and the matching pass reads <code>phash</code> entries only.
+    <strong>A PhotoDNA entry can never flag a file.</strong></li>
+  <li>The count is stated wherever the set is: after a <code>gleapp hashset</code> import and in
+    <code>gleapp hashset --list</code>, on the set's row in the sidebar (a "N PhotoDNA, not
+    matched" note), in the case audit log, and as the <em>PhotoDNA (not matched)</em> column of
+    the Known Hash Sets table in the LAVA export. The hashes a list can actually match against
+    is its entry count minus its PhotoDNA count.</li>
+</ul>
 
 <h3>Setting up the NSRL RDS</h3>
 <p>The <strong>National Software Reference Library Reference Data Set (RDS)</strong>
@@ -707,6 +722,8 @@ is NIST's public catalog of hashes of known software: operating systems,
 applications, their bundled files. Matching your evidence against it lets you
 <em>eliminate</em> the OS/app noise and concentrate on user content. GLEAPP does
 not ship it; you download it from NIST and import it once.</p>
+<p><strong>In short:</strong> download from NIST, import the full release once, merge a delta
+each quarter, then <strong>Re-check</strong> a case.</p>
 
 <p><strong>1. Download from NIST.</strong> <code>https://www.nsrl.nist.gov/</code>
 &rarr; "Download RDS" (files at
@@ -745,7 +762,7 @@ quarter's set with its <strong>&#x2715;</strong>; keep the merged <code>.db</cod
 as the base for the next delta. Each year, start over from the new March full.</p>
 
 <p><strong>4. Use it.</strong> Open a case and click <strong>Re-check</strong>
-under <em>Known hashes</em> (or re-run Process). NSRL matches get the gray
+under <em>Known hashes</em> (or re-run Process). NSRL matches get the green
 <span class="tag" style="background:#2f6e4f">NSRL</span> badge, are auto-categorized
 <strong>Non-pertinent</strong> if still uncategorized, and drop out of view when
 you tick <strong>Hide known-NSRL</strong>.</p>
@@ -758,9 +775,10 @@ scripts.</p>
 
 <h2 id="stash">12. Local hash stash</h2>
 <p>The <strong>local hash stash</strong> is your own reusable known-hash set,
-built from your casework: the <strong>MD5 hashes</strong> of every file you
+built from your casework: the <strong>MD5 hashes</strong> of the files you
 categorize <strong>1&nbsp;CAM</strong>, <strong>2&nbsp;Child&nbsp;Exploitative</strong>
-or <strong>3&nbsp;CGI/Animation</strong>, each stored with its category code.
+or <strong>3&nbsp;CGI/Animation</strong>, each stored with its category code, once you
+add them with <strong>Add this case's hashes to the stash</strong> (below).
 Match it against a new case and files you have already identified are re-flagged
 automatically.</p>
 <p>It is <strong>its own file, separate from the NSRL / global store</strong>:
@@ -774,7 +792,7 @@ holds only hashes of files <em>you</em> categorized.</p>
 <h3>Creating / adding to it</h3>
 <ol>
   <li>Work a case as normal: categorize files into codes 1, 2 and 3.</li>
-  <li>Click <strong>Hash stash</strong> in the header. The panel shows how many
+  <li>Click <strong>&#9776;&nbsp;Menu &rarr; Reference &rarr; Hash&nbsp;stash</strong>. The panel shows how many
     of this case's files are eligible (category 1–3 with an MD5) and the current
     stash totals.</li>
   <li>Click <strong>Add this case's hashes to the stash</strong>. Each eligible
@@ -787,8 +805,9 @@ holds only hashes of files <em>you</em> categorized.</p>
 
 <h3>Using it on other cases</h3>
 <ul>
-  <li>Checked automatically during the known-hash matching stage of
-    <strong>every case you process</strong>; nothing to import.</li>
+  <li>Checked automatically during the known-hash matching stage of each case you
+    process, unless you turned off <em>Enable hash stash matching</em> (at ingest) or
+    <em>Match against my hash stash</em> (sidebar) for that case; nothing to import.</li>
   <li>For a case processed <em>before</em> you stashed those hashes: open it and
     click <strong>Re-check</strong> (sidebar → <em>Known hashes</em>).</li>
   <li>A match shows the purple <span class="tag" style="background:#7c4dff">STASH</span>
@@ -821,7 +840,7 @@ erases every entry across all cases and is <strong>not undoable</strong>.</p>
 
 <h3>Command line</h3>
 <pre><code>gleapp stash                       # totals + file location
-gleapp stash --add -c &lt;case dir&gt;    # add that case's category 1-3 MD5s
+gleapp -c &lt;case dir&gt; stash --add    # add that case's category 1-3 MD5s
 gleapp stash --export stash.hstash # portable copy  (.csv also works)
 gleapp stash --merge theirs.hstash # fold in a colleague's stash
 gleapp stash --set-path "\\nas\team\stash.hstash"
@@ -829,6 +848,7 @@ gleapp stash --set-path ""         # back to the per-user default
 gleapp stash --clear</code></pre>
 
 <h2 id="formats">13. Format handling</h2>
+<h3>What GLEAPP decodes</h3>
 <p>Beyond ordinary JPEG/PNG/GIF/WebP/BMP/TIFF and video, GLEAPP decodes:</p>
 <ul>
   <li><strong>HEIC / HEIF</strong> (iPhone photos) and <strong>TIFF / DNG</strong>:
@@ -841,54 +861,64 @@ gleapp stash --clear</code></pre>
   suffix).</li>
   <li><strong>Snapchat <code>LZC</code> bundles</strong>: Zstandard containers;
   the embedded image or video is extracted to <code>extracted/</code> and shown.</li>
-  <li><strong>Archives found inside a source</strong>: a <code>.zip</code>,
-  <code>.tar</code>, <code>.tar.gz</code> (or a bare <code>.gz</code> /
-  <code>.bz2</code> / <code>.xz</code>) or <strong>.7z</strong> sitting in a
-  folder or on a walked E01 is opened automatically at ingest. Archives inside
-  archives are followed.
-    <ul>
-      <li>Its image and video members are written to
-      <code>extracted/&lt;id&gt;/</code> and registered as ordinary rows named
-      <code>&lt;archive&gt;/&lt;member&gt;</code>, linked to the container.</li>
-      <li><strong>The container file itself does not show in the gallery or in
-      reports</strong>; set the Type filter to <em>archive (container)</em> to
-      list them. It is still in the case (its own name, path, dates and
-      hashes), so a report of that scope can account for every archive in
-      evidence.</li>
-      <li><strong>RAR</strong> is recognized but not opened: GLEAPP has no RAR
-      reader (they need an external <code>unrar</code> binary a self-contained
-      build can't carry), so the container row is flagged so you know to
-      extract it separately.</li>
-      <li>Encrypted members (and password-protected <code>.7z</code>) are
-      skipped and counted.</li>
-      <li>Run this on an already-ingested case with <strong>Expand
-      archives</strong> in the sidebar (&sect;16).</li>
-    </ul>
-  </li>
+  <li><strong>Archives found inside a source</strong>: see the next section.</li>
 </ul>
-<p>Native decoders that can crash on malformed data (video via OpenCV, GPU textures
-via the Rust decoder) run in isolated child processes, so one bad file can't take
-down the whole run; it's flagged with an error instead.</p>
-<p>Some files a phone extraction or VIC export hands you contain no decodable
-media; the bytes just aren't there. GLEAPP labels each case plainly in the
-<strong>Error</strong> column instead of a raw decoder exception, and still
-records the MD5, VIC MediaID, size and metadata:</p>
+
+<h3>Archives found inside a source</h3>
+<p>A <code>.zip</code>, <code>.tar</code>, <code>.tar.gz</code> (or a bare <code>.gz</code> /
+<code>.bz2</code> / <code>.xz</code>, or a <code>.tgz</code> / <code>.tbz2</code> /
+<code>.txz</code>) or <strong>.7z</strong> sitting in a folder or on a walked E01 filesystem is
+opened automatically at ingest. Archives nested inside archives are followed.</p>
 <ul>
-  <li><em>Incomplete carve by the source tool</em>: the file name ends in
-    <code>_partial</code> / <code>_embedded_N</code>. The tool that built the
-    export tried to carve an image out of a parent file and got only its header.
-    <strong>The real image is in the parent file</strong>; ingest that (e.g. the
-    <code>com.snap.file_manager_*_SCContent_</code> directory) and GLEAPP unpacks it.</li>
-  <li><em>Truncated PNG / JPEG - file header only, no image data</em>.</li>
-  <li><em>Proprietary app-asset container</em>: an app's own texture/filter
-    format (e.g. AR make-up filters), not a standard image.</li>
-  <li><em>Snapchat streamed-video fragment</em> / <em>fragmented-MP4 init
-    segment</em> / <em>MP4 media data with no header</em>: a segmented download
-    split across many files; reassembly is an upstream task.</li>
-  <li><em>Malformed HEIC/HEIF - declared and decoded image sizes disagree</em>.</li>
-  <li><em>Audio-frame fragment</em> / <em>gzip-compressed web-cache data</em>:
-    not an image or video at all, despite the extension.</li>
+  <li>Its image and video members are written to <code>extracted/&lt;id&gt;/</code> and registered
+  as ordinary rows, named <code>&lt;archive&gt;/&lt;member&gt;</code>, linked back to the
+  container.</li>
+  <li><strong>The container file itself does not show in the gallery or in reports</strong>; set
+  the Type filter to <em>archive (container)</em> to see the list of them. It is still in the case
+  (its own name, path, dates and hashes), so a report of that scope can account for every archive
+  in evidence.</li>
+  <li><strong>RAR</strong> is recognized but not opened: GLEAPP has no RAR reader (they need an
+  external <code>unrar</code> binary a self-contained build can't carry), so the container row is
+  flagged so you know to extract it separately.</li>
+  <li>Encrypted members (and password-protected <code>.7z</code>) are skipped and counted.</li>
+  <li>To run this on a case that was ingested earlier, use <strong>Expand archives</strong> in the
+  sidebar (&sect;16).</li>
 </ul>
+
+<h3>macOS sidecars (<code>._</code> files)</h3>
+<p>macOS sidecars are recognized and left out.</p>
+<ul>
+  <li><strong>What they are:</strong> copying a file onto a FAT or exFAT card, or onto most network
+  shares, makes macOS write a second file named <code>._&lt;name&gt;</code> beside it, holding the
+  resource fork and Finder info.</li>
+  <li><strong>Why they look like images:</strong> it takes the whole name of the file it belongs
+  to, so <code>._holiday.jpg</code> ends in an image extension and holds no image.</li>
+  <li><strong>What GLEAPP does:</strong> it checks the bytes of any <code>._</code> file before
+  believing its extension, and files one as <strong>other</strong> rather than as an image that
+  then fails to decode. A card that has been in a Mac carries one per file, so without that check
+  the error count reads as damaged evidence.</li>
+  <li>A job spec that sets <code>include_other</code> keeps them all, and they are still recorded, as other.</li>
+</ul>
+
+<h3>Bad files cannot stop a run</h3>
+<p>Native decoders that can crash on malformed data (video via OpenCV, GPU textures via the Rust
+decoder) run in isolated child processes, so one bad file can't take down the whole run; it's
+flagged with an error instead.</p>
+
+<h3>Files with no decodable media</h3>
+<p>Some files a phone extraction or a VIC export hands you contain no decodable media; the bytes
+just aren't there. GLEAPP labels each case plainly in the <strong>Error</strong> column rather than
+showing a raw decoder exception, and still records the MD5, VIC MediaID, size and other
+metadata:</p>
+<table>
+  <tr><th>The Error column says</th><th>What it means</th></tr>
+  <tr><td><em>Incomplete carve by the source tool</em></td><td>The file name ends in <code>_partial</code> / <code>_embedded_N</code>. The triage tool that built the export tried to carve an image out of a parent file and only got its header. <strong>The real image is in the parent file</strong>; ingest that (e.g. the <code>com.snap.file_manager_*_SCContent_</code> directory from the extraction) and GLEAPP will unpack it.</td></tr>
+  <tr><td><em>Truncated PNG / JPEG - file header only, no image data</em></td><td>A valid signature and a few header bytes, then nothing.</td></tr>
+  <tr><td><em>Proprietary app-asset container</em></td><td>An app's own texture/filter format (e.g. AR make-up filters), not a standard image.</td></tr>
+  <tr><td><em>Snapchat streamed-video fragment</em> / <em>fragmented-MP4 init segment</em> / <em>MP4 media data with no header</em></td><td>A segmented download split across many files; no single file is a playable clip. Reassembling them is an upstream task.</td></tr>
+  <tr><td><em>Malformed HEIC/HEIF - declared and decoded image sizes disagree</em></td><td>The file is malformed: the image size it declares and the size it decodes to differ.</td></tr>
+  <tr><td><em>Audio-frame fragment</em> / <em>gzip-compressed web-cache data</em></td><td>Not an image or video at all, despite the extension.</td></tr>
+</table>
 
 <h2 id="reports">14. Reports &amp; exports</h2>
 <p><strong>Export report</strong> opens a dialog: choose a <strong>scope</strong>
@@ -980,7 +1010,7 @@ failure. In the background, a full timestamped copy of <code>case.gleapp</code> 
 snapshotted to <code>backups/</code> roughly every 10 minutes while there are
 unsaved-since-last-snapshot edits, and always when you close or switch cases. The
 newest 20 snapshots are kept.</p>
-<p>The <strong>Snapshots</strong> header button opens a panel listing every
+<p><strong>&#9776;&nbsp;Menu &rarr; Case &rarr; Snapshots</strong> opens a panel listing every
 snapshot with its date, label (<code>auto</code>, <code>manual</code>, or your
 text) and size:</p>
 <ul>
@@ -1007,73 +1037,154 @@ text) and size:</p>
 <p>Each reports progress next to its own button. A full reprocess is available from
 the command line (<code>gleapp process --force</code>).</p>
 
-<h3>Carving a disk image for deleted media</h3>
-<p>A disk image, an E01 acquisition or a raw image (one file, or a numbered
-split set), is <strong>walked</strong>: its filesystems are read file by file,
-so every file keeps the name, path and dates the filesystem recorded. An E01
-carries the acquiring tool's own hash of the disk and a raw image carries none,
-so a raw source is identified, when it is relinked or its copies dropped, by its
-size and a hash of its first and last 4&nbsp;MiB, which tells two images of one
-size apart and no more. An image whose partition table describes a volume larger
-than the file holds (a split set with its later segments missing, or a truncated
-image) is walked as far as it goes, and the Source panel says which volume is
-not all there. The <strong>deleted-media</strong> pass then recovers what was
-deleted, in two steps:</p>
+<h3>What can be carved</h3>
+<p>Only a <strong>disk image</strong> can be carved. A mobile extraction is an archive
+with a list of members in it, so there is nothing to recover that listing it does not
+already give you.</p>
 <ul>
-  <li><strong>From deleted records</strong> (NTFS, FAT32 and exFAT): a deleted
-    file whose record still names it is recovered with its <strong>real
-    name</strong>.
-    <table>
-      <tr><th>Filesystem</th><th>Record used</th><th>What comes back</th></tr>
-      <tr><td>NTFS</td><td>the MFT entry</td><td>real name <strong>and</strong>
-        dates. The only way to recover a <em>resident</em> file: one small
-        enough to live inside the record, which a carve can never reach
-        because it never occupied a cluster.</td></tr>
-      <tr><td>FAT32</td><td>the deleted directory entry</td><td>real name (the
-        delete overwrites the first character of a short 8.3 name, shown as
-        <code>_</code>; a long name is rebuilt in full). Read on the
-        assumption it lay in one cluster run, since delete zeroes the chain.
-        No dates: FAT32 stores a wall-clock time with no zone, so the date
-        columns stay blank.</td></tr>
-      <tr><td>exFAT</td><td>the deleted directory entry</td><td>real name. A
-        single-run file is read exactly as recorded; a fragmented file is
-        followed along the chain it kept; one whose chain was cleared is
-        refused rather than read on a guess. No dates, for the same reason as
-        FAT32.</td></tr>
-    </table>
-    <p>The FAT32 / exFAT times are still kept as recorded, and the HTML report
-    shows them when <em>Recorded (as stored, no zone)</em> is ticked in the
-    Export dialog. On all three filesystems, a file is recovered only while
-    its clusters are still free, and refused once a later file has taken one,
-    so overwritten bytes are never presented as the file.</p>
-  </li>
-  <li><strong>By carving</strong>: the space no volume claims is scanned for image
-    and video signatures, recovering files no surviving record names (deleted, or
-    in a volume that could not be read). A carved file has <strong>no name, path
-    or date of its own</strong>: it is filed under the byte offset it was
-    found at, and its date columns are blank.</li>
+  <li><strong>E01 acquisition</strong>: point at the first segment of the set.</li>
+  <li><strong>Raw image</strong>: one file, or any segment of a numbered split set.</li>
+  <li><strong>Not accepted</strong>: VHD and VMDK.</li>
+  <li>An E01 is recognized by its own signature and a raw image by what it holds, so the
+    extension does not matter.</li>
 </ul>
-<p>The deleted-record pass runs first, so a deleted file comes back with its name
-rather than as a nameless carved twin.</p>
-<p>To carve:</p>
+
+<h3>How to carve</h3>
 <ul>
-  <li><strong>At ingest</strong>: tick <em>Recover media (filesystem records
-    and carving)</em> on the launcher. The walk runs first, then the recovery,
-    then everything is processed together.</li>
-  <li><strong>Later</strong>: the sidebar's <strong>Carving</strong>
-    section has a <strong>Carve for deleted media</strong> button for each E01
-    (it reads <strong>Carve again</strong> once a source has been carved;
-    re-running skips offsets already recovered). The bottom bar follows it and
-    the new files are hashed, thumbnailed and grouped when it finishes.</li>
-  <li><strong>Command line</strong>: <code>gleapp source carve
-    &lt;name&gt;</code>.</li>
+  <li><strong>At ingest</strong>: tick <em>Recover media (filesystem records and
+    carving)</em> on the launcher. The walk runs first, then the recovery, then
+    everything is processed together.</li>
+  <li><strong>Later</strong>: open the sidebar's <strong>Carving</strong> section and click
+    <strong>Carve for deleted media</strong> (it becomes <strong>Carve again</strong> once a
+    source has been carved; re-running skips offsets already recovered). The bar at the
+    bottom follows it, and the new files are hashed, thumbnailed and grouped when it
+    finishes.</li>
+  <li><strong>Command line</strong>: <code>gleapp source carve &lt;name&gt;</code> for the
+    whole image, or <code>--unallocated-only</code> to scope it, which the GUI always does.
+    Follow it with <code>gleapp process</code> to hash and thumbnail what came back.</li>
 </ul>
-<p>Carving reads the whole free area, so on a large drive it takes a while and
-most of what it returns on a used disk is application assets rather than user
-media. The Source panel shows the split: <em>N walked &middot; M carved
-&middot; K recovered</em> (recovered being the files brought back from deleted
-records), and the sidebar's <strong>How recovered</strong> filter (&sect;8) narrows the
-gallery to walked, recovered-from-a-deleted-record or carved rows.</p>
+
+<h3>Three origins</h3>
+<p>A disk image is <strong>walked</strong> at ingest: its filesystems are read file by
+file, so every file keeps the name, path and dates the filesystem recorded. The
+<strong>deleted-media</strong> pass is a separate thing you ask for. It adds what the walk
+cannot reach, in two steps that produce different kinds of row, and the difference matters
+in a report:</p>
+<table>
+  <tr><th>Origin</th><th>Recovered by</th><th>Name</th><th>Dates</th></tr>
+  <tr><td>walked</td><td>reading a live filesystem</td><td>real name and path</td><td>NTFS created, modified and accessed; FAT32 and exFAT as recorded text</td></tr>
+  <tr><td>recovered</td><td>a deleted record that still named the file</td><td><strong>real name</strong></td><td>NTFS created, modified and accessed; FAT32 and exFAT as recorded text</td></tr>
+  <tr><td>carved</td><td>a signature scan of raw bytes</td><td>none; filed under its byte offset</td><td>none, blank</td></tr>
+</table>
+<p>The deleted-record pass runs first, so a deleted file comes back with its name rather
+than as a nameless carved twin, and the offsets it recovered are handed to the carver to
+skip.</p>
+
+<h3>Recovering from deleted records</h3>
+<p>For NTFS, FAT32 and exFAT: a deleted file whose record still names it is recovered with
+its <strong>real name</strong>.</p>
+<table>
+  <tr><th>Filesystem</th><th>Record used</th><th>What comes back</th></tr>
+  <tr><td>NTFS</td><td>the MFT entry</td><td>real name <strong>and</strong> the created, modified and accessed times the record holds, as real instants (FILETIME is UTC based). The only way to recover a <em>resident</em> file: one small enough to live inside the record, which a carve of free space can never reach because it never occupied a cluster.</td></tr>
+  <tr><td>FAT32</td><td>the deleted directory entry</td><td>real name (the delete overwrites the first character of a short 8.3 name, shown as <code>_</code>; a long name is rebuilt in full). Read on the assumption it lay in one cluster run, since delete zeroes the chain. Its dates are read, but FAT32 stores a wall clock with no zone, so they are carried as recorded text and the instant columns stay blank.</td></tr>
+  <tr><td>exFAT</td><td>the deleted directory entry</td><td>real name. A single-run file is read exactly as recorded; a fragmented file is followed along the chain it kept; one whose chain was cleared is refused rather than read on a guess. Dates as FAT32: read, carried as text, no instant.</td></tr>
+</table>
+<ul>
+  <li><strong>Zone-less times are never turned into instants.</strong> They are carried as
+    recorded text (&sect;3). A <strong>walked</strong> FAT32 or exFAT file, the ordinary case,
+    works the same way.</li>
+  <li><strong>Overwritten bytes are never presented as the file.</strong> On all three
+    filesystems, a file is recovered only while its clusters are still free, and refused once
+    a later file has taken one.</li>
+  <li><strong>Recovered files are always copied into the case</strong>, because a deleted file
+    is not one contiguous run the way a carved hit is, and a resident one is not on the disk
+    as a run at all.</li>
+</ul>
+
+<h3>Recovering by carving</h3>
+<p>The space no volume claims is scanned for image and video signatures, recovering files no
+surviving record names.</p>
+<ul>
+  <li>A carved file has <strong>no name, path or date of its own</strong>. It is filed under
+    the byte offset it was found at, in sixteen hex digits
+    (<code>0000000000404400.jpg</code> is offset 4,211,712), and its date columns are
+    blank.</li>
+  <li>Carved files are read back on demand by seeking to that offset, so the acquisition has
+    to stay where the case recorded it.</li>
+  <li><strong>Seven signatures and nothing else</strong>: JPEG, PNG, GIF, WebP and HEIC/AVIF
+    as images, AVI and MP4/MOV as video. No documents, archives or databases.</li>
+  <li>Each kind has a size ceiling so a false header cannot claim the rest of the disk (64 MB
+    for the stills, 32 MB for GIF, 4 GB for video) and a floor so a header with nothing
+    behind it is not reported as a file.</li>
+</ul>
+
+<h3>What you can and cannot say about a carved file</h3>
+<ul>
+  <li>It reads no filesystem, so it cannot tell you whether the bytes were a live file or a
+    deleted one. With a scoped carve you know they sat in space no volume claimed at
+    acquisition, which is a real statement and not the same as "the user deleted
+    this".</li>
+  <li>It finds contiguous files, so a fragmented file recovers only as far as its first
+    fragment. That is why a carved image can render half way down and then turn to
+    garbage.</li>
+</ul>
+
+<h3>Which filesystems can do what</h3>
+<p>The walk reads fourteen kinds, but the other two passes need more of a filesystem than
+the walk does:</p>
+<table>
+  <tr><th>Filesystem</th><th>Walked</th><th>Deleted records</th><th>Free space, for scoping</th></tr>
+  <tr><td>NTFS, FAT32, exFAT</td><td>yes</td><td><strong>yes</strong></td><td>yes</td></tr>
+  <tr><td>HFS+, HFSX, APFS, F2FS</td><td>yes</td><td>no</td><td>yes</td></tr>
+  <tr><td>ext2 / ext3 / ext4</td><td>yes</td><td>no</td><td><strong>no</strong></td></tr>
+  <tr><td>QNX4, EFS, ETFS, IFS</td><td>yes</td><td>no</td><td><strong>no</strong></td></tr>
+</table>
+<p>So on a Mac or Linux acquisition nothing comes back with its name, and on a disk holding
+any volume that cannot report its free space the scan falls back to the whole image rather
+than leaving part of the disk unread. One ext4 partition on a dual-boot disk is enough to do
+that.</p>
+
+<h3>How much of the disk is read (scoping)</h3>
+<ul>
+  <li>A signature inside an allocated run belongs to a file the directory tree already names
+    and the walk already registered. Scanning only the space no volume claims is far less
+    work and far better material.</li>
+  <li>The <strong>gallery always scopes</strong>; the command line does not unless you
+    ask.</li>
+  <li>A whole-image carve is not a mistake, it is a different question. It is the only way to
+    reach a resident NTFS file as a carved hit, and on a used disk most of what it adds is
+    resources embedded inside live files.</li>
+  <li>If any volume cannot report its free space, the whole image is scanned. If every volume
+    reports and together they claim every byte, nothing is carved: a full disk does the
+    smallest scan rather than the largest.</li>
+  <li>The case records what was scanned, per source, so you can say afterwards how much of
+    the disk was read and in how many runs.</li>
+</ul>
+
+<h3>Raw images compared with E01</h3>
+<ul>
+  <li>An E01 carries the acquiring tool's own hash of the disk, and a raw image carries none.
+    So a raw source is identified, when it is relinked or its copies dropped, by its size and
+    a hash of its first and last 4&nbsp;MiB, which tells two images of one size apart and no
+    more.</li>
+  <li>An image whose partition table describes a volume larger than the file holds (a split
+    set with its later segments missing, or a truncated image) is walked as far as it goes,
+    and the Source panel says which volume is not all there.</li>
+</ul>
+
+<h3>Seeing the result</h3>
+<ul>
+  <li><strong>Source panel</strong>: <em>N walked &middot; K recovered from deleted records
+    &middot; M carved</em>.</li>
+  <li><strong>How recovered</strong> filter in the sidebar (&sect;8): <em>Walked, still
+    listed</em>, <em>Recovered from a deleted record</em> or <em>Carved from unclaimed
+    space</em>.</li>
+  <li><strong>Reports</strong> carry it in the same words, so the distinction survives the
+    handover: <strong>How recovered</strong> is a field you can tick under each image in the
+    HTML report, <code>origin</code> is a CSV column, and the LAVA project gives it a column of
+    its own. A row from a folder or an ordinary archive leaves it empty, because the question
+    only has an answer for an acquisition.</li>
+</ul>
 
 <h2 id="keys">17. Keyboard shortcuts</h2>
 <table>
@@ -1083,7 +1194,8 @@ gallery to walked, recovered-from-a-deleted-record or carved rows.</p>
   <tr><td><kbd>H</kbd></td><td>hex view of the focused file</td></tr>
   <tr><td><kbd>I</kbd></td><td>toggle the details pane</td></tr>
   <tr><td><kbd>A</kbd></td><td>select all on the page</td></tr>
-  <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>move the selection</td></tr>
+  <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>move the selection (gallery); scroll the columns (list view)</td></tr>
+  <tr><td><kbd>&uarr;</kbd> <kbd>&darr;</kbd></td><td>move between rows (list view)</td></tr>
   <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>previous / next page</td></tr>
   <tr><td><kbd>Ctrl</kbd>+<kbd>Home</kbd> / <kbd>End</kbd></td><td>first / last page</td></tr>
   <tr><td><kbd>?</kbd></td><td>open this manual</td></tr>
@@ -1091,8 +1203,10 @@ gallery to walked, recovered-from-a-deleted-record or carved rows.</p>
 </table>
 
 <h2 id="privacy">18. Data &amp; privacy</h2>
-<p>GLEAPP runs entirely on your machine with no network access; even the maps are
-drawn from a basemap file you import (section&nbsp;19), never from a tile server. The
+<p>GLEAPP runs entirely on your machine and makes no network requests of its own; even the
+maps are drawn from a basemap file you import (section&nbsp;19), never from a tile server.
+The one exception is the optional <code>gleapp maps extract --build URL</code>, which runs the
+<code>pmtiles</code> tool, and that tool reads Protomaps' server. The
 evidence you ingest is only ever read; all output is written inside the case folder and the
 per-user config / hash store under <code>%APPDATA%</code> and
 <code>%LOCALAPPDATA%</code>. Examiner actions (categorize, snapshot, import,
@@ -1107,7 +1221,7 @@ leaves your machine unless you <strong>Export</strong> it or point it at a share
 location.</p>
 
 <h2 id="maps">19. Maps (offline basemaps)</h2>
-<p>GLEAPP ships no map data and fetches none, so a subject's coordinates never reach a
+<p>GLEAPP ships no map data and fetches none itself, so a subject's coordinates never reach a
 server somebody else runs. To see geolocated files on a map, import a basemap file
 once with <strong>&#9776;&nbsp;Menu &rarr; Reference &rarr; Maps</strong>; GLEAPP copies it under its
 data folder, records its SHA-256, and draws maps from it entirely offline. The details
