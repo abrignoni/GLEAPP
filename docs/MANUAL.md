@@ -47,8 +47,7 @@ With no case open, GLEAPP shows the **launcher**.
     - **JSON**: a GLEAPP job spec or a **Project VIC 2.0 (US)** JSON, detected
       automatically. The VIC media folder is resolved next to the file.
       MediaID, category, original path, MIME and victim-offender flags are
-      imported. See §3 and §7 for how duplicate entries and header fields are
-      handled.
+      imported. See §3 for how duplicate entries are handled.
 
 **Ingest options:**
 
@@ -321,16 +320,6 @@ Your categories are fully editable: rename, recolor (click the color swatch
 next to the name), delete (soft while in use), drag to reorder (they always
 sort after the presets). They get number-key shortcuts 6, 7, ... in order and
 start with an auto-assigned color.
-
-Categorizing is non-destructive and is recorded in the case audit log with your
-examiner name. Codes map 1:1 to Project VIC codes on export; code 0 exports as
-`null`.
-
-A Project VIC import ignores the header fields `TotalMediaFiles` and
-`IsPrecategorized` / `TotalPrecategorized`, because exporters disagree on
-them (one counts entries, another counts distinct MD5s, and one set
-`IsPrecategorized` on every entry while every `Category` was null). Categories
-always come from `Category`.
 
 ### Flags: an independent, per-file label
 
