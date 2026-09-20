@@ -1121,10 +1121,57 @@ machine unless you explicitly **Export** it or point it at a shared location.
 ## 19. Maps (offline basemaps)
 
 GLEAPP ships no map data and fetches none, so a subject's coordinates never
-reach a server somebody else runs. Import a basemap file once, with the
-**Maps** button in the header, and the gallery and the reports draw maps from
+reach a server somebody else runs. Import a basemap file once, with
+**☰ Menu → Reference → Maps**, and the gallery and the reports draw maps from
 it, entirely offline: GLEAPP copies the file under its own data folder and
 records its SHA-256.
+
+### Quick start
+
+1. **Make a map file (once).** Do this on any computer with internet, not the
+   review workstation.
+   - Download the `pmtiles` tool from
+     <https://github.com/protomaps/go-pmtiles/releases> and unzip it (on
+     Windows you get `pmtiles.exe`). Nothing to install.
+   - Get your area's box: on bboxfinder.com, draw a rectangle around your area.
+     It gives four numbers, in the order west, south, east, north.
+   - From the tool's folder, run this with a recent date and your numbers:
+
+     ```bash
+     pmtiles extract https://build.protomaps.com/20260902.pmtiles case-area.pmtiles --bbox=-77.12,38.79,-76.90,38.99
+     ```
+
+     On Windows use `pmtiles.exe`. Keep the `=` right after `--bbox`, with no
+     space.
+2. **Import it.** **☰ Menu → Reference → Maps → Import basemap file…**, or
+   `gleapp maps import case-area.pmtiles`. The first basemap imported becomes
+   the active one.
+3. **See it.** Click a file with GPS to see its map in the details pane, or use
+   **Maps → Show current filter on the map** to plot every geolocated file that
+   matches your filters.
+
+**Street names need zoom.** The map draws major-road names from zoom 11 and
+minor-road names from zoom 15, so a file cut with a low `--maxzoom` (for example
+10) shows city names but no street names. Leave `--maxzoom` off for full detail
+(zoom 15). Cut only the area your case is in: a metro area is about 28 MB, and a
+whole continent is far larger.
+
+**Example: all of North America.**
+
+```bash
+pmtiles extract https://build.protomaps.com/20260902.pmtiles north-america.pmtiles --bbox=-170,7,-50,84 --maxzoom=10
+```
+
+- The box covers Canada, the US, Mexico, Central America and the Caribbean. It
+  leaves out the far western Aleutian Islands and eastern Greenland, and takes
+  in the northern tips of Colombia and Venezuela.
+- Cut to zoom 10, this came to about 980 MB. It shows cities, regions and major
+  features, but no street names.
+- GLEAPP keeps its own copy of the file when you import it, so leave room for
+  both.
+- For street names where your evidence is, also cut that area at full detail
+  (without `--maxzoom`), import it, and pick it as the active basemap. Only one
+  is active at a time, so switch between the two in the Maps list.
 
 ### Where the coordinates come from
 
@@ -1175,7 +1222,7 @@ gets no map, and the reports say so rather than drawing an empty square.
 
 ### Importing and switching
 
-The **Maps** button in the header, then **Import basemap file…**, or `gleapp
+**☰ Menu → Reference → Maps**, then **Import basemap file…**, or `gleapp
 maps import area.pmtiles`. GLEAPP copies the file under its data folder and
 hashes it in the same pass; your original is not moved or modified. The first
 basemap imported becomes the active one, and the panel lists every basemap with

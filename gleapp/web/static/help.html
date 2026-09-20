@@ -1109,7 +1109,7 @@ location.</p>
 <h2 id="maps">19. Maps (offline basemaps)</h2>
 <p>GLEAPP ships no map data and fetches none, so a subject's coordinates never reach a
 server somebody else runs. To see geolocated files on a map, import a basemap file
-once with the <strong>Maps</strong> button in the header; GLEAPP copies it under its
+once with <strong>&#9776;&nbsp;Menu &rarr; Reference &rarr; Maps</strong>; GLEAPP copies it under its
 data folder, records its SHA-256, and draws maps from it entirely offline. The details
 pane then shows a map for any file with GPS (plus a <strong>Copy</strong> button for the
 coordinates), and <strong>Show current filter on the map</strong> plots every
@@ -1122,6 +1122,49 @@ basemap and its hash so a reader can obtain the same file and see the same map. 
 maps carry the place, water and street names the basemap holds, where Pillow can supply
 a scalable font. Untick <strong>Draw location maps</strong> in the Export dialog, or
 pass <code>--no-maps</code> to <code>gleapp report</code>, to leave them out.</p>
+
+<h3>Quick start</h3>
+<ol>
+  <li><strong>Make a map file (once).</strong> Do this on any computer with internet, not the
+    review workstation.
+    <ul>
+      <li>Download the <code>pmtiles</code> tool from
+        <code>github.com/protomaps/go-pmtiles/releases</code> and unzip it (on Windows you get
+        <code>pmtiles.exe</code>). Nothing to install.</li>
+      <li>Get your area's box: on <code>bboxfinder.com</code>, draw a rectangle around your area.
+        It gives four numbers, in the order west, south, east, north.</li>
+      <li>From the tool's folder, run this with a recent date and your numbers:
+        <pre style="margin:6px 0"><code>pmtiles extract https://build.protomaps.com/20260902.pmtiles case-area.pmtiles --bbox=-77.12,38.79,-76.90,38.99</code></pre>
+        On Windows use <code>pmtiles.exe</code>. Keep the <code>=</code> right after
+        <code>--bbox</code>, with no space.</li>
+    </ul>
+  </li>
+  <li><strong>Import it.</strong> <strong>&#9776;&nbsp;Menu &rarr; Reference &rarr; Maps &rarr;
+    Import basemap file&hellip;</strong>, or <code>gleapp maps import case-area.pmtiles</code>.
+    The first basemap imported becomes the active one.</li>
+  <li><strong>See it.</strong> Click a file with GPS to see its map in the details pane, or use
+    <strong>Maps &rarr; Show current filter on the map</strong> to plot every geolocated file
+    that matches your filters.</li>
+</ol>
+<p><strong>Street names need zoom.</strong> The map draws major-road names from zoom 11 and
+minor-road names from zoom 15, so a file cut with a low <code>--maxzoom</code> (for example
+10) shows city names but no street names. Leave <code>--maxzoom</code> off for full detail
+(zoom 15). Cut only the area your case is in: a metro area is about 28 MB, and a whole
+continent is far larger.</p>
+<p><strong>Example: all of North America.</strong></p>
+<pre><code>pmtiles extract https://build.protomaps.com/20260902.pmtiles north-america.pmtiles --bbox=-170,7,-50,84 --maxzoom=10</code></pre>
+<ul>
+  <li>The box covers Canada, the US, Mexico, Central America and the Caribbean. It leaves
+    out the far western Aleutian Islands and eastern Greenland, and takes in the northern
+    tips of Colombia and Venezuela.</li>
+  <li>Cut to zoom 10, this came to about 980 MB. It shows cities, regions and major
+    features, but no street names.</li>
+  <li>GLEAPP keeps its own copy of the file when you import it, so leave room for both.</li>
+  <li>For street names where your evidence is, also cut that area at full detail (without
+    <code>--maxzoom</code>), import it, and pick it as the active basemap. Only one is
+    active at a time, so switch between the two in the Maps list.</li>
+</ul>
+
 <p>Two file types are accepted. A <strong>.pmtiles</strong> region is the recommended
 one: install the <code>pmtiles</code> tool from
 <code>github.com/protomaps/go-pmtiles/releases</code>, pick a recent Protomaps planet
