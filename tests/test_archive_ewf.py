@@ -241,7 +241,7 @@ def test_relink_accepts_the_same_acquisition_and_refuses_another(tmp_path):
     c, _ = _ingest(tmp_path, image, "case", do_process=False)
     try:
         other, _, _ = _acquire(tmp_path / "other", tmp_path, jpg_seed=99)
-        with pytest.raises(ValueError, match="acquisition hash"):
+        with pytest.raises(ValueError, match="image's hash"):
             archive.relink_source(c, image.name, other)
         moved = tmp_path / "moved"
         moved.mkdir()

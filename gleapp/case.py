@@ -129,8 +129,9 @@ def open_case(path: str | Path, *, create: bool = False, examiner: str | None = 
 
 # --------------------------------------------------------------------------
 def is_archive_file(p: Path) -> bool:
-    """A zip, a tar (plain or compressed) or an E01 acquisition, by its magic; the
-    file must exist."""
+    """A zip, a tar (plain or compressed), an E01 acquisition or a raw disk image
+    (one file, or any segment of a numbered split set), by its bytes; the file
+    must exist."""
     from . import archive
     return archive.archive_format(p) is not None
 
@@ -167,7 +168,7 @@ def parse_source_spec(spec: str | Path) -> tuple[list[Source], dict]:
     Returns (sources, meta) where meta may carry 'case'/'examiner'.
     """
     p = Path(spec)
-    # A full-file-system extraction is a zip, and a computer acquisition an E01.
+    # A full-file-system extraction is a zip, and a computer acquisition a disk image.
     # Check before the folder branch, which would otherwise register the archive
     # itself as one file.
     if p.is_file() and is_archive_file(p):

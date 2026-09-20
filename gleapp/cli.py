@@ -458,11 +458,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--cluster-threshold", type=int, default=8)
 
     s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction archive "
-                                      "(zip or tar), an E01 acquisition, or a JSON spec, "
-                                      "then process")
+                                      "(zip or tar), a disk image (E01, raw, or a split raw "
+                                      "set), or a JSON spec, then process")
     s.add_argument("source", help="folder path, extraction .zip or .tar "
-                                 "(plain, .gz, .bz2 or .xz), .E01 "
-                                  "acquisition, OR .json spec file")
+                                 "(plain, .gz, .bz2 or .xz), a disk image (.E01, a raw "
+                                 ".img/.dd, or any segment of a numbered split set), "
+                                 "OR .json spec file")
     s.add_argument("--no-process", action="store_true", help="register files only")
     s.add_argument("--stage", action="store_true",
                    help="copy the media out of an extraction archive into the case, so the "
@@ -472,9 +473,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_ingest)
 
     s = sub.add_parser("source",
-                       help="extraction archives: list them, relink a moved one, copy one "
-                            "into the case (stage) and back (unstage), or carve an "
-                            "acquisition for what a walk of it could not reach")
+                       help="extraction archives and disk images: list them, relink a moved "
+                            "one, copy one into the case (stage) and back (unstage), or "
+                            "carve a disk image for what a walk of it could not reach")
     s.add_argument("action",
                    choices=["list", "relink", "stage", "unstage", "carve"])
     s.add_argument("name", nargs="?", help="source name, as shown by 'source list'")

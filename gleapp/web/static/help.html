@@ -54,8 +54,14 @@ signals only. Every category decision is the examiner's.</p>
           <code>.xz</code>). Its media is read straight from the archive unless you tick
           <em>Copy media out of extraction archives</em>; a compressed tar is always
           copied out.</li>
-          <li>An <strong>E01 acquisition</strong> (<code>.E01</code> with its numbered
-          segments beside it). Its filesystems are walked file by file, so each file
+          <li>A <strong>disk image</strong>: an <strong>E01 acquisition</strong>
+          (<code>.E01</code> with its numbered segments beside it), or a
+          <strong>raw image</strong> (one <code>.img</code>/<code>.dd</code> file, or
+          any segment of a numbered split set, <code>.001</code>, <code>.002</code>,
+          ...; the set is joined from the numbering, and a set with a segment
+          missing is refused with the gap named). A raw image is recognised by what
+          it holds, so its extension does not matter. Its filesystems are walked
+          file by file, so each file
           keeps the name, path and dates the filesystem recorded: ext2, ext3, ext4,
           FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. A
           volume that cannot be read is named in the Source panel afterwards.
@@ -92,7 +98,7 @@ later instead), <strong>video preview key frames</strong> (default 6),
 <strong>Copy media out of extraction archives into the case</strong> (off keeps the case
 small but the archive must stay put; on makes the case self-contained), and
 <strong>Recover media (filesystem records and carving)</strong>
-(E01 acquisitions only; off by default, see &sect;16). Click <strong>Create case &amp; ingest</strong>.</p>
+(disk images only; off by default, see &sect;16). Click <strong>Create case &amp; ingest</strong>.</p>
 <p><strong>The gallery opens as soon as files are registered, so you don't wait for
 processing to finish.</strong> A progress bar along the bottom of the window
 shows the running count and stage; thumbnails fill in as each file is processed
@@ -220,8 +226,8 @@ Maps, Hash&nbsp;stash, Reference data (NSRL) and Project&nbsp;VIC hash sets; und
 <em>Help</em>, Manual and Processing history. Beside it:</p>
 <ul>
   <li><strong>+&nbsp;Add evidence&hellip;</strong> ingests another folder,
-    extraction archive, E01 acquisition or Project&nbsp;VIC / job JSON into this
-    case.</li>
+    extraction archive, disk image (E01 or raw) or Project&nbsp;VIC / job JSON
+    into this case.</li>
   <li><strong>&#8676;&nbsp;Close case</strong> (snapshots first),
     <strong>Details pane</strong>, <strong>Export report</strong>.</li>
   <li><strong>&#8635;&nbsp;Refresh</strong> re-runs the current filter, so files
@@ -414,14 +420,14 @@ whose date is in July 2024.</p>
   Project VIC source).</li>
 </ul>
 
-<h3>Carving <em>(E01 acquisitions only)</em></h3>
+<h3>Carving <em>(disk images only)</em></h3>
 <ul>
   <li><strong>How recovered</strong>: <em>All</em>, <em>Walked</em> (files read
   out of a filesystem, with names and dates), <em>Recovered</em> (a deleted file
   rebuilt from the record that still named it, an NTFS MFT record or a FAT32 or
   exFAT directory entry, with its real name) or <em>Carved</em> (recovered by
   signature from unallocated space, no name or date).</li>
-  <li>Below it, each E01 with its <em>walked</em> / <em>carved</em> counts and a
+  <li>Below it, each disk image with its <em>walked</em> / <em>carved</em> counts and a
   <strong>Carve for deleted media</strong> / <strong>Carve again</strong> button:
   see &sect;16.</li>
 </ul>
@@ -1000,10 +1006,17 @@ text) and size:</p>
 <p>Each reports progress next to its own button. A full reprocess is available from
 the command line (<code>gleapp process --force</code>).</p>
 
-<h3>Carving an E01 for deleted media</h3>
-<p>An E01 acquisition is <strong>walked</strong>: its filesystems are read
-file by file, so every file keeps the name, path and dates the filesystem
-recorded. The <strong>deleted-media</strong> pass then recovers what was
+<h3>Carving a disk image for deleted media</h3>
+<p>A disk image, an E01 acquisition or a raw image (one file, or a numbered
+split set), is <strong>walked</strong>: its filesystems are read file by file,
+so every file keeps the name, path and dates the filesystem recorded. An E01
+carries the acquiring tool's own hash of the disk and a raw image carries none,
+so a raw source is identified, when it is relinked or its copies dropped, by its
+size and a hash of its first and last 4&nbsp;MiB, which tells two images of one
+size apart and no more. An image whose partition table describes a volume larger
+than the file holds (a split set with its later segments missing, or a truncated
+image) is walked as far as it goes, and the Source panel says which volume is
+not all there. The <strong>deleted-media</strong> pass then recovers what was
 deleted, in two steps:</p>
 <ul>
   <li><strong>From deleted records</strong> (NTFS, FAT32 and exFAT): a deleted
@@ -1193,8 +1206,8 @@ near-dup clustering out of O(n&sup2;), and per-key-frame video matching, is
 GLEAPP's own code, no extra library.</p>
 
 <h3>Disk-image reading &amp; Android storage views (sections&nbsp;1&nbsp;&amp;&nbsp;16)</h3>
-<p>Reading an <strong>E01 acquisition</strong> (walking its filesystems,
-carving deleted media, and the storage-view collapsing that folds one Android
+<p>Reading a <strong>disk image</strong> (walking its filesystems, joining a
+split raw set, carving deleted media, and the storage-view collapsing that folds one Android
 photo's several mount-point copies into a single row) is built on tools
 <strong>Alexis&nbsp;Brignoni</strong> wrote for this purpose and vendored
 verbatim under <code>gleapp/vendor/</code> (each with its own license file,
@@ -1202,7 +1215,8 @@ verbatim under <code>gleapp/vendor/</code> (each with its own license file,
 <ul>
   <li><strong><a href="https://github.com/abrignoni/qnxprobe">qnxprobe</a></strong>
     reads the filesystems inside an acquisition (NTFS, APFS, HFS+, ext, F2FS,
-    FAT32, exFAT and more).</li>
+    FAT32, exFAT and more), finds the partitions, and joins the numbered segments
+    of a split raw image.</li>
   <li><strong><a href="https://github.com/abrignoni/ewfprobe">ewfprobe</a></strong>
     presents an EnCase/EWF (<code>.E01</code>) acquisition as a seekable disk
     image, reconstructing chunks across segments; qnxprobe imports it to open

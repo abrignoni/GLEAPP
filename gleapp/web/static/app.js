@@ -3506,10 +3506,10 @@ $("#addEvDlg").addEventListener("click", e => {
   if (e.target.id === "addEvDlg") $("#addEvDlg").style.display = "none";
 });
 $("#aeGo").onclick = async () => {
-  if (!AE.sources.length) return toast("Add at least one folder, archive, E01, or JSON file first");
+  if (!AE.sources.length) return toast("Add at least one folder, archive, disk image, or JSON file first");
   const specs = AE.sources.filter(s => s.kind === "spec").map(s => s.path);
   // folders and archives both go through parse_source_spec server-side, which
-  // detects an archive (or E01) from its bytes and ingests it as one.
+  // detects an archive (or a disk image, E01 or raw) from its bytes and ingests it as one.
   const folders = AE.sources.filter(s => s.kind === "folder" || s.kind === "archive")
     .map(s => ({ name: s.path.split(/[\\/]/).filter(Boolean).pop(), path: s.path }));
   $("#aeGo").disabled = true;
@@ -3593,10 +3593,10 @@ async function pick(kind, label) {
     }
   }
   return prompt(label || ({ folder: "Folder path:",
-    archive: "Path to the extraction archive or acquisition (zip, tar, tar.gz/bz2/xz, E01):",
+    archive: "Path to the extraction archive or disk image (zip, tar, tar.gz/bz2/xz, E01, raw .img/.dd or any segment of a split set):",
     basemap: "Path to a basemap file (.pmtiles or .mbtiles):",
     casefile: "Path to the case.gleapp file:",
-    ingestfile: "Path to the evidence file (extraction archive, E01 acquisition, or .json job/VIC file):"
+    ingestfile: "Path to the evidence file (extraction archive, E01 or raw disk image, or .json job/VIC file):"
     }[kind]
     || "Path to .json job file:")) || null;
 }
@@ -3786,7 +3786,7 @@ $("#createGo").onclick = async () => {
 };
 
 /* ---------- extraction zips read on demand ---------- */
-// A case built from an extraction zip or an E01 acquisition without copying the media
+// A case built from an extraction zip or a disk image without copying the media
 // out depends on that file staying where the case recorded it. When it is missing or has changed,
 // say so at the top of the gallery and offer to relink it; the server accepts a
 // new location only if it holds every registered file with the same size and CRC.
@@ -3802,9 +3802,9 @@ function renderSourcePanel(list) {
   el.innerHTML = list.map(s => {
     const ok = s.status === "ok";
     const state = ok ? "" : ` <span style="color:#c98a2b" title="${esc(s.path)}">(${esc(s.status)})</span>`;
-    const ewf = s.format === "ewf";
+    const image = s.format === "ewf" || s.format === "raw";
     const mode = s.mode === "staged" ? "copied into the case"
-      : (ewf ? "read from the acquisition" : "read from the archive");
+      : (image ? "read from the acquisition" : "read from the archive");
     // How the rows were recovered, counted from what the ingest recorded rather
     // than guessed from the format: an acquisition whose filesystems can be read
     // is walked, and carving one is a separate thing to ask for, so a source can
@@ -3841,6 +3841,19 @@ function renderSourcePanel(list) {
           + ` title="These volumes were found in the acquisition and could not be`
           + ` opened, so nothing in them was registered.">not read: `
           + bad.map(esc).join("; ") + `</div>`;
+      }
+      // A volume the partition table describes past the end of the image: the
+      // shape of a split set missing its later segments, or a truncated image.
+      // What the walk could read is registered; the rest of the volume is not here.
+      const short = s.volumes_short ? JSON.parse(s.volumes_short) : [];
+      if (short.length) {
+        vols += `<div style="font-size:11px;margin-top:2px;color:var(--danger)"`
+          + ` title="The partition table describes these volumes as larger than the`
+          + ` image holds. A split set with segments missing, or a truncated image,`
+          + ` looks like this. Only the part that is here was walked.">not all here: `
+          + short.map(v => `${esc(v.label)} (${_snapBytes(v.missing || 0)} of`
+                        + ` ${_snapBytes(v.size || 0)} past the end of the image)`).join("; ")
+          + `</div>`;
       }
     } catch (e) { vols = ""; }
     // a compressed tar cannot be read on demand, so its copies cannot be dropped
@@ -3879,10 +3892,10 @@ function renderSourcePanel(list) {
   });
 }
 
-/* ---------- Carving section (E01 acquisitions only) ---------- */
+/* ---------- Carving section (disk images only: E01 or raw) ---------- */
 function renderCarveSection(list) {
   const sec = document.querySelector('.fsec[data-sec="carve"]');
-  const ewf = (list || []).filter(s => s.format === "ewf");
+  const ewf = (list || []).filter(s => s.format === "ewf" || s.format === "raw");
   if (sec) sec.hidden = !ewf.length;
   const el = $("#carveList");
   if (!el) return;

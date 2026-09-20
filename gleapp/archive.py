@@ -5,11 +5,15 @@ device's filesystem, tens of gigabytes, with a large minority of members carryin
 extension. This module enumerates the archive, decides what to keep, and registers each
 member with the device path the examiner sees kept apart from the path the code reads.
 
-A computer acquisition arrives instead as an EnCase/EWF set (``.E01`` and its numbered
-segments), which holds a disk rather than a list of members. There is nothing to
-enumerate, so its media is carved: the acquired disk is scanned for image and video
-signatures and each hit is registered by the offset it was found at. Everything after
-that is the same machinery, because an offset is what a tar member already registers.
+A computer acquisition arrives instead as a disk image: an EnCase/EWF set (``.E01``
+and its numbered segments) or a raw image (one ``.img``/``.dd`` file, or a numbered
+split set, ``.001``, ``.002``, ...). Both hold a disk rather than a list of members.
+The filesystems in it are walked, so each file keeps its name, path and dates; on
+request the disk is also carved, with each hit registered by the offset it was found
+at. Everything after that is the same machinery, because an offset is what a tar
+member already registers. The E01 and raw forms differ only in how the bytes are
+read: an E01 carries the acquiring tool's own hash of the disk and a raw image does
+not, so a raw source is identified by its size and a hash of its first and last bytes.
 
 A zip is enumerated from its central directory in seconds. A tar has no directory, so
 enumerating it is one streaming read of the whole file (measured at about 13 minutes
@@ -94,7 +98,9 @@ WALKED_FILESYSTEMS = ("ext2", "ext3", "ext4", "F2FS", "FAT32", "exFAT", "NTFS",
 FORMAT_ZIP = "zip"
 FORMAT_TAR = "tar"
 FORMAT_TAR_COMPRESSED = "tar-compressed"
-FORMAT_EWF = "ewf"            # an EnCase/EWF (.E01) disk image, carved for media
+FORMAT_EWF = "ewf"            # an EnCase/EWF (.E01) disk image
+FORMAT_RAW = "raw"            # a raw disk image: one file, or a numbered split set
+IMAGE_FORMATS = (FORMAT_EWF, FORMAT_RAW)   # a disk: walked, and carved on request
 CACHE_DIR = "cache"             # on-demand copies for the viewer; bounded, oldest evicted
 TMP_DIR = "tmp"                 # on-demand copies for processing; removed after use
 CACHE_MAX_BYTES = 2 * 1024 ** 3
@@ -116,19 +122,50 @@ class ArchiveUnavailable(Exception):
 
 # ---- format ----------------------------------------------------------------
 def _is_tar(path: Path) -> bool:
+    """A tar holding at least one member.
+
+    ``is_tarfile`` alone accepts any file that begins with 512 zero bytes as an
+    empty tar, and a raw HFS+ or ext volume begins with 1,024 of them, so a raw
+    image of either was read as an archive holding nothing: zero rows, no error.
+    """
     try:
-        return tarfile.is_tarfile(path)
+        if not tarfile.is_tarfile(path):
+            return False
+        with tarfile.open(path) as tf:
+            return tf.next() is not None
     except (OSError, tarfile.TarError, EOFError, ValueError):
         return False
 
 
+def _is_raw_image(path: Path) -> bool:
+    """A raw disk image: a file, or the numbered split set it belongs to, in which
+    the vendored reader finds a partition table or a filesystem it can name.
+
+    A split set that cannot be joined as it stands (a hole in the numbering, no
+    first segment beside the file given) counts too, so the ingest reports what
+    is wrong with the set rather than registering one segment as a lone file.
+    """
+    try:
+        qnxprobe.split_segments(os.fspath(path))
+    except qnxprobe.SplitImageError:
+        return True
+    try:
+        with _RawImage(path) as img:
+            return bool(_volumes(img))
+    except Exception:                                # pylint: disable=broad-except
+        return False
+
+
 def archive_format(path: str | Path) -> str | None:
-    """``zip``, ``tar``, ``tar-compressed``, ``ewf`` or None, decided by the file's
-    own bytes.
+    """``zip``, ``tar``, ``tar-compressed``, ``ewf``, ``raw`` or None, decided by the
+    file's own bytes.
 
     A gzip, bzip2 or xz stream counts only if a tar is inside it; a gzipped single file
     is not an archive source. An EWF acquisition is recognised by its own signature, so
-    the first segment of a set is enough and the extension is not consulted.
+    the first segment of a set is enough and the extension is not consulted. A raw
+    image has no signature of its own, so it is recognised by what is in it: a
+    partition table or a filesystem the vendored reader can name, looked for before
+    the tar check, since a raw volume that begins with zeros reads as an empty tar.
     """
     p = Path(path)
     if not p.is_file():
@@ -144,6 +181,8 @@ def archive_format(path: str | Path) -> str | None:
         return FORMAT_ZIP if zipfile.is_zipfile(p) else None
     if head[:2] == b"\x1f\x8b" or head[:3] == b"BZh" or head[:6] == b"\xfd7zXZ\x00":
         return FORMAT_TAR_COMPRESSED if _is_tar(p) else None
+    if _is_raw_image(p):
+        return FORMAT_RAW
     return FORMAT_TAR if _is_tar(p) else None
 
 
@@ -327,6 +366,10 @@ def source_record(case, name: str) -> dict | None:
         # part of the disk was not read: the ingest has recorded this since the
         # walk was written and nothing has ever handed it back.
         "volumes_not_read": case.db.get_meta(f"{key}:volumes_not_read") or "",
+        # and the ones the image does not hold in full: a partition the table
+        # describes past the end of the file, which is what a split set missing
+        # its later segments, or a truncated image, looks like
+        "volumes_short": case.db.get_meta(f"{key}:volumes_short") or "",
     }
 
 
@@ -354,9 +397,11 @@ def source_status(case) -> list[dict]:
             # A segmented acquisition is several files and the record names one, so a
             # later segment going missing leaves the first one untouched and the source
             # reading fine until something asks for bytes that live in the missing part.
-            if same and rec["format"] == FORMAT_EWF and rec["segments"]:
-                with contextlib.suppress(ewfprobe.EwfError, OSError):
-                    same = len(ewfprobe.ewf_segments(rec["path"])) >= rec["segments"]
+            if same and rec["format"] in IMAGE_FORMATS and rec["segments"]:
+                try:
+                    same = _segment_count(rec["path"], rec["format"]) >= rec["segments"]
+                except _IMAGE_ERRORS:
+                    same = False                     # the set can no longer be joined
             status = "ok" if same else "changed"
         # Split the count by how each row was actually recovered, rather than
         # inferring it from the format: an acquisition whose filesystems could
@@ -382,13 +427,14 @@ def source_status(case) -> list[dict]:
 # hold nothing open between reads.
 _ZIPS: dict[str, zipfile.ZipFile] = {}
 _ZIP_LOCK = threading.Lock()
-# An EwfImage per image per process, with a lock each: a segmented set holds several
-# file handles and a chunk table, and reads have to be serialised across threads. The
-# ingest pass owns its image outright, so it uses _NO_LOCK rather than paying for one.
+# One image handle per image per process, with a lock each: a segmented set holds
+# several file handles (and an E01 a chunk table), and reads have to be serialised
+# across threads. The ingest pass owns its image outright, so it uses _NO_LOCK
+# rather than paying for one.
 _NO_LOCK = contextlib.nullcontext()
-_EWFS: dict[str, object] = {}
-_EWF_READ: dict[str, threading.Lock] = {}
-_EWF_LOCK = threading.Lock()
+_IMAGES: dict[str, object] = {}
+_IMAGE_READ: dict[str, threading.Lock] = {}
+_IMAGE_LOCK = threading.Lock()
 
 
 # One walker per volume per image. A walker holds a decoded object map, so it is
@@ -426,25 +472,101 @@ def _volumes(image) -> list[tuple[int, int | None, str, str]]:
     return out
 
 
-def _open_ewf(path: str):
-    """The cached EwfImage for ``path`` and the lock that serialises reads of it."""
-    with _EWF_LOCK:
-        img = _EWFS.get(path)
+_IMAGE_ERRORS = (OSError, ewfprobe.EwfError, qnxprobe.SplitImageError)
+
+
+class _RawImage:
+    """A raw disk image, one file or a numbered split set, with the surface the
+    E01 reader offers: ``media_size``, ``paths``, ``stored_hashes``, and seek,
+    read and close. The split set is joined by the vendored reader, from the
+    numbering beside the file given, and a set with a hole in it is refused
+    rather than joined around.
+
+    A raw image carries no hash of itself, so ``stored_hashes`` holds one this
+    module computes: SHA-256 over the image size and its first and last 4 MiB.
+    That identifies the image well enough for relink and unstage to tell one
+    image from another of the same size; it is not a hash of the whole disk and
+    is never presented as one.
+    """
+    SAMPLE = 4 * 1024 * 1024
+
+    def __init__(self, path) -> None:
+        path = os.fspath(path)
+        segments = qnxprobe.split_segments(path)
+        self.paths = [os.fspath(p) for p in segments] or [path]
+        self._fh = (qnxprobe.SegmentedImage(segments) if segments
+                    else open(path, "rb"))            # pylint: disable=consider-using-with
+        self.media_size = qnxprobe.image_size(self._fh)
+        self._hashes: dict | None = None
+
+    @property
+    def stored_hashes(self) -> dict:
+        if self._hashes is None:
+            h = hashlib.sha256(struct.pack("<Q", self.media_size))
+            head = min(self.SAMPLE, self.media_size)
+            self._fh.seek(0)
+            h.update(self._fh.read(head))
+            if self.media_size > head:
+                self._fh.seek(max(head, self.media_size - self.SAMPLE))
+                h.update(self._fh.read(self.SAMPLE))
+            self._hashes = {"head-tail-sha256": h.hexdigest()}
+        return self._hashes
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._fh.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._fh.tell()
+
+    def read(self, n: int = -1) -> bytes:
+        return self._fh.read(n)
+
+    def close(self) -> None:
+        self._fh.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
+def _open_image_file(path):
+    """A fresh handle on a disk image: the EWF reader for an .E01 set, and
+    ``_RawImage`` for a raw image or a numbered split set."""
+    path = os.fspath(path)
+    if qnxprobe.looks_like_ewf(path):
+        return ewfprobe.open_ewf(path)
+    return _RawImage(path)
+
+
+def _segment_count(path: str, fmt: str) -> int:
+    """How many files hold the image at ``path`` now."""
+    if fmt == FORMAT_EWF:
+        return len(ewfprobe.ewf_segments(path))
+    return len(qnxprobe.split_segments(path)) or 1
+
+
+def _open_image(path: str):
+    """The cached image handle for ``path`` and the lock that serialises reads of it."""
+    with _IMAGE_LOCK:
+        img = _IMAGES.get(path)
         if img is None:
             try:
-                img = ewfprobe.open_ewf(path)
-            except (OSError, ewfprobe.EwfError) as exc:
+                img = _open_image_file(path)
+            except _IMAGE_ERRORS as exc:
                 raise ArchiveUnavailable(
                     f"cannot open the source image ({exc}): {path}") from exc
-            _EWFS[path] = img
-            _EWF_READ[path] = threading.Lock()
-        return img, _EWF_READ[path]
+            _IMAGES[path] = img
+            _IMAGE_READ[path] = threading.Lock()
+        return img, _IMAGE_READ[path]
 
 
-def _drop_ewf(path: str) -> None:
-    with _EWF_LOCK:
-        img = _EWFS.pop(path, None)
-        _EWF_READ.pop(path, None)
+def _drop_image(path: str) -> None:
+    with _IMAGE_LOCK:
+        img = _IMAGES.pop(path, None)
+        _IMAGE_READ.pop(path, None)
         for key in [k for k in _WALKERS if k[0] == path]:
             _WALKERS.pop(key, None)
     if img is not None:
@@ -481,10 +603,10 @@ def close_zips() -> None:
     for zf in handles:
         with contextlib.suppress(Exception):
             zf.close()
-    with _EWF_LOCK:
-        images = list(_EWFS.values())
-        _EWFS.clear()
-        _EWF_READ.clear()
+    with _IMAGE_LOCK:
+        images = list(_IMAGES.values())
+        _IMAGES.clear()
+        _IMAGE_READ.clear()
     for img in images:
         with contextlib.suppress(Exception):
             img.close()
@@ -586,9 +708,9 @@ def _open_walker(path: str, base: int, fskind: str, size):
     resident with its bytes inside the MFT record and no extent at all. None of
     those is one offset, which is why a walked row records a node and not one.
     """
-    img, lock = _open_ewf(path)
+    img, lock = _open_image(path)
     key = (path, int(base))
-    with _EWF_LOCK:
+    with _IMAGE_LOCK:
         w = _WALKERS.get(key)
         if w is None:
             try:
@@ -657,7 +779,7 @@ def _extract_walked_member(rec: dict, row, dest: Path) -> None:
         with contextlib.suppress(OSError):
             dest.unlink()
         if not Path(path).exists():
-            _drop_ewf(path)
+            _drop_image(path)
             raise ArchiveUnavailable(
                 f"the source image is no longer at its recorded location: {path}") from exc
         # A file the reader declines, such as one compressed with a method it
@@ -676,13 +798,13 @@ def _extract_ewf_member(rec: dict, row, dest: Path) -> None:
     offset, size = row["member_offset"], int(row["size"])
     if offset is None:
         raise ArchiveUnavailable(f"the carved item at {path} has no recorded offset")
-    img, lock = _open_ewf(path)
+    img, lock = _open_image(path)
     view = _ImageRange(img, lock, int(offset), size)
     try:
         _write_stream(view, dest)
-    except (OSError, ewfprobe.EwfError) as exc:
+    except _IMAGE_ERRORS as exc:
         if not Path(path).exists():
-            _drop_ewf(path)
+            _drop_image(path)
             raise ArchiveUnavailable(
                 f"the source image is no longer at its recorded location: {path}") from exc
         raise ArchiveUnavailable(
@@ -699,7 +821,7 @@ def _materialize(rec: dict, row, dest: Path) -> None:
     fmt = rec.get("format", FORMAT_ZIP)
     if fmt == FORMAT_ZIP:
         _extract_member(rec["path"], row["orig_path"], dest)
-    elif fmt == FORMAT_EWF:
+    elif fmt in IMAGE_FORMATS:
         # An image source holds both kinds once carving runs beside a walk: a
         # walked row names the node it came from, a carved row an offset.
         if _row_get(row, "member_node") is not None:
@@ -918,17 +1040,18 @@ def ingest_archive(case, src, *, count: int = 0, progress=None) -> int:
     path = Path(src.path)
     fmt = archive_format(path)
     if fmt is None:
-        raise ValueError(f"{path.name} is not a zip, a tar or an E01 acquisition")
+        raise ValueError(f"{path.name} is not a zip, a tar, an E01 acquisition or a "
+                         "raw disk image")
     if fmt == FORMAT_ZIP:
         return _ingest_zip(case, src, path, count=count, progress=progress)
-    if fmt == FORMAT_EWF:
+    if fmt in IMAGE_FORMATS:
         # An acquisition holds filesystems, so it is walked: the files in it have
         # names, paths and dates, and a walk keeps them. Carving reaches what a
         # walk cannot, the deleted material in unallocated space, and it is asked
         # for rather than assumed.
         if getattr(src, "carve", False):
-            return _ingest_ewf(case, src, path, count=count, progress=progress)
-        return _ingest_image_walk(case, src, path, count=count, progress=progress)
+            return _ingest_ewf(case, src, path, fmt, count=count, progress=progress)
+        return _ingest_image_walk(case, src, path, fmt, count=count, progress=progress)
     return _ingest_tar(case, src, path, fmt, count=count, progress=progress)
 
 
@@ -1051,7 +1174,8 @@ def _prime_catalog(walker) -> None:
         pass
 
 
-def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> int:
+def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
+                       progress) -> int:
     """Register the media in the filesystems an acquisition holds, by walking them.
 
     An acquisition of a computer holds filesystems, so its files have names,
@@ -1076,12 +1200,21 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
     n = count
     refused: list[str] = []
 
-    img = ewfprobe.open_ewf(str(image_path))
+    img = _open_image_file(image_path)
     try:
         media_size = img.media_size
         segments = len(img.paths)
         stored = _stored_hash(img)
         vols = _volumes(img)
+        # A partition the table describes past the end of the image is the shape
+        # of a split set missing its later segments, or a truncated image. Its
+        # files still walk, and the walk reports what it can read, so the case
+        # records that the volume is not all here rather than leaving a short
+        # listing to read as a small disk.
+        short = [{"label": lb or f"lba{b // qnxprobe.SECTOR}", "size": s, "missing": m}
+                 for lb, b, s, m in qnxprobe.short_regions(
+                     media_size, [(lb or f"lba{b // qnxprobe.SECTOR}", b, s)
+                                  for b, s, _k, lb in vols if s])]
         for base, size, fskind, label in vols:
             vol = label or f"lba{base // qnxprobe.SECTOR}"
             try:
@@ -1168,7 +1301,7 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
                     if progress:
                         progress(n)
     finally:
-        _drop_ewf(str(image_path))
+        _drop_image(str(image_path))
     case.db.commit()
     key = _meta_key(src.name)
     case.db.set_meta(f"{key}:media_size", str(media_size))
@@ -1179,7 +1312,9 @@ def _ingest_image_walk(case, src, image_path: Path, *, count: int, progress) -> 
         [{"base": b, "size": s, "kind": k, "label": lb} for b, s, k, lb in vols]))
     if refused:
         case.db.set_meta(f"{key}:volumes_not_read", json.dumps(refused))
-    _finish(case, src, image_path, fmt=FORMAT_EWF, root="", stage=stage,
+    if short:
+        case.db.set_meta(f"{key}:volumes_short", json.dumps(short))
+    _finish(case, src, image_path, fmt=fmt, root="", stage=stage,
             reason="the filesystems in the acquisition were walked, so every file "
                    "keeps the name, path and date the filesystem recorded for it",
             tally=tally,
@@ -1222,13 +1357,13 @@ def _unclaimed_space(img, vols, *, min_bytes=64 * 1024):
     return sorted(out)
 
 
-def _ingest_ewf(case, src, image_path: Path, *, count: int, progress,
+def _ingest_ewf(case, src, image_path: Path, fmt: str, *, count: int, progress,
                 skip_offsets: set[int] | None = None) -> int:
-    """Register the media carved out of an EnCase/EWF acquisition.
+    """Register the media carved out of a disk image, E01 or raw.
 
-    An .E01 holds a disk, not a list of members, so there is nothing to
-    enumerate. The vendored reader presents the acquired disk as a seekable
-    stream and the vendored carver scans it for media, reporting each file as an
+    An image holds a disk, not a list of members, so there is nothing to
+    enumerate. The vendored readers present the disk as a seekable stream and
+    the vendored carver scans it for media, reporting each file as an
     offset and a length. Those are registered the way a tar member's data offset
     is, so reference mode reads a carved file back later by seeking to it.
 
@@ -1253,7 +1388,7 @@ def _ingest_ewf(case, src, image_path: Path, *, count: int, progress,
             state["tick"] = now
             progress(state["n"])
 
-    img = ewfprobe.open_ewf(image_path)
+    img = _open_image_file(image_path)
     try:
         media_size = img.media_size
         segments = len(img.paths)
@@ -1308,7 +1443,7 @@ def _ingest_ewf(case, src, image_path: Path, *, count: int, progress,
     # whose hash matches holds the same bytes and every recorded offset is still
     # valid. That is what relink and unstage check, instead of carving again.
     case.db.set_meta(f"{key}:media_hash", stored)
-    _finish(case, src, image_path, fmt=FORMAT_EWF, root="", stage=stage,
+    _finish(case, src, image_path, fmt=fmt, root="", stage=stage,
             reason=("carved from the acquired disk; a carved file has no name, path "
                     "or timestamp of its own"),
             tally=tally,
@@ -1472,21 +1607,26 @@ def _verify_tar_members(case, name: str, index: dict, limit: int = 20) -> list[s
 
 
 def _stored_hash(img) -> str:
-    """The acquisition's own recorded hash, as ``ALGO:hex``, or empty if it recorded
-    none. One value is enough to identify an acquisition and keeps the record short."""
+    """The hash that identifies the image, as ``ALGO:hex``: the acquiring tool's own
+    for an E01 (empty if it recorded none), and for a raw image the head-and-tail
+    sample ``_RawImage`` computes. One value is enough to identify an image and
+    keeps the record short."""
     return next((f"{a}:{h}" for a, h in sorted(dict(img.stored_hashes).items())), "")
 
 
-def _verify_ewf(case, name: str, rec: dict, img, limit: int = 20) -> list[str]:
+def _verify_image(case, name: str, rec: dict, img, limit: int = 20) -> list[str]:
     """An image holds what the case registered when it is the same acquisition and
     every recorded extent still lies inside it.
 
     A carved row has no member to look up, so there is nothing to match by name.
-    What identifies the image is the acquisition itself: the media size and the
-    hash the acquiring tool wrote into the E01. Those are read out of the image's
-    own header, so this says the file is that acquisition. It does not re-hash the
-    disk, so it does not prove the bytes are intact; that is the same standard as
-    the zip check, which compares recorded CRCs rather than recomputing them.
+    What identifies the image is the acquisition itself: the media size and, for
+    an E01, the hash the acquiring tool wrote into it, read out of the image's
+    own header, so this says the file is that acquisition. It does not re-hash
+    the disk, so it does not prove the bytes are intact; that is the same standard
+    as the zip check, which compares recorded CRCs rather than recomputing them.
+    A raw image carries no such hash, so it is identified by a hash of its size
+    and its first and last 4 MiB, which tells two images of one size apart and
+    no more than that.
     """
     problems: list[str] = []
     if rec["media_size"] and img.media_size != rec["media_size"]:
@@ -1494,17 +1634,32 @@ def _verify_ewf(case, name: str, rec: dict, img, limit: int = 20) -> list[str]:
                         f"registered {rec['media_size']}")
     stored = _stored_hash(img)
     if rec["media_hash"] and stored != rec["media_hash"]:
-        problems.append(f"the acquisition hash is {stored or 'not recorded'} and the "
+        problems.append(f"the image's hash is {stored or 'not recorded'} and the "
                         f"case registered {rec['media_hash']}")
     for r in case.db.iter_files("source = ?", (name,)):
         off, size = r["member_offset"], r["size"]
-        if off is None:
+        # A walked row is read through its volume's walker and records a node, not
+        # an offset; what it needs is that its volume still lies inside the image.
+        base = _row_get(r, "volume_base")
+        if _row_get(r, "member_node") is not None and base is not None:
+            if int(base) >= img.media_size:
+                problems.append(f"{r['orig_path']}: its volume lies past the end of "
+                                f"the image")
+        elif off is None:
             problems.append(f"{r['orig_path']}: no recorded offset")
         elif off + size > img.media_size:
             problems.append(f"{r['orig_path']}: runs past the end of the image")
         if len(problems) >= limit:
             break
     return problems
+
+
+def _family(fmt: str) -> str:
+    """The kinds of source a relink may move between: a plain and a compressed
+    tar are one family, and every other format is its own. An E01 and a raw
+    image of one disk hold the same bytes, and the case cannot check that,
+    since the raw form has no hash to compare with the E01's recorded one."""
+    return "tar" if fmt in (FORMAT_TAR, FORMAT_TAR_COMPRESSED) else fmt
 
 
 def relink_source(case, name: str, new_path: str | Path) -> dict:
@@ -1518,20 +1673,20 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
     new = Path(new_path).resolve()
     fmt = archive_format(new)
     if fmt is None:
-        raise ValueError(f"cannot open {new}: not a zip, a tar or an E01 acquisition")
-    if (fmt == FORMAT_ZIP) != (rec["format"] == FORMAT_ZIP) or \
-            (fmt == FORMAT_EWF) != (rec["format"] == FORMAT_EWF):
+        raise ValueError(f"cannot open {new}: not a zip, a tar, an E01 acquisition or "
+                         "a raw disk image")
+    if _family(fmt) != _family(rec["format"]):
         raise ValueError(f"{new.name} is a {fmt} and the case registered {name!r} "
                          f"from a {rec['format']}")
     index: dict = {}
-    if fmt == FORMAT_EWF:
-        _drop_ewf(str(new))
+    if fmt in IMAGE_FORMATS:
+        _drop_image(str(new))
         try:
-            img = ewfprobe.open_ewf(new)
-        except (OSError, ewfprobe.EwfError) as exc:
+            img = _open_image_file(new)
+        except _IMAGE_ERRORS as exc:
             raise ValueError(f"cannot open {new}: {exc}") from exc
         with img:
-            problems = _verify_ewf(case, name, rec, img)
+            problems = _verify_image(case, name, rec, img)
     elif fmt == FORMAT_ZIP:
         try:
             zf = zipfile.ZipFile(new)
@@ -1550,7 +1705,7 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
         raise ValueError(f"{new.name} does not hold what the case registered from "
                          f"{name!r}: {shown}")
     _drop_zip(rec["path"])
-    _drop_ewf(rec["path"])
+    _drop_image(rec["path"])
     st = new.stat()
     key = _meta_key(name)
     if fmt == FORMAT_TAR:
@@ -1617,8 +1772,8 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     all), so it cannot be read back later by a single offset.
     """
     rec = _require(case, name)
-    if rec["format"] != FORMAT_EWF:
-        raise ValueError(f"{name} is not an image source; only an acquisition is recovered from")
+    if rec["format"] not in IMAGE_FORMATS:
+        raise ValueError(f"{name} is not an image source; only a disk image is recovered from")
     slug = _slug(Path(rec["path"]).stem)
     staged_dir = case.staged_dir
     src_obj = _CarveSource(name, rec["path"], case)
@@ -1627,7 +1782,7 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     recovered_offsets: set = set()
     n = len(case.db.iter_files("source = ?", (name,)))
 
-    img = ewfprobe.open_ewf(Path(rec["path"]))
+    img = _open_image_file(rec["path"])
     try:
         for base, size, fskind, _label in _volumes(img):
             if fskind not in ("ntfs", "fat32", "exfat"):
@@ -1769,8 +1924,8 @@ def carve_source(case, name: str, *, unallocated_only: bool = False,
     from where.
     """
     rec = _require(case, name)
-    if rec["format"] != FORMAT_EWF:
-        raise ValueError(f"{name} is not an image source; only an acquisition is carved")
+    if rec["format"] not in IMAGE_FORMATS:
+        raise ValueError(f"{name} is not an image source; only a disk image is carved")
     src_obj = _CarveSource(name, rec["path"], case,
                            unallocated_only=unallocated_only)
     already = {int(r["member_offset"]) for r in case.db.iter_files(
@@ -1780,7 +1935,7 @@ def carve_source(case, name: str, *, unallocated_only: bool = False,
         # does not add a nameless twin of a deleted file we recovered by name
         already |= {int(o) for o in extra_skip}
     before_rows = len(case.db.iter_files("source = ?", (name,)))
-    n = _ingest_ewf(case, src_obj, Path(rec["path"]), count=before_rows,
+    n = _ingest_ewf(case, src_obj, Path(rec["path"]), rec["format"], count=before_rows,
                     progress=progress, skip_offsets=already)
     added = n - before_rows
     case.db.audit_log(case.examiner, "carve-source",
@@ -1817,9 +1972,9 @@ def unstage_source(case, name: str) -> int:
     if rec["format"] == FORMAT_TAR_COMPRESSED:
         raise ValueError(f"{Path(rec['path']).name} is a compressed tar and cannot be read "
                          "on demand; keeping the copies")
-    if rec["format"] == FORMAT_EWF:
-        img, _ = _open_ewf(rec["path"])
-        problems = _verify_ewf(case, name, rec, img)
+    if rec["format"] in IMAGE_FORMATS:
+        img, _ = _open_image(rec["path"])
+        problems = _verify_image(case, name, rec, img)
     elif rec["format"] == FORMAT_ZIP:
         zf = _open_zip(rec["path"])
         problems = _verify_members(case, name, zf)
