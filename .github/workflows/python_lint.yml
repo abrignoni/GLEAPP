@@ -45,8 +45,9 @@ jobs:
           # pylint resolves imports against this environment, and the test files
           # import pytest. A new test file has no baseline in the merge-base
           # comparison, so an import it cannot resolve counts as introduced and
-          # fails the job. Same dev extras test_cases.yml installs.
-          python -m pip install pytest piexif
+          # fails the job. Taken from pyproject's dev extra, the same one
+          # test_cases.yml installs, so the two cannot drift apart.
+          python -m pip install -e ".[dev]"
 
       # NUL-delimited so a path containing a space cannot be split into two paths.
       - name: Lint the files this pull request changes
