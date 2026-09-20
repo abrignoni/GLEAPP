@@ -46,11 +46,31 @@ jobs:
         with:
           python-version: '3.12'
 
+      # macOS only. The opencv-python-headless wheels for macOS vendor a Homebrew
+      # FFmpeg built --enable-gpl, so they carry x264, x265, xvid, rubberband, vidstab
+      # and frei0r, and cv2 hard-links the FFmpeg stack, so those cannot be stripped.
+      # GLEAPP cannot ship GPL code, because the bundle also holds Apache-1.1 code and
+      # Microsoft's WebView2 redistributables, and packaging/gleapp.spec refuses such a
+      # build. conda-forge publishes an LGPL FFmpeg, so macOS takes OpenCV from there.
+      # Its package registers opencv_python_headless dist-info, so the pip step below
+      # sees the requirement satisfied and does not pull the wheel back in.
+      # See "macOS: take OpenCV from conda-forge" in the README.
+      - name: macOS, OpenCV from conda-forge
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          curl -sL "https://micro.mamba.pm/api/micromamba/osx-$(uname -m | sed s/x86_64/64/)/latest" \
+            | tar -xj bin/micromamba
+          ./bin/micromamba create -y -p ./build-env -c conda-forge --no-rc \
+            python=3.12 "py-opencv=*=headless*" "ffmpeg=*=lgpl*"
+          echo "$PWD/build-env/bin" >> "$GITHUB_PATH"
+
       - name: Install build dependencies
         shell: bash
         run: |
           python -m pip install --upgrade pip
           python -m pip install --prefer-binary -e ".[build]"
+          python -c "import cv2; print('cv2', cv2.__version__, cv2.__file__)"
 
       - name: Phase 1, the executable
         shell: bash
