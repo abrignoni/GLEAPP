@@ -1377,7 +1377,7 @@ GLEAPP stands on a lot of other people's work.
 | **Python** | the runtime | Python Software Foundation | PSF |
 | **Pillow** | image decode/encode, thumbnails, EXIF read | Jeffrey A. Clark & contributors, a fork of PIL by Fredrik Lundh | HPND (PIL license) |
 | **pi-heif** + **libheif** | HEIC / HEIF decoding | Alexander Piskun (pi-heif); libheif by Dirk Farin / struktur AG | BSD-3 source; LGPL-3 wheels (libheif, libde265) |
-| **OpenCV** (`opencv-python-headless`) | video decode & key-frame sampling, color-space ops, DNN inference | OpenCV team; PyPI wheels by Olli-Pekka Heinisuo | Apache-2.0 |
+| **OpenCV** (`opencv-python-headless`) | video decode & key-frame sampling, color-space ops, DNN inference | OpenCV team; PyPI wheels by Olli-Pekka Heinisuo | Apache-2.0. The wheels bundle FFmpeg: LGPL-2.1 on Windows, GPL on macOS, so the macOS build takes OpenCV from conda-forge with FFmpeg pinned to its LGPL build (see the README) |
 | **NumPy** | array math behind hashing and screening | NumPy developers | BSD-3 |
 | **ImageHash** | aHash / pHash / dHash perceptual hashes: the basis of *find similar*, visual-duplicate stacking and near-duplicate clustering | Johannes Buchner | BSD-2 |
 | **texture2ddecoder** | GPU-texture decode (ASTC / PVRTC / ETC / BCn, KTX) | Rudolf Kolbe (K0lb3) | MIT |

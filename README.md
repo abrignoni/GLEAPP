@@ -121,6 +121,30 @@ version is read from `gleapp/__init__.py`, so it cannot drift from the app. Phas
 macOS also produces `dist/GLEAPP.app`, unsigned; sign it with `codesign` before phase 2.
 A Linux AppImage is not wired up yet.
 
+#### macOS: take OpenCV from conda-forge
+
+The `opencv-python-headless` wheels for macOS vendor a Homebrew FFmpeg built
+`--enable-gpl`, which puts x264, x265, xvid, rubberband, vidstab and frei0r in the
+bundle. GLEAPP cannot ship those. The build also carries Apache-1.1 code
+(`gleapp/vendor/impacket_ese.py`) and Microsoft's WebView2 redistributables, so it
+cannot be relicensed as GPL to accommodate them. Every macOS wheel back to 4.8.1.78
+carries them, so pinning an older version does not help.
+
+Build the macOS app in an environment where OpenCV comes from conda-forge, with
+FFmpeg pinned to its LGPL build:
+
+```bash
+micromamba create -p ./build-env -c conda-forge python=3.12 \
+    "py-opencv=*=headless*" "ffmpeg=*=lgpl*"
+grep -v opencv requirements.txt > /tmp/req.txt
+./build-env/bin/python -m pip install -r /tmp/req.txt -e .[build]
+```
+
+FFmpeg support is kept: `cv2.getBuildInformation()` still reports `FFMPEG: YES`, and
+no GPL codec is in the tree. `packaging/gleapp.spec` refuses to build if one appears.
+Windows needs none of this. Its OpenCV wheel ships one FFmpeg DLL built without
+`--enable-gpl`, whose only external codecs are libopenh264, libvpx and libaom.
+
 The build bundles Python, OpenCV, Pillow, NumPy, SciPy, Flask and pywebview:
 ~110–140 MB one-folder, ~90 MB one-file. It does **not** bundle the WebView2
 runtime; see `packaging/installer.iss` for how to chain the Evergreen

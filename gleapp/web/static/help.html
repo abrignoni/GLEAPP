@@ -1303,7 +1303,7 @@ text rather than a link, because a link would be the one outbound address on the
   <tr><td><strong>Python</strong></td><td>the runtime: Python Software Foundation (PSF license)</td></tr>
   <tr><td><strong>Pillow</strong></td><td>image decode/encode, thumbnails, EXIF: Jeffrey&nbsp;A.&nbsp;Clark &amp; contributors, a fork of PIL by Fredrik&nbsp;Lundh (HPND)</td></tr>
   <tr><td><strong>pi-heif</strong> + <strong>libheif</strong></td><td>HEIC / HEIF decoding: Alexander&nbsp;Piskun; libheif by Dirk&nbsp;Farin / struktur&nbsp;AG (BSD-3 source; LGPL-3 wheels: libheif, libde265)</td></tr>
-  <tr><td><strong>OpenCV</strong> (opencv-python-headless)</td><td>video decode &amp; key frames, color-space ops, DNN inference: OpenCV team; wheels by Olli-Pekka&nbsp;Heinisuo (Apache-2.0)</td></tr>
+  <tr><td><strong>OpenCV</strong> (opencv-python-headless)</td><td>video decode &amp; key frames, color-space ops, DNN inference: OpenCV team; wheels by Olli-Pekka&nbsp;Heinisuo (Apache-2.0; the wheels bundle FFmpeg, LGPL-2.1 on Windows and GPL on macOS, so the macOS build takes OpenCV from conda-forge with FFmpeg pinned to its LGPL build)</td></tr>
   <tr><td><strong>NumPy</strong></td><td>array math behind hashing and screening: NumPy developers (BSD-3)</td></tr>
   <tr><td><strong>ImageHash</strong></td><td>aHash / pHash / dHash perceptual hashes, the basis of <em>find similar</em>, visual-duplicate stacking and near-duplicate clustering: Johannes&nbsp;Buchner (BSD-2)</td></tr>
   <tr><td><strong>texture2ddecoder</strong></td><td>GPU-texture decode (ASTC / PVRTC / ETC / BCn, KTX): Rudolf&nbsp;Kolbe (K0lb3) (MIT)</td></tr>
