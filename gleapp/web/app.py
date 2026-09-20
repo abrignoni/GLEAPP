@@ -105,6 +105,18 @@ def _like_escape(s: str) -> str:
     return str(s).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _notices_candidates() -> list[Path]:
+    """Where NOTICES.txt can be, frozen first, then a source checkout."""
+    here = Path(__file__).resolve()
+    out = []
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        out.append(Path(base) / "NOTICES.txt")
+    out.append(Path(sys.executable).resolve().parent / "NOTICES.txt")
+    out.append(here.parent.parent.parent / "NOTICES.txt")   # repo root
+    return out
+
+
 def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     app = Flask(__name__, static_folder="static", template_folder="templates")
     state: dict = {
@@ -165,6 +177,24 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     @app.get("/")
     def index():
         return send_from_directory(app.template_folder, "index.html")
+
+    @app.get("/notices")
+    def notices():
+        """The third-party licence notices this build carries.
+
+        packaging/gleapp.spec writes NOTICES.txt into the bundle, because a licence
+        that asks for its notice to travel with a binary copy is not satisfied by a
+        file sitting in the source tree. A source checkout has no copy until
+        tools/make_notices.py is run, so say so rather than return a bare 404 that
+        reads as a missing feature.
+        """
+        for cand in _notices_candidates():
+            if cand.is_file():
+                return send_file(cand, mimetype="text/plain")
+        return ("This copy of GLEAPP carries no notices file.\n\n"
+                "A packaged build has one. From a source checkout, write it with:\n"
+                "    python3 tools/make_notices.py\n",
+                404, {"Content-Type": "text/plain; charset=utf-8"})
 
     @app.errorhandler(409)
     def _no_case(e):
