@@ -70,8 +70,8 @@ signals only. Every category decision is the examiner's.</p>
           <li><strong>JSON</strong>: a GLEAPP job spec or a <strong>Project VIC 2.0
           (US)</strong> JSON, detected automatically. The VIC media folder is resolved
           next to the file. MediaID, category, original path, MIME and
-          victim-offender flags are imported. See &sect;3 and &sect;7 for how
-          duplicate entries and header fields are handled.</li>
+          victim-offender flags are imported. See &sect;3 for how duplicate
+          entries are handled.</li>
         </ul>
       </li>
     </ul>
@@ -365,15 +365,6 @@ rename, recolor (click the color swatch next to the name), delete (soft-deleted
 while in use so labels are kept), drag to reorder (they always sort after the
 presets). They get number-key shortcuts 6, 7, ... in order and start with an
 auto-assigned color.</p>
-<p>Categorizing is non-destructive to the evidence and is recorded in the case
-audit log with your examiner name. Codes map 1:1 to Project&nbsp;VIC codes on
-export; code 0 exports as <code>null</code>.</p>
-<p>A Project&nbsp;VIC import ignores the header fields
-<code>TotalMediaFiles</code> and <code>IsPrecategorized</code> /
-<code>TotalPrecategorized</code>, because exporters disagree on them (one counts
-entries, another counts distinct MD5s, and one set <code>IsPrecategorized</code>
-on every entry while every <code>Category</code> was null). Categories always come
-from <code>Category</code>.</p>
 
 <h3 id="flags">Flags: an independent, per-file label</h3>
 <p>A file's <strong>category</strong> is always exactly one value. <strong>Flags</strong>
