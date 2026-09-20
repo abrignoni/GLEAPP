@@ -108,130 +108,120 @@ launcher). The original evidence is never modified: GLEAPP reads it and writes
 only inside the case folder.</p>
 
 <h2 id="gallery">3. The review gallery</h2>
-<p>Left: the <strong>filter sidebar</strong>. Center: the <strong>gallery</strong> or
-<strong>details list</strong> (switch with the <strong>▦&nbsp;Gallery / ☰&nbsp;List</strong>
-toggle), with a control bar across the top (view toggle, Columns, Sort, thumbnails
-Per page, Tile size, <strong>Times</strong> timezone, and the shortcut legend) and
-pagination above and below.
-Right: the <strong>details pane</strong> (toggle with <kbd>I</kbd> or the "Details
-pane" button; its state is remembered).</p>
-<p>The filter sidebar, selection, categorize shortcuts, right-click menu, details
-pane and pagination all work the same in either view.</p>
+<table>
+  <tr><th>Pane</th><th>What it is</th></tr>
+  <tr><td><strong>Left</strong></td><td>Filter sidebar</td></tr>
+  <tr><td><strong>Center</strong></td><td>Gallery or details list (<strong>▦&nbsp;Gallery / ☰&nbsp;List</strong> toggle in the control bar)</td></tr>
+  <tr><td><strong>Right</strong></td><td>Details pane (toggle with <kbd>I</kbd> or the button; state is remembered)</td></tr>
+</table>
+<p>The control bar also holds Columns (list view), Sort, thumbnails per page, Tile
+size, the <strong>Timezone</strong> selector and the shortcut legend.</p>
 
 <h3>Details list view</h3>
-<p><strong>☰&nbsp;List</strong> shows one row per file with a column for every
-stored detail: built for triage by metadata rather than by eye. Unlike the
-gallery, the list <strong>always shows every row</strong>. Exact and visual
-duplicates are never collapsed, so a photo that is both a loose file and a member
-of a nested archive appears as both rows. The <em>Collapse duplicates</em>
-checkbox is disabled while the list is open.</p>
-<ul>
-  <li><strong>Sort</strong>: click a column header; click again to reverse
-    (an arrow marks the active column).</li>
-  <li><strong>Filter</strong>: type in the box under a header. Filters run
-    server-side across the whole result set, not just the visible page:
-    <ul>
-      <li>text columns: case-insensitive substring; <code>none</code> = blank,
-        <code>set</code> = non-blank. <strong>Name</strong> and <strong>File
-        path</strong> match what's shown, including the on-disk name / path used
-        as a fallback when a file has no original name or VIC path.</li>
-      <li>number columns: <code>500</code>, <code>&gt;=500</code>,
-        <code>&gt;500</code>, <code>&lt;=500</code>, <code>&lt;500</code>, or a
-        range <code>100-500</code> / <code>100 .. 500</code>. <code>none</code> /
-        <code>set</code> also work.</li>
-      <li><strong>Size</strong>: a bare number is <strong>KB</strong> and means
-        "that size or larger"; use a unit otherwise:
-        <code>&gt;1mb</code>, <code>100kb-2mb</code>, <code>2gb</code>.</li>
-      <li><strong>Skin ratio</strong>: a bare number is a <strong>percent</strong>,
-        "that or higher" (<code>30</code> = &ge;&nbsp;30&nbsp;%);
-        <code>10-50</code> works too.</li>
-      <li><strong>Duration</strong>: <code>m:ss</code> or bare seconds, meaning
-        "that long or longer": <code>0:30</code>, <code>&gt;1:00</code>,
-        <code>1:00-5:00</code>.</li>
-      <li><strong>GPS lat / lon</strong>: a bare number is a partial match
-        (<code>45</code> finds <code>45.4215</code>); <code>&gt;40</code>,
-        <code>-80 .. -70</code>, <code>set</code> / <code>none</code> also work.</li>
-      <li>date/time columns (FS created, FS written, FS accessed, Ingested): two
-        <strong>calendar pickers</strong>, <em>from</em> and <em>to</em>; fill
-        either or both. Day boundaries follow the toolbar <strong>Times</strong>
-        timezone, so the range matches the dates shown in the column. Captured
-        (EXIF) is text: filter it as a substring (<code>2024-06</code>).</li>
-      <li>enum columns (Type, Source, Category, Hash kind): pick from the dropdown.</li>
-    </ul>
-  </li>
-  <li><strong>Resize</strong>: drag the right border of a column header to widen
-    or narrow it (overflow is clipped with an ellipsis; hover the cell for the
-    full value). Double-click the border to reset that column.</li>
-  <li><strong>Clear column filters</strong>: toolbar button (with the active
-    filter count) that drops every column filter at once; sort and column choices
-    stay. The sidebar <strong>Clear</strong> (next to the filter count) clears these as well.</li>
-  <li><strong>Columns&nbsp;▾</strong>: choose visible columns; <strong>All</strong>
-    / <strong>Defaults</strong> presets, plus <strong>Reset widths</strong>.</li>
-  <li>View, visible columns, column widths, sort and column filters are remembered
-    per browser.</li>
-</ul>
-<p><strong>Paths.</strong> The <strong>File path</strong> column shows the original
-path recorded in the Project&nbsp;VIC JSON (<code>MediaFiles.FilePath</code>):
-where the file lived on the source device. For a folder-ingest case (no VIC data)
-it falls back to the file's path on disk. <strong>File path (working copy)</strong>
-always shows where GLEAPP resolved the file on your machine; add it from
-<strong>Columns&nbsp;▾</strong> if you need it.</p>
-<p>Exporters store one copy per distinct MD5, so several Project&nbsp;VIC Media
-entries can name one file. These become one row with the first entry's device
-path, and the others are listed under <em>Also under</em>. The reported count
-is entries, so it can exceed the row count. The Source panel's import line
-shows both.</p>
-<p><strong>Four distinct kinds of date: GLEAPP keeps them separate.</strong></p>
+<p><strong>☰&nbsp;List</strong> shows one row per file with a column for every stored
+detail, for triage by metadata rather than by eye. It <strong>always shows every
+row</strong>: exact and visual duplicates are never collapsed, so a photo that is
+both a loose file and a member of a nested archive appears twice.
+<em>Collapse duplicates</em> is disabled here.</p>
+<p><strong>Column filters.</strong> Type in the box under a header. Filters run
+server-side across the whole result set, not just the visible page.</p>
 <table>
-  <tr><td><strong>Captured (EXIF)</strong></td><td>when the media records it was taken:
-    EXIF <code>DateTimeOriginal</code> / embedded metadata <em>only</em>; blank if the file has none.</td></tr>
-  <tr><td><strong>FS created</strong></td><td>filesystem creation time: <code>os.stat</code>
-    on a folder scan, or <code>MediaFiles.Created</code> from a Project&nbsp;VIC import.</td></tr>
-  <tr><td><strong>FS written</strong></td><td>filesystem last-modified time:
-    stat mtime, or VIC <code>MediaFiles.Written</code>.</td></tr>
-  <tr><td><strong>FS accessed</strong></td><td>filesystem last-access time:
-    stat atime, or VIC <code>MediaFiles.Accessed</code>.</td></tr>
+  <tr><th>Column</th><th>What you type</th><th>Examples</th></tr>
+  <tr><td><strong>Text</strong></td><td>Case-insensitive substring. <code>none</code> = blank, <code>set</code> = non-blank. <strong>Name</strong> and <strong>File path</strong> match what's shown, including the fallback (on-disk name / path) when a file has no original name or VIC path.</td><td><code>dcim</code>, <code>none</code></td></tr>
+  <tr><td><strong>Numbers</strong></td><td>Equals, comparison or range. <code>none</code> / <code>set</code> also work.</td><td><code>500</code>, <code>&gt;=500</code>, <code>&lt;500</code>, <code>100-500</code>, <code>100 .. 500</code></td></tr>
+  <tr><td><strong>Size</strong></td><td>A bare number is <strong>kilobytes</strong>, meaning "that size or larger" (the column never shows raw bytes). Add a unit otherwise.</td><td><code>&gt;1mb</code>, <code>100kb-2mb</code>, <code>500b</code>, <code>2gb</code></td></tr>
+  <tr><td><strong>Skin ratio</strong></td><td>A bare number is a <strong>percent</strong>, meaning "that or higher". Ranges work.</td><td><code>30</code> (&ge;&nbsp;30&nbsp;%), <code>10-50</code></td></tr>
+  <tr><td><strong>Duration</strong></td><td><code>m:ss</code> or bare seconds. A bare value means "that long or longer".</td><td><code>0:30</code>, <code>&gt;1:00</code>, <code>1:00-5:00</code></td></tr>
+  <tr><td><strong>GPS lat / lon</strong></td><td>A bare number is a partial match. Comparisons, ranges and <code>set</code> / <code>none</code> also work.</td><td><code>45</code> (finds <code>45.4215</code> and <code>-45...</code>), <code>&gt;40</code>, <code>-80 .. -70</code></td></tr>
+  <tr><td><strong>Dates</strong> (FS created, FS written, FS accessed, Ingested)</td><td>Two <strong>calendar pickers</strong>, <em>from</em> and <em>to</em>; fill either or both. Day boundaries follow the <strong>Timezone</strong> you selected, so ranges match the dates you see.</td><td></td></tr>
+  <tr><td><strong>Captured (EXIF)</strong></td><td>Stored as text; filter as a substring.</td><td><code>2024-06</code></td></tr>
+  <tr><td><strong>Type, Source, Category, Hash kind</strong></td><td>Pick from a dropdown.</td><td></td></tr>
 </table>
-<p><strong>A Project VIC export decides which of these it carries.</strong>
-One export wrote created, written and accessed on most of its entries; another
-wrote written on some, created on almost none and accessed on none. GLEAPP reads
-every timestamp an export wrote, in both the <code>...Z</code> and the
-<code>...-05:00</code> forms, so a sparse timestamp column on a VIC case is the
-export, not a failed parse.</p>
-<p>A filesystem timestamp is not a capture time; GLEAPP never fills
-"Captured" from one. All four show in the details pane, the list view and as
-report fields.</p>
-<p><strong>Timezone.</strong> Filesystem and ingest times are stored in
-<strong>UTC</strong>. The <strong>Times</strong> selector in the control bar shows
-them in a timezone you pick: a shortlist, your device's zone, or any IANA name
-via <em>Other...</em>, with <strong>daylight saving applied automatically</strong>.
-The choice is saved per case and as your default for new cases, and is stamped
-into the report header. It <strong>never</strong> changes
-<strong>Captured&nbsp;(EXIF)</strong>: that is the camera's own local wall-clock
-time, always shown exactly as recorded.</p>
-<p><strong>Header.</strong> <strong>&#9776;&nbsp;Menu</strong> groups the case
-tools: under <em>Case</em>, &#9881;&nbsp;Categories, &#9881;&nbsp;Flags, Snapshots and
-Export Project&nbsp;VIC (Project&nbsp;VIC cases only); under <em>Reference</em>,
-Maps, Hash&nbsp;stash, Reference data (NSRL) and Project&nbsp;VIC hash sets; under
-<em>Help</em>, Manual and Processing history. Beside it:</p>
+<p><strong>Other list controls</strong></p>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><strong>Sort</strong></td><td>Click a header; click again to reverse. An arrow marks the active column.</td></tr>
+  <tr><td><strong>Resize</strong></td><td>Drag a header's right border. Clipped values show an ellipsis; hover for the full text. Double-click the border to reset that column.</td></tr>
+  <tr><td><strong>Columns&nbsp;▾</strong></td><td>Choose visible columns. <strong>All</strong> / <strong>Defaults</strong> presets, and <strong>Reset widths</strong>.</td></tr>
+  <tr><td><strong>Clear column filters</strong></td><td>Toolbar button (shows the active count). Removes every column filter, keeps sort and columns. The sidebar's <strong>Clear</strong> clears these too, plus the sidebar filters.</td></tr>
+</table>
+<h3>Paths</h3>
 <ul>
-  <li><strong>+&nbsp;Add evidence&hellip;</strong> ingests another folder,
-    extraction archive, disk image (E01 or raw) or Project&nbsp;VIC / job JSON
-    into this case.</li>
-  <li><strong>&#8676;&nbsp;Close case</strong> (snapshots first),
-    <strong>Details pane</strong>, <strong>Export report</strong>.</li>
-  <li><strong>&#8635;&nbsp;Refresh</strong> re-runs the current filter, so files
-    that no longer match it (e.g. ones you just categorized) drop out of view.</li>
-  <li><strong>&#128276;</strong> lists recent report exports.</li>
+  <li><strong>File path:</strong> the original path recorded in the Project&nbsp;VIC JSON
+    (<code>MediaFiles.FilePath</code>), where the file lived on the source device. A
+    folder-ingest case (no VIC data) falls back to the on-disk path.</li>
+  <li><strong>File path (working copy):</strong> where GLEAPP resolved the file on your
+    machine. Add it from <strong>Columns&nbsp;▾</strong>.</li>
+  <li><strong>Duplicate VIC entries:</strong> exporters store one copy per distinct MD5,
+    so several Media entries can name one file. They become one row with the first
+    entry's device path, and the others are listed under <em>Also under</em>. The
+    reported count is entries, so it can exceed the row count. The Source panel's
+    import line shows both.</li>
 </ul>
-<p><strong>Processing history</strong> (&#9776;&nbsp;Menu &rarr; Help) is the case
-processing log: every ingest, process, screening, hash-set match, carve and examiner
-edit run against this case, newest first. A <strong>process</strong> run lists each
-stage (media processing, known-hash match, exact stacking, visual stacking,
-near-duplicate clustering) with a&nbsp;&#10003; or&nbsp;&#10007; for whether it
-succeeded, so a stage that failed does not hide the ones that worked. The "Show" menu
-narrows the list to runs, examiner edits, or only runs with a failed stage. This is
-the same audit log written into the LAVA export.</p>
+
+<h3>Dates</h3>
+<p>Four distinct kinds. Do not conflate them.</p>
+<table>
+  <tr><th>Column</th><th>Meaning</th></tr>
+  <tr><td><strong>Captured (EXIF)</strong></td><td>When the media says it was taken: EXIF <code>DateTimeOriginal</code> / embedded metadata <em>only</em>. Blank if none.</td></tr>
+  <tr><td><strong>FS created</strong></td><td>Filesystem creation time: <code>os.stat</code> on a folder scan, <code>MediaFiles.Created</code> on a VIC import, the NTFS record for a file walked or recovered from an E01.</td></tr>
+  <tr><td><strong>FS written</strong></td><td>Last modified: <code>os.stat</code> mtime, VIC <code>MediaFiles.Written</code>, or the NTFS record for an E01 file.</td></tr>
+  <tr><td><strong>FS accessed</strong></td><td>Last access: <code>os.stat</code> atime, VIC <code>MediaFiles.Accessed</code>, or the NTFS record for an E01 file.</td></tr>
+</table>
+<ul>
+  <li><strong>Never a capture time:</strong> a filesystem timestamp is never used to fill
+    "Captured". All four appear in the details pane, list view and reports, under the
+    same names.</li>
+  <li><strong>FAT32 / exFAT in an E01:</strong> these store a wall clock with no zone, so
+    the three FS times stay blank and appear as <strong>Recorded (as stored, no
+    zone)</strong> instead. That applies in the list view, HTML report, CSV
+    (<code>recorded_times</code>) and LAVA tables. See &sect;16.</li>
+  <li><strong>VIC exports vary:</strong> one wrote created, written and accessed on most
+    entries; another wrote written on some, created on almost none and accessed on none.
+    GLEAPP reads every timestamp written (<code>...Z</code> and <code>...-05:00</code>
+    forms), so a sparse column on a VIC case is the export, not a failed parse.</li>
+</ul>
+
+<h3>Timezone</h3>
+<ul>
+  <li><strong>Stored as UTC:</strong> filesystem and ingest times.</li>
+  <li><strong>Timezone selector:</strong> choose common zones, your device's zone, or any IANA
+    name via <em>Other...</em>. Daylight saving is applied automatically.</li>
+  <li><strong>Saved</strong> per case and as the default for new cases, and stamped into
+    the report header.</li>
+  <li><strong>Never applied to Captured&nbsp;(EXIF):</strong> those are the camera's local
+    wall-clock time, always shown as recorded.</li>
+</ul>
+
+<h3>Header</h3>
+<p><strong>&#9776;&nbsp;Menu</strong> groups the case tools:</p>
+<table>
+  <tr><th>Group</th><th>Items</th></tr>
+  <tr><td><strong>Case</strong></td><td>&#9881;&nbsp;Categories, &#9881;&nbsp;Flags, Snapshots, Export Project&nbsp;VIC (VIC cases only)</td></tr>
+  <tr><td><strong>Reference</strong></td><td>Maps, Hash&nbsp;stash, Reference data (NSRL), Project&nbsp;VIC hash sets</td></tr>
+  <tr><td><strong>Help</strong></td><td>Manual, Processing history</td></tr>
+</table>
+<p>Beside the menu:</p>
+<table>
+  <tr><th>Button</th><th>What it does</th></tr>
+  <tr><td><strong>+&nbsp;Add evidence&hellip;</strong></td><td>Ingests another folder, extraction archive, disk image (E01 or raw) or Project&nbsp;VIC / job JSON into this case.</td></tr>
+  <tr><td><strong>&#8676;&nbsp;Close case</strong></td><td>Snapshots first.</td></tr>
+  <tr><td><strong>Details pane</strong>, <strong>Export report</strong></td><td>Toggle the pane; open the export dialog.</td></tr>
+  <tr><td><strong>&#8635;&nbsp;Refresh</strong></td><td>Re-runs the current filter, so files that no longer match (e.g. ones you just categorized) drop out.</td></tr>
+  <tr><td><strong>&#128276;</strong></td><td>Lists recent report exports.</td></tr>
+</table>
+
+<h3>Processing history</h3>
+<p><strong>&#9776;&nbsp;Menu &rarr; Help.</strong> The case processing log, newest first:
+every ingest, process, screening, hash-set match, carve and examiner edit. It is the
+same audit log written into the LAVA export.</p>
+<ul>
+  <li>A <strong>process</strong> run lists each stage (media processing, known-hash match,
+    exact stacking, visual stacking, near-duplicate clustering) with a&nbsp;&#10003; or
+    &nbsp;&#10007;, so a failed stage doesn't hide the ones that worked.</li>
+  <li><strong>Show</strong> narrows the list to runs, examiner edits, or runs with a failed
+    stage.</li>
+</ul>
 
 <h2 id="tiles">4. Tiles &amp; badges</h2>
 <p>Each tile shows the thumbnail, the file <strong>name</strong>, a colored bar
