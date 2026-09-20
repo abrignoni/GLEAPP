@@ -18,68 +18,54 @@ This manual is also available in the app: **☰ Menu → Help → Manual** in a 
 
 ## 1. Getting started
 
-On launch with no case open, GLEAPP shows the **launcher**.
+With no case open, GLEAPP shows the **launcher**.
 
-- **Recent cases**: click to reopen. Only cases that contain files are listed;
-  each shows its live file count.
-- **Open existing case**: point at a folder containing a `case.gleapp` file, or
-  at the `case.gleapp` file itself.
-- **New case**: give it a name, a folder (created if missing) and your examiner
-  name, then add one or more **evidence sources** under *Evidence to ingest*:
-  paste a path and click **Add**, or use the two browse buttons. Add as
-  many sources as you like; they all ingest together into the one case.
+- **Recent cases**: click to reopen. Only cases that contain files are listed,
+  each with its live file count.
+- **Open existing case**: point at a folder containing `case.gleapp`, or at the
+  file itself.
+- **New case**: enter a name, folder (created if missing) and examiner name,
+  then add one or more sources under *Evidence to ingest* by pasting a path and
+  clicking **Add**, or with the browse buttons. All sources ingest into the one
+  case.
   - **Browse to folder…**: scanned recursively for media.
-  - **Browse to file…**, which accepts any of:
-    - A full file-system **extraction archive**: `.zip`, or a `.tar` plain or
-      compressed (`.gz`, `.bz2`, `.xz`). Its media is read straight from the
-      archive unless you tick *Copy media out of extraction archives*; a
-      compressed tar is always copied out.
-    - A **disk image**: an **E01 acquisition** (`.E01` with its numbered segments
-      beside it), or a **raw image** (one `.img`/`.dd` file, or any segment of a
-      numbered split set, `.001`, `.002`, ...; the set is joined from the
-      numbering, and a set with a segment missing is refused with the gap named
-      rather than read around). Its filesystems (NTFS, FAT32, exFAT, HFS+, APFS,
-      ext2/3/4, F2FS and the QNX ones; §16 has the full list) are walked file by
-      file, so each file keeps the name, path and dates the filesystem recorded.
-      A raw image is recognised by what it holds, a partition table or a
-      filesystem GLEAPP can name, so its extension does not matter. A volume that
-      cannot be read is named in the Source panel afterwards.
-      **Recovering deleted media** is optional and separate from the walk:
-      tick *Recover media (filesystem records and carving)* to do it during
-      this ingest, or run it later from the Source panel (see §16).
-    - A **JSON**: a GLEAPP job spec (a list of named sources) or a
-      **Project VIC 2.0 (US) JSON**, detected automatically; the VIC media folder
-      is resolved next to the file, and existing MediaID, category, original
-      path, MIME and victim-offender flags are imported.
+  - **Browse to file…** accepts:
+    - **Extraction archive**: `.zip`, or `.tar` plain or compressed (`.gz`,
+      `.bz2`, `.xz`). Media is read in place unless you tick *Copy media out of
+      extraction archives*. A compressed tar is always copied out.
+    - **Disk image**: an `.E01` with its segments beside it, or a raw image (one
+      `.img`/`.dd`, or any segment of a split set such as `.001`, `.002`). Raw
+      images are identified by content, not extension. A split set with a
+      missing segment is refused and the gap is named.
+      - Filesystems are walked file by file, so each file keeps the name, path
+        and dates the filesystem recorded. Supported: ext2/3/4, F2FS, FAT32,
+        exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS.
+        Unreadable volumes are named in the Source panel.
+      - Deleted-media recovery is separate (§16). Tick *Recover media
+        (filesystem records and carving)* to run it during ingest, or run it
+        later from the Source panel.
+    - **JSON**: a GLEAPP job spec or a **Project VIC 2.0 (US)** JSON, detected
+      automatically. The VIC media folder is resolved next to the file.
+      MediaID, category, original path, MIME and victim-offender flags are
+      imported. See §3 and §7 for how duplicate entries and header fields are
+      handled.
 
-    Exporters store one copy per distinct MD5, so several Media entries routinely
-    name the same stored file. Those become **one row**, carrying the first
-    entry's device path with the others listed as *Also under*. The count GLEAPP
-    reports is in entries, so it can exceed the number of rows, and the Source
-    panel's import line says both when they differ.
+**Ingest options:**
 
-    Two case-header fields are deliberately ignored, because exporters do not
-    agree with them: `TotalMediaFiles` (one export counts Media entries, another
-    counts distinct MD5 values, so GLEAPP counts the array itself) and
-    `IsPrecategorized` / `TotalPrecategorized` (one export set the former true
-    on every entry while every `Category` was null). The category you see always
-    comes from `Category`.
+- *Face / skin tone pre-processing*: on by default, and can be run later.
+- *Video preview key frames*: default 6.
+- *Copy media out of extraction archives*: off keeps the case small but the
+  archive must stay in place. On makes the case self-contained.
+- *Recover media*: disk images only, off by default (§16).
 
-Ingest options: **Face / skin tone pre-processing** (on by default; can be run
-later), **video preview key frames** (default 6), **Copy media out of
-extraction archives into the case** (off keeps the case small but the archive
-must stay put; on makes the case self-contained), and **Recover media
-(filesystem records and carving)** (disk images only, off by default, see
-§16). Click **Create case & ingest**.
+Click **Create case & ingest**.
 
-**The gallery opens as soon as files are registered, so you don't wait for
-processing to finish.** A progress bar along the bottom of the window shows the
-running count and stage; thumbnails fill in as each file is processed and the
-file count climbs. You can review, categorize and flag any already-processed file
-while the rest catch up. The bar clears itself when processing completes;
-duplicate-stacking, known-hash matching and clustering run in the final stage,
-so those columns and filters settle a moment after the last thumbnail. Closing
-the case is blocked until processing finishes.
+The gallery opens as soon as files are registered, and a progress bar along the
+bottom shows the count and stage. Thumbnails fill in as files are processed, and
+you can review, categorize and flag finished files meanwhile. Duplicate
+stacking, known-hash matching and clustering run last, so those filters settle
+just after the final thumbnail. The bar clears when processing finishes, and
+closing the case is blocked until then.
 
 ## 2. The case
 
@@ -161,6 +147,12 @@ Project VIC JSON (`MediaFiles.FilePath`): where the file lived on the source
 device. For a folder-ingest case (no VIC data) it falls back to the file's path
 on disk. The **File path (working copy)** column always shows where GLEAPP
 resolved the file on your machine; add it from **Columns ▾** if you need it.
+
+Exporters store one copy per distinct MD5, so several Project VIC Media
+entries can name one file. These become one row with the first entry's device
+path, and the others are listed under *Also under*. The reported count is
+entries, so it can exceed the row count. The Source panel's import line shows
+both.
 
 **Dates: four distinct kinds, do not conflate them.**
 
@@ -317,6 +309,12 @@ start with an auto-assigned color.
 Categorizing is non-destructive and is recorded in the case audit log with your
 examiner name. Codes map 1:1 to Project VIC codes on export; code 0 exports as
 `null`.
+
+A Project VIC import ignores the header fields `TotalMediaFiles` and
+`IsPrecategorized` / `TotalPrecategorized`, because exporters disagree on
+them (one counts entries, another counts distinct MD5s, and one set
+`IsPrecategorized` on every entry while every `Category` was null). Categories
+always come from `Category`.
 
 ### Flags: an independent, per-file label
 
