@@ -366,21 +366,25 @@ function tileEl(f) {
   const nVis = f.vstack_count || 0;
   // face-match results carry similarity with no "distance" (that's a pHash-only concept)
   const dist = (f.distance != null || f.similarity != null) ? `<span class="b">${f.similarity}%</span>` : "";
-  const faces = f.faces ? `<span class="b">${f.faces}\u{1F464}</span>` : "";
+  const faces = f.faces ? `<span class="b face">${f.faces}\u{1F464}</span>` : "";
   const hit = hashBadges(f);
   const gps = f.gps_lat != null ? `<span class="b">\u{1F4CD}</span>` : "";
-  const err = f.error && !f.thumb ? `<span class="b hit">ERR</span>` : "";
+  const err = f.error && !f.thumb ? `<span class="b err">ERR</span>` : "";
   const flagB = f.flags && f.flags.length
     ? `<span class="b" title="${esc(f.flags.map(x => x.name).join(", "))}">⚑ ${f.flags.length}</span>`
     : "";
-  let stack = "";
+  // A file can have both kinds of copy, so show both badges (the tile's offset
+  // shadow can only show one; visual wins).
+  const stackBits = [];
   if (nVis > 1) {
     el.classList.add("vstacked");
-    stack = `<span class="stackn vis" title="${nVis} visually similar files">≈ ${nVis}</span>`;
-  } else if (nExact > 1) {
-    el.classList.add("stacked");
-    stack = `<span class="stackn" title="${nExact} identical copies">⬚ ${nExact}</span>`;
+    stackBits.push(`<span class="stackn vis" title="${nVis} visually similar files">≈ ${nVis}</span>`);
   }
+  if (nExact > 1) {
+    if (nVis <= 1) el.classList.add("stacked");
+    stackBits.push(`<span class="stackn" title="${nExact} identical copies">⬚ ${nExact}</span>`);
+  }
+  const stack = stackBits.length ? `<div class="stacks">${stackBits.join("")}</div>` : "";
   const catbar = f.category
     ? `<div class="catbar" style="background:${catColor(f.category)}">${esc(catName(f.category))}</div>`
     : `<div class="catbar none">Uncategorized</div>`;

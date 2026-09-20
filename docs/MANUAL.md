@@ -224,15 +224,20 @@ full-size viewer shows the complete image with nothing over it.
 
 | Badge | Meaning |
 |---|---|
-| `HASH` (red) | matched a known-hash set of kind *known* (notable) |
-| `NSRL` (green) | matched a *known-good* set (badge = set's first word); auto-categorized **Non-pertinent** if uncategorized |
+| `VIC` (orange) | matched a **Project VIC hash set** (hover for the set name and category) |
+| `HASH` (blue) | matched an imported hash set that is not Project VIC, known-good or your stash (kind *known* or *other*) |
+| `NSRL` (green) | matched a *known-good* set (badge = the set name's first word, uppercased, cut to 6 characters); auto-categorized **Non-pertinent** if uncategorized |
 | `STASH` (purple) | matched your **local hash stash**: you previously categorized this file 1-3 in another case |
-| `ERR` (red) | processing error, could not be decoded (open details for the reason) |
-| `N 👤` | face count from screening |
+| `ERR` (red) | processing error and no thumbnail: the file could not be decoded (open details for the reason) |
+| `N 👤` (teal) | face count from screening |
 | `📍` | has GPS coordinates |
-| `≈ N` | in a **visual stack** of N: same picture re-encoded/resized (blue offset shadow) |
-| `⬚ N` | in an **exact stack** of N: byte-identical copies (gray offset shadow) |
+| `≈ N` (blue) | in a **visual stack** of N: same picture re-encoded/resized (blue offset shadow) |
+| `⬚ N` (black) | in an **exact stack** of N: byte-identical copies (gray offset shadow) |
 | `✓` | selected |
+
+A file can be in both kinds of stack. Both badges then show side by side in the
+tile's lower-right corner (`≈ N` first, then `⬚ N`), and the offset shadow shows
+the visual stack.
 
 Video tiles show a duration label; hover and move left-to-right to **scrub**
 key frames. Single-click selects; double-click opens the **full-size viewer**;
@@ -476,7 +481,7 @@ Set **kinds**:
 
 | Kind | A hit... |
 |---|---|
-| **known** | shows the red `HASH` badge (purple `STASH` for the local hash stash); if the file is uncategorized and the set asserts a category, adopts it |
+| **known** | shows the blue `HASH` badge (purple `STASH` for the local hash stash); if the file is uncategorized and the set asserts a category, adopts it |
 | **known-good** | shows the gray `NSRL` badge; **auto-categorizes Non-pertinent** if uncategorized; can be hidden with "Hide known-NSRL"; never overrides a category you set |
 | **other** | informational only |
 

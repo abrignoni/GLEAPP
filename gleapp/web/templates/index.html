@@ -112,12 +112,15 @@
   .tile.sel .selcheck{display:block}
   .tile .badges{position:absolute;left:4px;top:4px;right:4px;display:flex;gap:3px;flex-wrap:wrap;pointer-events:none}
   .tile .b{background:rgba(0,0,0,.72);border-radius:4px;padding:1px 5px;font-size:10px;line-height:1.5}
-  .tile .b.hit{background:var(--danger)}
+  .tile .b.hit{background:#2563eb}
   .tile .b.good{background:#2f6e4f}
   .tile .b.stash{background:#7c4dff}
   .tile .b.vic{background:#d9822b}
+  .tile .b.err{background:var(--danger)}
+  .tile .b.face{background:#0e7490}
   .vicchip{font-size:10px;letter-spacing:.04em;border-radius:3px;padding:0 5px;color:#fff;background:#d9822b}
-  .tile .stackn{position:absolute;right:4px;bottom:5px;background:rgba(0,0,0,.8);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:0 5px;font-size:11px;font-weight:700;line-height:1.6}
+  .tile .stacks{position:absolute;right:4px;bottom:5px;display:flex;gap:3px}
+  .tile .stackn{background:rgba(0,0,0,.8);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:0 5px;font-size:11px;font-weight:700;line-height:1.6}
   .tile .stackn.vis{background:var(--accent);border-color:#fff}
   .tile.stacked{box-shadow:2px 2px 0 0 var(--bg), 3px 3px 0 0 var(--line), 5px 5px 0 0 var(--bg), 6px 6px 0 0 var(--line)}
   .tile.vstacked{box-shadow:2px 2px 0 0 var(--bg), 3px 3px 0 0 var(--accent), 5px 5px 0 0 var(--bg), 6px 6px 0 0 var(--accent)}
@@ -878,7 +881,7 @@
   </div>
   <div class="field kindrow">
     <label><input type="radio" name="hiKind" value="known" checked>
-      <b>Flag as notable</b> — red HASH badge (use this for a CyberTip / target list)</label>
+      <b>Flag as notable</b> — blue HASH badge (use this for a CyberTip / target list)</label>
     <label><input type="radio" name="hiKind" value="known-good">
       Mark as benign — grey badge, auto-categorizes an uncategorized match Non-pertinent</label>
   </div>
