@@ -179,7 +179,7 @@ def test_the_how_recovered_filter_narrows_to_walked_or_carved(tmp_path):
     assert 'id="forigin"' in template
     js = APPJS.read_text(encoding="utf-8")
     assert 'p.set("origin"' in js
-    assert 's.format === "ewf"' in js
+    assert 's.format === "ewf" || s.format === "raw"' in js
 
 
 def test_source_carve_refuses_a_non_acquisition(tmp_path):

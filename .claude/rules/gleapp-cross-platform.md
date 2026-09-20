@@ -156,18 +156,57 @@ written to. An extraction surfaces app streaming caches, ExoPlayer `.exo` fragme
 the like, which are not standalone videos; the pipeline reports them with its existing
 messages rather than silently dropping them.
 
-## An E01 acquisition is a fourth source, and it is WALKED, not carved
+## A disk image is a fourth source, E01 or raw, and it is WALKED, not carved
 
-A computer acquisition arrives as an EnCase/EWF set: `image.E01` plus numbered segments
-beside it. `archive_format` recognizes it by the `EVF\x09\x0d\x0a\xff\x00` signature
-before the zip and tar checks, so the extension is never consulted and the first segment of
-a set is enough to open the whole thing.
+A computer acquisition arrives as an EnCase/EWF set (`image.E01` plus numbered segments
+beside it) or as a raw image: one file (`.img`, `.dd`, `.raw`, any name) or a numbered
+split set (`.001`, `.002`, ...; FTK Imager's default). `archive_format` recognizes an E01
+by the `EVF\x09\x0d\x0a\xff\x00` signature before the zip and tar checks, so the
+extension is never consulted and the first segment of a set is enough to open the whole
+thing. A raw image has no signature, so it is recognized by what it holds: qnxprobe's own
+partition parsers and `identify_fs` find a volume it can name (`_is_raw_image`). That
+check runs BEFORE the tar check, and `_is_tar` now requires at least one member, for a
+measured reason: a raw HFS+ or ext volume begins with 1,024 zero bytes, and 512 zero bytes
+are an empty tar, so until 2026-09-19 a raw HFS+ image ingested as an archive holding
+nothing, zero rows and no error, while every other raw image registered as one "other"
+file. Measured on a 268 MB HFS+ volume and its E01 wrap: 4 media walked from the E01, 0
+from the raw file.
 
-It holds filesystems, so its files have names, paths and dates of their own, and reading
+Either form holds filesystems, so its files have names, paths and dates of their own, and reading
 them is what a walk is for. `_volumes()` finds every volume through qnxprobe's own GPT and
 MBR parsers and its `identify_fs`, then each is walked and its media registered under
 `<volume>/<path>`. A volume the reader cannot open is recorded in the case meta and the
 others still register: one unreadable filesystem must not cost the rest of an image.
+
+A split set is joined by `qnxprobe.split_segments` from the numbering beside whichever
+segment was given, and a set that cannot be joined as it stands (a hole, no first segment,
+mixed digit widths) is refused with the gap named, never joined around: a join with a gap
+reads every volume past it at the wrong offset. `_RawImage` wraps the file or the joined
+set with the surface `EwfImage` offers (`media_size`, `paths`, `stored_hashes`, seek and
+read), so every walk, carve, recovery, relink and unstage path is one code path for both
+forms, dispatched by `_open_image_file`; `IMAGE_FORMATS` is the pair, and a
+`rec["format"] == FORMAT_EWF` test anywhere is a raw source silently excluded.
+
+**The one thing a raw image lacks is a hash of itself.** An E01 records the acquiring
+tool's MD5 or SHA-1 and relink and unstage compare it. A raw source is identified instead
+by `head-tail-sha256`, SHA-256 over the image size and its first and last 4 MiB, computed
+at ingest and stored in the same `media_hash` slot. It tells two images of one size apart
+(a test flips the last 4 KiB and is refused) and proves nothing about the middle; the
+manual says so. Relinking an E01 onto a raw source, or the reverse, is refused as a format
+change, because the case cannot check that the two hold the same disk.
+
+**A partition table that reaches past the end of the file is recorded, not hidden.** A
+lone first segment with no siblings, or a truncated image, walks whatever is there and
+reports the rest as empty; nothing in a probe can tell that from a small disk. The walk
+runs `qnxprobe.short_regions` over the volumes and stores `volumes_short` beside
+`volumes` and `volumes_not_read`, and the Source panel shows "not all here" with the bytes
+missing per volume. Pinned by a test whose MBR claims four times the bytes present.
+
+**Unstaging a walked source was broken for every image form.** `_verify_image` required
+a carved offset on every row, and a walked row records a node, so "Drop copies" on a
+walked E01 was refused with "no recorded offset" on every file. Found only because the raw
+round-trip test asked for it; the E01 case was never tested. A walked row is now verified
+by its volume lying inside the image, and the test runs both forms.
 
 **Carving is a separate pass and is asked for** (`"carve": true` on the source). It is not
 the way an image is read, because measured on a 238.5 GiB Windows acquisition it answers a
@@ -252,7 +291,7 @@ A CARVED hit is registered the way a tar member is: `member_offset` is a byte of
 reference mode reads the bytes back by seeking to it. For a tar that is an offset into the
 file; for an acquisition it is an offset into the reconstructed disk, so the reader
 decompresses the chunks it spans. A WALKED row instead names its volume and its node, and
-its bytes come from that volume's walker. One `EwfImage` per image per process is cached,
+its bytes come from that volume's walker. One image handle (`EwfImage` or `_RawImage`) per image per process is cached,
 with its own lock, because a segmented set holds several file handles and a chunk table,
 and one walker per volume beside it, because a walker holds a decoded object map and
 rebuilding it per file would walk the tree once per file.

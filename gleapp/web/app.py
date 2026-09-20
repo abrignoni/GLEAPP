@@ -225,9 +225,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             elif kind == "archive":
                 res = win.create_file_dialog(
                     webview.OPEN_DIALOG,
-                    file_types=("Extraction or acquisition "
+                    file_types=("Extraction or disk image "
                                 "(*.zip;*.tar;*.tgz;*.tar.gz;*.tbz2;*.tar.bz2;"
-                                "*.txz;*.tar.xz;*.E01;*.e01)",
+                                "*.txz;*.tar.xz;*.E01;*.e01;*.img;*.dd;*.raw;*.bin;"
+                                "*.000;*.001)",
                                 "All files (*.*)"),
                 )
             elif kind == "hashdb":
@@ -260,7 +261,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                     webview.OPEN_DIALOG,
                     file_types=(
                         "Evidence file (*.zip;*.tar;*.tgz;*.tar.gz;*.tbz2;*.tar.bz2;"
-                        "*.txz;*.tar.xz;*.E01;*.e01;*.json)",
+                        "*.txz;*.tar.xz;*.E01;*.e01;*.img;*.dd;*.raw;*.bin;*.000;"
+                        "*.001;*.json)",
                         "All files (*.*)"),
                 )
             else:
@@ -1642,8 +1644,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
 
     @app.post("/api/source/carve")
     def source_carve():
-        """Carve an already-walked E01 acquisition for deleted media, then process
-        the new rows. Runs as a background job; the bottom bar follows it."""
+        """Carve an already-walked disk image (E01 or raw) for deleted media, then
+        process the new rows. Runs as a background job; the bottom bar follows it."""
         case = C()
         if state["job"]["running"]:
             abort(409, description="a job is already running")
@@ -1651,8 +1653,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         rec = archive.source_record(case, name)
         if rec is None:
             abort(404, description=f"{name!r} is not an archive source of this case")
-        if rec["format"] != archive.FORMAT_EWF:
-            abort(400, description="only an E01 acquisition can be carved")
+        if rec["format"] not in archive.IMAGE_FORMATS:
+            abort(400, description="only a disk image (E01 or raw) can be carved")
         state["job"] = {"running": True, "stage": "carve", "done": 0, "total": 0,
                         "message": f"Recovering deleted media from {name}…",
                         "stats": None, "error": None}
@@ -2080,15 +2082,15 @@ def _run_job(state: dict, sources, opts: dict) -> None:
             appconfig.push_recent(str(case.root),
                                   case.db.get_meta("case_name") or case.root.name)
 
-        # An E01 was just walked file by file. If carving was asked for, also scan
-        # the space no volume claims for deleted media, before processing so the
-        # carved rows are hashed and thumbnailed in the same pass.
+        # A disk image was just walked file by file. If carving was asked for, also
+        # scan the space no volume claims for deleted media, before processing so
+        # the carved rows are hashed and thumbnailed in the same pass.
         if opts.get("carve"):
             for src in sources:
                 if src.kind != "archive":
                     continue
                 rec = archive.source_record(case, src.name)
-                if not rec or rec["format"] != archive.FORMAT_EWF:
+                if not rec or rec["format"] not in archive.IMAGE_FORMATS:
                     continue
                 job.update(stage="carve", done=0, total=0,
                            message=f"Recovering deleted media from {src.name}…")

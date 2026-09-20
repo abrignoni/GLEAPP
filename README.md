@@ -25,7 +25,7 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | Area | What GLEAPP does |
 |---|---|
 | **Ingestion** | Recursive scan of folders / mounted evidence, or a `ingest.json` job spec listing multiple named sources (size caps, symlink policy per source) |
-| **Extractions and acquisitions** | A full-file-system extraction (zip, or tar plain or compressed) is read in place, its media registered by device path. An **EnCase/EWF acquisition** (`.E01` and its segments) has its filesystems **walked** file by file, so each file keeps the name, path and dates the filesystem recorded: ext2/3/4, F2FS, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. Recovering **deleted media** is optional and separate: first from **deleted records** (the NTFS **MFT**, and **FAT32** and **exFAT** directory entries), which bring a deleted file back with its real name and the times its filesystem recorded while its clusters are still free, and on NTFS reach files whose data was resident (which a carve cannot), then by **carving** the free space for signatures. A launcher checkbox does it during ingest, or a Source-panel button (and `gleapp source carve`) later |
+| **Extractions and acquisitions** | A full-file-system extraction (zip, or tar plain or compressed) is read in place, its media registered by device path. A **disk image**, EnCase/EWF (`.E01` and its segments) or raw (one `.img`/`.dd` file, or a numbered split set) has its filesystems **walked** file by file, so each file keeps the name, path and dates the filesystem recorded: ext2/3/4, F2FS, FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS. Recovering **deleted media** is optional and separate: first from **deleted records** (the NTFS **MFT**, and **FAT32** and **exFAT** directory entries), which bring a deleted file back with its real name and the times its filesystem recorded while its clusters are still free, and on NTFS reach files whose data was resident (which a carve cannot), then by **carving** the free space for signatures. A launcher checkbox does it during ingest, or a Source-panel button (and `gleapp source carve`) later |
 | **Archives inside a source** | A `.zip` / `.7z` / `.tar` / `.tar.gz` / `.gz` / `.bz2` / `.xz` found in a folder or on a walked E01 is opened automatically at ingest: its image and video members (and any archives nested inside) are extracted to `extracted/` and registered as ordinary rows linked to the container. The container file itself is kept for its hashes but **hidden from the gallery and reports** (Type = *archive (container)* to list them). RAR is recognized but not opened (no bundled RAR reader). Re-run on an existing case with **Expand archives** |
 | **Hashing** | MD5 / SHA-1 / SHA-256 in one pass, plus aHash / pHash / dHash perceptual hashes |
 | **Deduplication** | Three tiers: exact-file **stacking** (same hash), **visual stacking** ("same picture to the eye": pHash *and* dHash agree; collapses like a stack, badged **≈ N**), and a looser browsable **similar-group** cluster. Featureless images (gradients, flat screenshots) are excluded from perceptual grouping |
@@ -150,7 +150,8 @@ python -m gleapp --case mycase ingest  sample_evidence\ingest.json
 #    demand, so the case stays small and the archive has to stay where it is. Add
 #    --stage to copy the media into the case instead (self-contained, and as large as
 #    the media). A compressed tar (.tar.gz) is always copied out, since it cannot be
-#    read on demand. An E01 acquisition (.E01 with its numbered segments beside it) is
+#    read on demand. A disk image (an .E01 with its numbered segments beside it, or a
+#    raw image: one file, or any segment of a numbered .001 split set) is
 #    a source too: its filesystems are walked file by file, so each file keeps the name,
 #    path and dates the filesystem recorded. Recovering deleted media (from deleted
 #    NTFS, FAT32 and exFAT records, then by carving the free space) is optional and
@@ -212,8 +213,9 @@ The most recent 20 are kept. To roll back, close GLEAPP and copy a snapshot over
 ## Ingest JSON spec
 
 A path in `sources` may also be a full-file-system extraction archive (a zip or a tar,
-plain or compressed) or an EnCase/EWF acquisition (`.E01`); it is detected by its bytes and
-ingested as an archive source. Its media is read from the archive on demand unless the
+plain or compressed), an EnCase/EWF acquisition (`.E01`) or a raw disk image (one file, or
+any segment of a numbered split set); it is detected by its bytes and ingested as an archive
+source. Its media is read from the archive on demand unless the
 entry sets `"stage": true`, which copies it under the case; a compressed tar is always
 copied out.
 
@@ -519,10 +521,11 @@ gleapp/
   backup.py     case snapshots (auto + manual), pruning
   db.py         SQLite schema + helpers (one case = one file)
   case.py       case open/create + ingest-source spec parsing
-  archive.py    extraction zip/tar and E01 acquisition sources: enumerate or carve,
-                register, read back on demand
-  vendor/       ewfprobe (E01 reader) and mediacarve (signature carver), copied in
-                verbatim with their provenance in vendored.json
+  archive.py    extraction zip/tar and disk image (E01, raw, split raw) sources:
+                enumerate, walk or carve, register, read back on demand
+  vendor/       qnxprobe (filesystem reader), ewfprobe (E01 reader) and mediacarve
+                (signature carver), copied in verbatim with their provenance in
+                vendored.json
   appconfig.py  per-user config (recent cases) in %APPDATA%\GLEAPP
   cli.py        argparse CLI
   desktop.py    pywebview shell (the PyInstaller entry point)
@@ -582,9 +585,10 @@ python tools/make_test_media.py test_media
 GLEAPP is built on Pillow, OpenCV, NumPy, ImageHash, Flask, SQLite, the YuNet
 face detector and the SFace face-recognition model (both OpenCV Zoo; SFace is
 Apache-2.0, its license shipped at `gleapp/models/LICENSE-sface`),
-pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. E01
-acquisitions are walked with [qnxprobe](https://github.com/abrignoni/qnxprobe),
-read with [ewfprobe](https://github.com/abrignoni/ewfprobe) and carved with
+pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. Disk
+images are walked with [qnxprobe](https://github.com/abrignoni/qnxprobe),
+which also joins a split raw set; an E01 is read with
+[ewfprobe](https://github.com/abrignoni/ewfprobe); both are carved with
 [mediacarve](https://github.com/abrignoni/mediacarve), all three MIT and
 vendored under `gleapp/vendor/`. GLEAPP is part of the **LEAPP** family
 (ALEAPP / iLEAPP / RLEAPP …), the project started by Alexis Brignoni &

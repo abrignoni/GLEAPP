@@ -34,10 +34,15 @@ On launch with no case open, GLEAPP shows the **launcher**.
       compressed (`.gz`, `.bz2`, `.xz`). Its media is read straight from the
       archive unless you tick *Copy media out of extraction archives*; a
       compressed tar is always copied out.
-    - An **E01 acquisition** (`.E01` with its numbered segments beside it).
-      Its filesystems (NTFS, FAT32, exFAT, HFS+, APFS, ext2/3/4, F2FS and the
-      QNX ones; §16 has the full list) are walked file by file, so each file
-      keeps the name, path and dates the filesystem recorded. A volume that
+    - A **disk image**: an **E01 acquisition** (`.E01` with its numbered segments
+      beside it), or a **raw image** (one `.img`/`.dd` file, or any segment of a
+      numbered split set, `.001`, `.002`, ...; the set is joined from the
+      numbering, and a set with a segment missing is refused with the gap named
+      rather than read around). Its filesystems (NTFS, FAT32, exFAT, HFS+, APFS,
+      ext2/3/4, F2FS and the QNX ones; §16 has the full list) are walked file by
+      file, so each file keeps the name, path and dates the filesystem recorded.
+      A raw image is recognised by what it holds, a partition table or a
+      filesystem GLEAPP can name, so its extension does not matter. A volume that
       cannot be read is named in the Source panel afterwards.
       **Recovering deleted media** is optional and separate from the walk:
       tick *Recover media (filesystem records and carving)* to do it during
@@ -64,7 +69,7 @@ Ingest options: **Face / skin tone pre-processing** (on by default; can be run
 later), **video preview key frames** (default 6), **Copy media out of
 extraction archives into the case** (off keeps the case small but the archive
 must stay put; on makes the case self-contained), and **Recover media
-(filesystem records and carving)** (E01 acquisitions only, off by default, see
+(filesystem records and carving)** (disk images only, off by default, see
 §16). Click **Create case & ingest**.
 
 **The gallery opens as soon as files are registered, so you don't wait for
@@ -194,8 +199,8 @@ camera's own local wall-clock time and are always shown exactly as recorded.
 *Reference*, Maps, Hash stash, Reference data (NSRL) and Project VIC hash sets;
 under *Help*, Manual and Processing history. Beside it:
 
-- **+ Add evidence…** ingests another folder, extraction archive, E01
-  acquisition or Project VIC / job JSON into this case.
+- **+ Add evidence…** ingests another folder, extraction archive, disk image
+  (E01 or raw) or Project VIC / job JSON into this case.
 - **⇤ Close case** (snapshots first), **Details pane**, **Export report**.
 - **↻ Refresh** re-runs the current filter, so files that no longer match it
   (e.g. ones you just categorized) drop out of view.
@@ -361,7 +366,7 @@ error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and flags.
   inside them are shown.
 - **Source**: restrict to one ingest source.
 
-### Carving *(E01 acquisitions only)*
+### Carving *(disk images only)*
 - **How recovered**: *All*, *Walked, still listed* (files a filesystem still
   lists, with names and dates), *Recovered from a deleted record* (a deleted
   file rebuilt from the record that still named it, an NTFS MFT record or a
@@ -369,8 +374,8 @@ error text, MD5 / SHA-1 / SHA-256 / pHash (partial hashes work), and flags.
   *Carved from unclaimed space* (found by signature in space no volume claims,
   no name or date). The list view offers the same as a **How recovered**
   column, off by default.
-- Below it, each E01 in the case with its *walked* / *recovered from deleted
-  records* / *carved* counts and a **Carve for deleted media** / **Carve
+- Below it, each disk image in the case with its *walked* / *recovered from
+  deleted records* / *carved* counts and a **Carve for deleted media** / **Carve
   again** button; see §16.
 
 ### Archives *(when the case holds any `.zip` / `.7z` / `.tar` / `.gz`)*
@@ -944,15 +949,24 @@ date, label (`auto`, `manual`, or your text) and size:
 Each reports progress next to its own button. A full reprocess is available
 from the command line: `gleapp process --force`.
 
-### Carving an E01 for deleted media
+### Carving a disk image for deleted media
 
-Only an **E01 acquisition** can be carved. A mobile extraction is an archive
-with a list of members in it, so there is nothing to recover that enumerating
-it does not already give you. The E01 is recognized by its own signature, so
-the extension does not matter and the first segment of a set is all you point
-at. Raw `dd` images, split `.001` sets, VHD and VMDK are not accepted.
+Only a **disk image** can be carved: an E01 acquisition, or a raw image (one
+file, or a numbered split set). A mobile extraction is an archive with a list
+of members in it, so there is nothing to recover that enumerating it does not
+already give you. An E01 is recognized by its own signature and a raw image by
+what it holds, so the extension does not matter; point at the first segment of
+an E01 set, or at any segment of a split raw set. VHD and VMDK are not accepted.
 
-An E01 is **walked** at ingest: its filesystems are read file by file, so every
+A raw image differs from an E01 in one thing: an E01 carries the acquiring
+tool's own hash of the disk, and a raw image carries none. So a raw source is
+identified, when it is relinked or its copies dropped, by its size and a hash of
+its first and last 4 MiB, which tells two images of one size apart and no more.
+An image whose partition table describes a volume larger than the file holds
+(a split set with its later segments missing, or a truncated image) is walked
+as far as it goes, and the Source panel says which volume is not all there.
+
+A disk image is **walked** at ingest: its filesystems are read file by file, so every
 file keeps the name, path and dates the filesystem recorded. The
 **deleted-media** pass is a separate thing you ask for, and it adds what the
 walk cannot reach, in two steps that produce different kinds of row.
@@ -1304,14 +1318,15 @@ library.
 
 ### Disk-image reading & Android storage views (sections 1 & 16)
 
-Reading an **E01 acquisition** (walking its filesystems, carving deleted
-media, and the storage-view collapsing that folds one Android photo's several
-mount-point copies into a single row) is built on tools **Alexis Brignoni**
+Reading a **disk image** (walking its filesystems, joining a split raw set,
+carving deleted media, and the storage-view collapsing that folds one Android
+photo's several mount-point copies into a single row) is built on tools **Alexis Brignoni**
 wrote for this purpose and vendored verbatim under `gleapp/vendor/` (each with
 its own license file, `gleapp/vendor/LICENSE-<name>`):
 
 - **[qnxprobe](https://github.com/abrignoni/qnxprobe)** reads the filesystems
-  inside an acquisition (NTFS, APFS, HFS+, ext, F2FS, FAT32, exFAT and more).
+  inside an acquisition (NTFS, APFS, HFS+, ext, F2FS, FAT32, exFAT and more),
+  finds the partitions, and joins the numbered segments of a split raw image.
 - **[ewfprobe](https://github.com/abrignoni/ewfprobe)** presents an EnCase/EWF
   (`.E01`) acquisition as a seekable disk image, reconstructing chunks across
   segments; qnxprobe imports it to open an `.E01`.
