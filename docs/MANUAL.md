@@ -266,26 +266,39 @@ the whole selection.
 
 ## 6. The details pane
 
-Opens on click when toggled on (`I`). It shows:
+Toggle with `I`. Click a tile and the pane fills in, top to bottom:
 
-- a preview with **View full size**, and for a video a key-frame filmstrip;
-- the current category and the category buttons;
-- **Find similar**, and the file's flags (**+ flag** to add, × to remove one);
-- a metadata table: source, type, original name and path, MIME, VIC MediaID and
-  flags, size, dimensions, duration, captured date, camera, faces, skin ratio,
-  known-hash, exact/visual/near-dup group sizes, error;
-- GPS with a **Copy** button and, once a basemap is imported (§19), an offline
-  map of the spot;
-- MD5 / SHA-1 / SHA-256 / pHash;
-- a **Notes** box that autosaves as you type;
-- filmstrips of exact copies and visually-similar files (click to jump; **Show
-  only this group** filters to the visual-match set).
+| Area | What's there |
+|---|---|
+| **Preview** | Thumbnail with **View full size**. For a video, a key-frame filmstrip (click a frame to open the viewer at that time). For a file with GPS, an offline map (§19) with **⤢ Full size**. |
+| **Title** | Original name, path, and any processing error. |
+| **Category and flags** | The current category, and the file's flags (**+ flag** to add, × to remove). |
+| **Actions** | **Find similar**, **Hex view**. |
+| **Metadata** | The table below. |
+| **Notes** | A box that autosaves as you type. |
+| **Copies** | Filmstrips of exact copies and visually similar files (click one to jump to it), with **Show all copies** and **Show only this group** to filter the gallery to that group. |
 
-Marking a file reviewed no longer exists; **categorizing is the review step**.
+### Metadata table
 
-**Hex view** (`H`, or right-click → Hex view, or the details-pane button) opens
-a scrolling offset / hex / ASCII dump of the raw file; page through it or jump
-to an offset (decimal, or `0x`-prefixed hex). Works on any file.
+A field appears only when the file has a value for it.
+
+| Group | Fields |
+|---|---|
+| **Identity** | Source, Type, Original name, File path, Also under, Stored at, MIME |
+| **File** | Size, Dimensions, Duration, Camera |
+| **Dates** | Captured (EXIF, camera local), FS created, FS written, FS accessed, Recorded (as stored, no zone). See §3. |
+| **Project VIC** | MediaID, record MediaID, series, tags, flags. **VIC Exif, as recorded** opens a collapsed list of the Exif the VIC record carries, shown as text. It is not the file's own metadata. |
+| **Screening** | Faces, Skin ratio |
+| **Matches** | Matched in (which hash sources flagged it), Exact copies, Visually similar, Similar-group, Error |
+| **Location** | GPS, with a **Copy** button |
+| **Hashes** | MD5, SHA-1, SHA-256, pHash |
+
+### Hex view
+
+- Open it with `H`, right-click → Hex view, or the pane's **Hex view** button.
+- It shows a scrolling offset / hex / ASCII dump of the raw file. It works on
+  any file.
+- Page through it, or jump to an offset (decimal, or `0x`-prefixed hex).
 
 ## 7. Categories: the mandatory Project VIC scheme
 

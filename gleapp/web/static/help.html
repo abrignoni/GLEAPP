@@ -276,18 +276,38 @@ buttons, Clear category, Export MD5s, Deselect. Any category action (bar,
 number key, context menu, details pane) applies to the whole selection.</p>
 
 <h2 id="details">6. The details pane</h2>
-<p>Click a tile with the pane open (<kbd>I</kbd>) and it fills with: a preview and
-"View full size" button; the current category and the category buttons; Find
-similar; the file's flags (<strong>+ flag</strong> to add, &times; to remove
-one); <strong>Hex view</strong> (<kbd>H</kbd>, or right-click &rarr; Hex view):
-a scrolling offset / hex / ASCII dump of the raw file, page through it or type
-an offset (decimal, or <code>0x</code>-prefixed); a video key-frame filmstrip; a metadata table (source, type, original name/path, MIME, VIC MediaID and flags, size,
-dimensions, duration, captured date, camera, faces, skin ratio, known-hash,
-exact/visual/near-dup group sizes, error); GPS with a Copy button and, once a basemap
-is imported (section&nbsp;19), an offline map of the spot; MD5 / SHA-1 /
-SHA-256 / pHash; a <strong>Notes</strong> box that autosaves as you type; and
-filmstrips of the file's exact copies and visually-similar files (click one to
-jump to it; "Show only this group" filters to the visual-match set).</p>
+<p>Toggle with <kbd>I</kbd>. Click a tile and the pane fills in, top to bottom:</p>
+<table>
+  <tr><th>Area</th><th>What's there</th></tr>
+  <tr><td><strong>Preview</strong></td><td>Thumbnail with <strong>View full size</strong>. For a video, a key-frame filmstrip (click a frame to open the viewer at that time). For a file with GPS, an offline map (&sect;19) with <strong>⤢ Full size</strong>.</td></tr>
+  <tr><td><strong>Title</strong></td><td>Original name, path, and any processing error.</td></tr>
+  <tr><td><strong>Category and flags</strong></td><td>The current category, and the file's flags (<strong>+ flag</strong> to add, &times; to remove).</td></tr>
+  <tr><td><strong>Actions</strong></td><td><strong>Find similar</strong>, <strong>Hex view</strong>.</td></tr>
+  <tr><td><strong>Metadata</strong></td><td>The table below.</td></tr>
+  <tr><td><strong>Notes</strong></td><td>A box that autosaves as you type.</td></tr>
+  <tr><td><strong>Copies</strong></td><td>Filmstrips of exact copies and visually similar files (click one to jump to it), with <strong>Show all copies</strong> and <strong>Show only this group</strong> to filter the gallery to that group.</td></tr>
+</table>
+
+<h3>Metadata table</h3>
+<p>A field appears only when the file has a value for it.</p>
+<table>
+  <tr><th>Group</th><th>Fields</th></tr>
+  <tr><td><strong>Identity</strong></td><td>Source, Type, Original name, File path, Also under, Stored at, MIME</td></tr>
+  <tr><td><strong>File</strong></td><td>Size, Dimensions, Duration, Camera</td></tr>
+  <tr><td><strong>Dates</strong></td><td>Captured (EXIF, camera local), FS created, FS written, FS accessed, Recorded (as stored, no zone). See &sect;3.</td></tr>
+  <tr><td><strong>Project&nbsp;VIC</strong></td><td>MediaID, record MediaID, series, tags, flags. <strong>VIC Exif, as recorded</strong> opens a collapsed list of the Exif the VIC record carries, shown as text. It is not the file's own metadata.</td></tr>
+  <tr><td><strong>Screening</strong></td><td>Faces, Skin ratio</td></tr>
+  <tr><td><strong>Matches</strong></td><td>Matched in (which hash sources flagged it), Exact copies, Visually similar, Similar-group, Error</td></tr>
+  <tr><td><strong>Location</strong></td><td>GPS, with a <strong>Copy</strong> button</td></tr>
+  <tr><td><strong>Hashes</strong></td><td>MD5, SHA-1, SHA-256, pHash</td></tr>
+</table>
+
+<h3>Hex view</h3>
+<ul>
+  <li>Open it with <kbd>H</kbd>, right-click &rarr; Hex view, or the pane's <strong>Hex view</strong> button.</li>
+  <li>It shows a scrolling offset / hex / ASCII dump of the raw file. It works on any file.</li>
+  <li>Page through it, or jump to an offset (decimal, or <code>0x</code>-prefixed hex).</li>
+</ul>
 
 <h2 id="categories">7. Categories: the mandatory Project&nbsp;VIC scheme</h2>
 <p>Every case is seeded with <strong>codes 0–5</strong>, the Project&nbsp;VIC 2.0 (US)
