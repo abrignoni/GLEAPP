@@ -38,7 +38,7 @@ if sys.platform == "win32":
     hiddenimports.append("clr")
 
 # Bundle libraries that ship data / native bits PyInstaller can't infer.
-for mod in ("webview", "cv2", "imagehash", "PIL", "pillow_heif",
+for mod in ("webview", "cv2", "imagehash", "PIL", "pi_heif",
             "texture2ddecoder", "liblzfse", "zstandard", "clr_loader", "pythonnet",
             # 7-Zip reading: py7zr plus its native codec extensions
             "py7zr", "pyppmd", "pybcj", "inflate64", "brotli", "Cryptodome",
@@ -64,10 +64,32 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "pytest", "PyInstaller"],
+    excludes=["tkinter", "matplotlib", "pytest", "PyInstaller",
+              # dev-only, and its wheels carry the GPLv2 x265 encoder: the
+              # fallback import in gleapp/imaging.py must not drag it in here
+              "pillow_heif"],
     cipher=block_cipher,
     noarchive=False,
 )
+# Refuse to build if a GPL-licensed codec would be bundled.
+#
+# The bundle also carries Apache-1.1 code (gleapp/vendor/impacket_ese.py) and
+# Microsoft's proprietary WebView2 redistributables, neither of which can be combined
+# with GPL code, so the release cannot be relicensed as GPL to accommodate one. The
+# usual way in is a wheel that quietly vendors an encoder: pillow-heif ships x265, and
+# the macOS opencv-python wheels vendor a Homebrew FFmpeg built --enable-gpl, carrying
+# x264, x265, xvid, rubberband, vidstab and frei0r. On macOS install OpenCV from
+# conda-forge with ffmpeg pinned to its lgpl build instead. See docs/MANUAL.md, 20.
+GPL_BINARIES = ("x264", "x265", "rubberband", "vidstab", "xvid", "frei0r")
+_gpl = sorted({Path(src).name for _dest, src, _kind in a.binaries
+               if src and any(t in Path(src).name.lower() for t in GPL_BINARIES)})
+if _gpl:
+    raise SystemExit(
+        "build refused: these GPL-licensed binaries would be bundled: "
+        + ", ".join(_gpl)
+        + "\nGLEAPP cannot ship them; see the note above this check in "
+          "packaging/gleapp.spec.")
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe_kwargs = dict(

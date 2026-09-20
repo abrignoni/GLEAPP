@@ -44,7 +44,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --prefer-binary -r requirements.txt
-          python -m pip install --prefer-binary pytest piexif
+          # the dev extra, not a second hand-written list: it carries pytest, piexif
+          # and pillow-heif, whose encoder writes the HEIC test fixture that pi-heif
+          # cannot. Nothing here reaches a build.
+          python -m pip install --prefer-binary -e ".[dev]"
 
       # hashstore shells out to the sqlite3 CLI to apply an NSRL delta, and that is
       # the one external binary GLEAPP needs. Windows does not ship it, so

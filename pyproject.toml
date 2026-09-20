@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "charpy4n6" }]
 dependencies = [
     "Pillow>=10.2",
-    "pillow-heif>=0.13",
+    "pi-heif>=1.4",
     "texture2ddecoder>=1.0",
     "pyliblzfse>=0.4.1",
     "zstandard>=0.22",
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "piexif>=1.1"]
+dev = ["pytest>=8.0", "piexif>=1.1", "pillow-heif>=1.0"]
 desktop = ["pywebview>=5.0"]
 build = ["pywebview>=5.0", "pyinstaller==6.22.2"]
 

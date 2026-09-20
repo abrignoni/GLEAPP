@@ -51,7 +51,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pytest piexif
+          # the dev extra, not a second hand-written list: it carries pytest, piexif and
+          # pillow-heif, and the HEIC test fixture is written with pillow-heif's encoder,
+          # which pi-heif leaves out. Nothing here reaches a build; packaging/gleapp.spec
+          # excludes pillow_heif and refuses any build that bundles a GPL codec.
+          python -m pip install -e ".[dev]"
 
       - name: Run test suite
         run: python -m pytest tests -v
