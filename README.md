@@ -126,9 +126,9 @@ A Linux AppImage is not wired up yet.
 The `opencv-python-headless` wheels for macOS vendor a Homebrew FFmpeg built
 `--enable-gpl`, which puts x264, x265, xvid, rubberband, vidstab and frei0r in the
 bundle. GLEAPP cannot ship those. The build also carries Apache-1.1 code
-(`gleapp/vendor/impacket_ese.py`) and Microsoft's WebView2 redistributables, so it
-cannot be relicensed as GPL to accommodate them. Every macOS wheel back to 4.8.1.78
-carries them, so pinning an older version does not help.
+(`gleapp/vendor/impacket_ese.py`), which the FSF's licence list calls incompatible with
+the GPL, so the build cannot be relicensed as GPL to accommodate them. Every macOS
+wheel back to 4.8.1.78 carries them, so pinning an older version does not help.
 
 Build the macOS app in an environment where OpenCV comes from conda-forge, with
 FFmpeg pinned to its LGPL build:

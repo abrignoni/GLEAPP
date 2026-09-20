@@ -60,16 +60,28 @@ REPO_NOTICES = [
 ]
 
 # Binaries a package carries without carrying their terms. pywebview bundles
-# Microsoft's WebView2 SDK assemblies and ships only its own BSD licence, so the
-# notice has to name them rather than let them travel unmentioned.
-CARRIED_WITHOUT_TERMS = {
-    "pywebview": (
-        "pywebview bundles Microsoft's WebView2 SDK assemblies on Windows\n"
-        "(Microsoft.Web.WebView2.Core.dll, Microsoft.Web.WebView2.WinForms.dll and\n"
-        "WebView2Loader.dll) and ships no terms for them. They are covered by the\n"
-        "Microsoft WebView2 SDK licence, not by pywebview's BSD licence below. The\n"
-        "WebView2 Runtime itself is not bundled; see packaging/installer.iss."
-    ),
+# Microsoft's WebView2 SDK assemblies on Windows and ships only its own BSD licence,
+# so the terms that actually cover those files have to come from somewhere. They are
+# Microsoft.Web.WebView2 from NuGet, and that package's LICENSE.txt is BSD-3-Clause
+# whose second clause asks for the notice in a binary distribution. A copy is kept at
+# packaging/licenses/ and reproduced in the notice beside the package that carries it.
+CARRIED_BINARIES = {
+    "pywebview": {
+        "note": (
+            "pywebview bundles Microsoft's WebView2 SDK assemblies on Windows:\n"
+            "Microsoft.Web.WebView2.Core.dll, Microsoft.Web.WebView2.WinForms.dll and\n"
+            "WebView2Loader.dll for x64, x86 and arm64. All five are byte-identical\n"
+            "(SHA-256) to the NuGet package Microsoft.Web.WebView2 1.0.3856.49, whose\n"
+            "LICENSE.txt is the BSD-3-Clause text reproduced below. pywebview ships no\n"
+            "copy of it, so GLEAPP carries one, which is what that licence's second\n"
+            "clause asks for.\n"
+            "\n"
+            "The WebView2 Runtime is a separate, proprietary Microsoft component and is\n"
+            "NOT bundled: it ships with Windows, and packaging/installer.iss shows how a\n"
+            "build could chain Microsoft's bootstrapper if an older machine needs it."
+        ),
+        "licence": "packaging/licenses/LICENSE-webview2.txt",
+    },
 }
 
 _HEADER = """\
@@ -204,9 +216,12 @@ def build_notices(only: set[str] | None = None, root: Path | None = None) -> tup
         declared = f"Declared licence: {e['declared']}" if e["declared"] else \
                    "Declared licence: not stated by the package"
         block = [f"{_RULE}\n{head}\n{_RULE}\n", declared]
-        note = CARRIED_WITHOUT_TERMS.get(_norm(e["name"]))
-        if note:
-            block.append("\n" + note)
+        carried = CARRIED_BINARIES.get(_norm(e["name"]))
+        if carried:
+            block.append("\n" + carried["note"])
+            extra = _read(root / carried["licence"])
+            if extra:
+                block.append(f"\n--- {Path(carried['licence']).name} ---\n{extra}")
         if e["texts"]:
             for fname, text in e["texts"]:
                 block.append(f"\n--- {fname} ---\n{text}")

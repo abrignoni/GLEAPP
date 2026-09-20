@@ -73,9 +73,11 @@ a = Analysis(
 )
 # Refuse to build if a GPL-licensed codec would be bundled.
 #
-# The bundle also carries Apache-1.1 code (gleapp/vendor/impacket_ese.py) and
-# Microsoft's proprietary WebView2 redistributables, neither of which can be combined
-# with GPL code, so the release cannot be relicensed as GPL to accommodate one. The
+# The bundle also carries Apache-1.1 code (gleapp/vendor/impacket_ese.py), which the
+# FSF's licence list calls incompatible with the GPL over its acknowledgment and naming
+# clauses, so the release cannot be relicensed as GPL to accommodate a GPL dependency.
+# (The bundled WebView2 SDK assemblies are NOT a second reason: they are BSD-3-Clause,
+# which is GPL-compatible. That was asserted here once without being checked.) The
 # usual way in is a wheel that quietly vendors an encoder: pillow-heif ships x265, and
 # the macOS opencv-python wheels vendor a Homebrew FFmpeg built --enable-gpl, carrying
 # x264, x265, xvid, rubberband, vidstab and frei0r. On macOS install OpenCV from
