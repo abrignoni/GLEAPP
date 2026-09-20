@@ -90,6 +90,53 @@ if _gpl:
         + "\nGLEAPP cannot ship them; see the note above this check in "
           "packaging/gleapp.spec.")
 
+# Write the third-party notices into the bundle.
+#
+# Almost every permissive licence here asks for its notice to travel with a binary
+# copy, and PyInstaller carries a package's dist-info only when a hook asks for
+# metadata: one measured build turned 45 installed distributions into 14 dist-info
+# folders and left GLEAPP's own LICENSE out entirely. tools/make_notices.py collects
+# the texts, and it is handed the distributions this build actually bundles, so the
+# file cannot credit something absent or miss something present.
+sys.path.insert(0, str(ROOT / "tools"))
+import make_notices                                          # noqa: E402
+
+
+def _bundled_distributions():
+    """Distribution names behind the modules PyInstaller collected, or None.
+
+    None means the mapping could not be built, and make_notices then describes every
+    installed distribution instead. That over-reports rather than under-reports,
+    which is the safe direction for a notices file.
+    """
+    try:
+        from importlib.metadata import packages_distributions
+        mapping = packages_distributions()
+    except Exception:                                        # noqa: BLE001
+        return None
+    tops = {name.split(".")[0] for name, _src, _kind in a.pure}
+    for dest, _src, _kind in a.binaries:
+        head = str(dest).replace("\\", "/").split("/")[0]
+        tops.add(head.split(".")[0])
+    names = {d.strip().lower().replace("_", "-")
+             for t in tops for d in mapping.get(t, ())}
+    return names or None
+
+
+_notices_text, _unknown = make_notices.build_notices(only=_bundled_distributions(), root=ROOT)
+if _unknown:
+    raise SystemExit(
+        "build refused: nothing is known about the licence of "
+        + ", ".join(_unknown)
+        + ".\nEach bundled package needs a licence text or at least a declared "
+          "licence in its metadata, or its notice cannot be carried.")
+_notices_file = Path(globals().get("workpath", ROOT / "build")) / "NOTICES.txt"
+_notices_file.parent.mkdir(parents=True, exist_ok=True)
+_notices_file.write_text(_notices_text, encoding="utf-8")
+# at the bundle root, and beside the UI so Help can link to it
+a.datas += [("NOTICES.txt", str(_notices_file), "DATA"),
+            ("gleapp/web/static/NOTICES.txt", str(_notices_file), "DATA")]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe_kwargs = dict(
