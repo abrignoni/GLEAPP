@@ -1,7 +1,7 @@
 """Shared image-decoding setup and helpers.
 
 Importing this module registers extra Pillow decoders (HEIF/HEIC via
-``pillow-heif``) and raises the safety limits, so every part of GLEAPP that
+``pi-heif``) and raises the safety limits, so every part of GLEAPP that
 opens images gets the same behaviour.
 """
 
@@ -20,9 +20,16 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 Image.MAX_IMAGE_PIXELS = 400_000_000
 
 try:  # iPhone HEIC/HEIF
-    import pillow_heif
+    # pi-heif is the decode-only build of pillow-heif: the same libheif and the
+    # same libde265 decoder, without the GPLv2 x265 encoder. GLEAPP only decodes
+    # HEIC, so that encoder is 22 MB the release would carry and have to license
+    # for. pillow-heif is still accepted where it is already installed.
+    try:
+        import pi_heif as _heif
+    except ImportError:
+        import pillow_heif as _heif
 
-    pillow_heif.register_heif_opener()
+    _heif.register_heif_opener()
 except Exception:  # noqa: BLE001
     pass
 

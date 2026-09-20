@@ -585,7 +585,7 @@ python tools/make_test_media.py test_media
 GLEAPP is built on Pillow, OpenCV, NumPy, ImageHash, Flask, SQLite, the YuNet
 face detector and the SFace face-recognition model (both OpenCV Zoo; SFace is
 Apache-2.0, its license shipped at `gleapp/models/LICENSE-sface`),
-pillow-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. Disk
+pi-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. Disk
 images are walked with [qnxprobe](https://github.com/abrignoni/qnxprobe),
 which also joins a split raw set; an E01 is read with
 [ewfprobe](https://github.com/abrignoni/ewfprobe); both are carved with

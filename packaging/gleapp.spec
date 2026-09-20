@@ -38,7 +38,7 @@ if sys.platform == "win32":
     hiddenimports.append("clr")
 
 # Bundle libraries that ship data / native bits PyInstaller can't infer.
-for mod in ("webview", "cv2", "imagehash", "PIL", "pillow_heif",
+for mod in ("webview", "cv2", "imagehash", "PIL", "pi_heif",
             "texture2ddecoder", "liblzfse", "zstandard", "clr_loader", "pythonnet",
             # 7-Zip reading: py7zr plus its native codec extensions
             "py7zr", "pyppmd", "pybcj", "inflate64", "brotli", "Cryptodome",

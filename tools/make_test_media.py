@@ -23,6 +23,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 try:
+    # pillow-heif, not pi-heif: this tool WRITES a .heic fixture, and encoding
+    # needs the x265 encoder pi-heif leaves out. Development only; nothing here
+    # is packaged, so the GPL encoder stays out of the shipped build.
     import pillow_heif
     pillow_heif.register_heif_opener()
     HAVE_HEIF = True

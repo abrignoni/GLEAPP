@@ -1302,7 +1302,7 @@ text rather than a link, because a link would be the one outbound address on the
 <table>
   <tr><td><strong>Python</strong></td><td>the runtime: Python Software Foundation (PSF license)</td></tr>
   <tr><td><strong>Pillow</strong></td><td>image decode/encode, thumbnails, EXIF: Jeffrey&nbsp;A.&nbsp;Clark &amp; contributors, a fork of PIL by Fredrik&nbsp;Lundh (HPND)</td></tr>
-  <tr><td><strong>pillow-heif</strong> + <strong>libheif</strong></td><td>HEIC / HEIF / AVIF decoding: Alexander&nbsp;Piskun; libheif by Dirk&nbsp;Farin / struktur&nbsp;AG (BSD-3 / LGPL-3)</td></tr>
+  <tr><td><strong>pi-heif</strong> + <strong>libheif</strong></td><td>HEIC / HEIF decoding: Alexander&nbsp;Piskun; libheif by Dirk&nbsp;Farin / struktur&nbsp;AG (BSD-3 source; LGPL-3 wheels: libheif, libde265)</td></tr>
   <tr><td><strong>OpenCV</strong> (opencv-python-headless)</td><td>video decode &amp; key frames, color-space ops, DNN inference: OpenCV team; wheels by Olli-Pekka&nbsp;Heinisuo (Apache-2.0)</td></tr>
   <tr><td><strong>NumPy</strong></td><td>array math behind hashing and screening: NumPy developers (BSD-3)</td></tr>
   <tr><td><strong>ImageHash</strong></td><td>aHash / pHash / dHash perceptual hashes, the basis of <em>find similar</em>, visual-duplicate stacking and near-duplicate clustering: Johannes&nbsp;Buchner (BSD-2)</td></tr>
@@ -1322,6 +1322,7 @@ text rather than a link, because a link would be the one outbound address on the
   <tr><td><strong>Microsoft Edge WebView2</strong></td><td>the webview runtime the desktop window uses on Windows: Microsoft</td></tr>
   <tr><td><strong>PyInstaller</strong></td><td>building <code>GLEAPP.exe</code>: the PyInstaller Development Team (GPL-2.0 with bootloader exception)</td></tr>
   <tr><td><strong>pytest</strong>, <strong>piexif</strong></td><td>development and tests only, not shipped: Holger&nbsp;Krekel &amp; pytest-dev; hMatoba (MIT)</td></tr>
+  <tr><td><strong>pillow-heif</strong></td><td>development only, not shipped: writes the HEIC test fixture, which needs the x265 encoder pi-heif leaves out: Alexander&nbsp;Piskun (BSD-3 source; GPLv2 wheels)</td></tr>
 </table>
 <p>The web UI is hand-written vanilla JavaScript and CSS: no front-end framework,
 no bundler, no web fonts, nothing loaded from a CDN.</p>

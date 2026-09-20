@@ -1376,7 +1376,7 @@ GLEAPP stands on a lot of other people's work.
 |---|---|---|---|
 | **Python** | the runtime | Python Software Foundation | PSF |
 | **Pillow** | image decode/encode, thumbnails, EXIF read | Jeffrey A. Clark & contributors, a fork of PIL by Fredrik Lundh | HPND (PIL license) |
-| **pillow-heif** + **libheif** | HEIC / HEIF / AVIF decoding | Alexander Piskun (pillow-heif); libheif by Dirk Farin / struktur AG | BSD-3 / LGPL-3 |
+| **pi-heif** + **libheif** | HEIC / HEIF decoding | Alexander Piskun (pi-heif); libheif by Dirk Farin / struktur AG | BSD-3 source; LGPL-3 wheels (libheif, libde265) |
 | **OpenCV** (`opencv-python-headless`) | video decode & key-frame sampling, color-space ops, DNN inference | OpenCV team; PyPI wheels by Olli-Pekka Heinisuo | Apache-2.0 |
 | **NumPy** | array math behind hashing and screening | NumPy developers | BSD-3 |
 | **ImageHash** | aHash / pHash / dHash perceptual hashes: the basis of *find similar*, visual-duplicate stacking and near-duplicate clustering | Johannes Buchner | BSD-2 |
@@ -1396,6 +1396,7 @@ GLEAPP stands on a lot of other people's work.
 | **Microsoft Edge WebView2** | the webview runtime the desktop window uses on Windows | Microsoft | proprietary runtime |
 | **PyInstaller** | building `GLEAPP.exe` | the PyInstaller Development Team | GPL-2.0 with bootloader exception |
 | **pytest**, **piexif** | development and tests only, not shipped | Holger Krekel & pytest-dev; hMatoba | MIT |
+| **pillow-heif** | development only, not shipped: writes the HEIC test fixture, which needs the x265 encoder pi-heif leaves out | Alexander Piskun | BSD-3 source; GPLv2 wheels (x265) |
 
 The web UI is hand-written vanilla JavaScript and CSS: no front-end framework,
 no bundler, no web fonts, nothing loaded from a CDN.

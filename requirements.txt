@@ -3,7 +3,7 @@
 # flushes on an uninitialised flag, so a JPEG comes out corrupt at random
 # (measured, see .claude/rules/gleapp-cross-platform.md).
 Pillow>=10.2
-pillow-heif>=0.13
+pi-heif>=1.4
 texture2ddecoder>=1.0
 # pyliblzfse for Windows on x64, vendored so Windows never needs a C compiler.
 # PyPI publishes wheels for cp310 to cp313 only and none for cp314; the cp314
