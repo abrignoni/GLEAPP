@@ -86,126 +86,124 @@ only inside the case folder.
 
 ## 3. The review gallery
 
-Left: the **filter sidebar**. Center: the **gallery** or **details list** (switch
-with the **▦ Gallery / ☰ List** toggle in the control bar). The control bar also
-holds Columns (list view), Sort, thumbnails per page, Tile size, the **Times**
-timezone and the shortcut legend, with pagination above and below the files.
-Right: the **details pane** (toggle with `I` or the button; state is
-remembered).
+| Pane | What it is |
+|---|---|
+| **Left** | Filter sidebar |
+| **Center** | Gallery or details list (**▦ Gallery / ☰ List** toggle in the control bar) |
+| **Right** | Details pane (toggle with `I` or the button; state is remembered) |
 
-The filter sidebar, selection, categorize shortcuts, right-click menu, the
-details pane and pagination all work the same in either view.
+The control bar also holds Columns (list view), Sort, thumbnails per page, Tile
+size, the **Timezone** selector and the shortcut legend.
 
 ### Details list view
 
-**☰ List** shows one row per file with a column for every stored detail. It is
-built for triage by metadata rather than by eye. Unlike the gallery, the list
-**always shows every row**: exact and visual duplicates are never collapsed, so
-a photo that is both a loose file and a member of a nested archive appears as
-both rows. The **Collapse duplicates** checkbox is disabled while the list is
-open.
+**☰ List** shows one row per file with a column for every stored detail, for
+triage by metadata rather than by eye. It **always shows every row**: exact and
+visual duplicates are never collapsed, so a photo that is both a loose file and
+a member of a nested archive appears twice. **Collapse duplicates** is disabled
+here.
 
-- **Sort**: click any column header; click again to reverse. An arrow shows the
-  active column and direction.
-- **Filter**: type in the box under a header. All columns filter server-side
-  across the whole result set, not just the visible page.
-  - Text columns use a case-insensitive substring match. Type `none` to find
-    blank values, `set` to find non-blank. **Name** and **File path** match
-    what's shown, including the fallback used when a file has no original name
-    or no VIC path (its on-disk name / path).
-  - Number columns take `500` (equals), `>=500`, `>500`, `<=500`, `<500`, or a
-    range `100-500` / `100 .. 500`. `none` / `set` also work.
-  - **Size**: a bare number is **kilobytes** and means "that size or larger"
-    (the column never shows raw bytes); add a unit for anything else: `>1mb`,
-    `100kb-2mb`, `500b`, `2gb`.
-  - **Skin ratio**: a bare number is a **percent** and means "that or higher",
-    so `30` means ≥ 30%. Ranges like `10-50` also work.
-  - **Duration**: `m:ss` or bare seconds; a bare value means "that long or
-    longer" (`0:30`, `>1:00`, `1:00-5:00`).
-  - **GPS lat / GPS lon**: a bare number is a partial match (`45` finds
-    `45.4215` and `-45...`); `>40`, `-80 .. -70` and `set` / `none` also work.
-  - Date/time columns (FS created, FS written, FS accessed, Ingested) use two
-    **calendar pickers**, *from* and *to*; fill either or both. The day
-    boundaries follow the **Times** timezone shown in the toolbar, so the range
-    matches the dates you see in the column.
-  - Captured (EXIF) is stored as text; filter it as a substring (e.g. `2024-06`).
-  - Enum columns (Type, Source, Category, Hash kind) pick from a dropdown.
-- **Resize**: drag the right-hand border of any column header to make it wider
-  or narrower (values that don't fit are clipped with an ellipsis; hover the
-  cell for the full text). Double-click the border to reset that column.
-- **Clear column filters**: the toolbar button (shows the active filter count)
-  removes every column filter at once; sorting and column choices are left
-  alone. The sidebar's **Clear** (next to the filter count) clears these too, along
-  with the sidebar filters.
-- **Columns ▾**: choose which columns are shown; **All** / **Defaults**
-  presets, and **Reset widths** to put every column back to its default size.
-- The choice of view, visible columns, column widths, sort and column filters
-  are all remembered per browser.
+**Column filters.** Type in the box under a header. Filters run server-side
+across the whole result set, not just the visible page.
 
-**Paths.** The **File path** column shows the original path recorded in the
-Project VIC JSON (`MediaFiles.FilePath`): where the file lived on the source
-device. For a folder-ingest case (no VIC data) it falls back to the file's path
-on disk. The **File path (working copy)** column always shows where GLEAPP
-resolved the file on your machine; add it from **Columns ▾** if you need it.
+| Column | What you type | Examples |
+|---|---|---|
+| **Text** | Case-insensitive substring. `none` = blank, `set` = non-blank. **Name** and **File path** match what's shown, including the fallback (on-disk name / path) when a file has no original name or VIC path. | `dcim`, `none` |
+| **Numbers** | Equals, comparison or range. `none` / `set` also work. | `500`, `>=500`, `<500`, `100-500`, `100 .. 500` |
+| **Size** | A bare number is **kilobytes**, meaning "that size or larger" (the column never shows raw bytes). Add a unit otherwise. | `>1mb`, `100kb-2mb`, `500b`, `2gb` |
+| **Skin ratio** | A bare number is a **percent**, meaning "that or higher". Ranges work. | `30` (≥ 30%), `10-50` |
+| **Duration** | `m:ss` or bare seconds. A bare value means "that long or longer". | `0:30`, `>1:00`, `1:00-5:00` |
+| **GPS lat / lon** | A bare number is a partial match. Comparisons, ranges and `set` / `none` also work. | `45` (finds `45.4215` and `-45...`), `>40`, `-80 .. -70` |
+| **Dates** (FS created, FS written, FS accessed, Ingested) | Two **calendar pickers**, *from* and *to*; fill either or both. Day boundaries follow the **Timezone** you selected, so ranges match the dates you see. | |
+| **Captured (EXIF)** | Stored as text; filter as a substring. | `2024-06` |
+| **Type, Source, Category, Hash kind** | Pick from a dropdown. | |
 
-Exporters store one copy per distinct MD5, so several Project VIC Media
-entries can name one file. These become one row with the first entry's device
-path, and the others are listed under *Also under*. The reported count is
-entries, so it can exceed the row count. The Source panel's import line shows
-both.
+**Other list controls**
 
-**Dates: four distinct kinds, do not conflate them.**
+| Control | What it does |
+|---|---|
+| **Sort** | Click a header; click again to reverse. An arrow marks the active column. |
+| **Resize** | Drag a header's right border. Clipped values show an ellipsis; hover for the full text. Double-click the border to reset that column. |
+| **Columns ▾** | Choose visible columns. **All** / **Defaults** presets, and **Reset widths**. |
+| **Clear column filters** | Toolbar button (shows the active count). Removes every column filter, keeps sort and columns. The sidebar's **Clear** clears these too, plus the sidebar filters. |
+
+### Paths
+
+- **File path:** the original path recorded in the Project VIC JSON
+  (`MediaFiles.FilePath`), where the file lived on the source device. A
+  folder-ingest case (no VIC data) falls back to the on-disk path.
+- **File path (working copy):** where GLEAPP resolved the file on your machine.
+  Add it from **Columns ▾**.
+- **Duplicate VIC entries:** exporters store one copy per distinct MD5, so
+  several Media entries can name one file. They become one row with the first
+  entry's device path, and the others are listed under *Also under*. The
+  reported count is entries, so it can exceed the row count. The Source panel's
+  import line shows both.
+
+### Dates
+
+Four distinct kinds. Do not conflate them.
 
 | Column | Meaning |
 |---|---|
-| **Captured (EXIF)** | the time the media itself records it was taken: EXIF `DateTimeOriginal` / embedded metadata **only**. Blank when the file carries none. |
-| **FS created** | filesystem creation time. From `os.stat` on a folder scan; from `MediaFiles.Created` on a Project VIC import; from the NTFS record for a file walked or recovered out of an E01. |
-| **FS written** | filesystem last-modified time. `os.stat` mtime, VIC `MediaFiles.Written`, or the NTFS record for an E01 file. |
-| **FS accessed** | filesystem last-access time. `os.stat` atime, VIC `MediaFiles.Accessed`, or the NTFS record for an E01 file. |
+| **Captured (EXIF)** | When the media says it was taken: EXIF `DateTimeOriginal` / embedded metadata **only**. Blank if none. |
+| **FS created** | Filesystem creation time: `os.stat` on a folder scan, `MediaFiles.Created` on a VIC import, the NTFS record for a file walked or recovered from an E01. |
+| **FS written** | Last modified: `os.stat` mtime, VIC `MediaFiles.Written`, or the NTFS record for an E01 file. |
+| **FS accessed** | Last access: `os.stat` atime, VIC `MediaFiles.Accessed`, or the NTFS record for an E01 file. |
 
-A FAT32 or exFAT volume inside an E01 stores a wall clock with no zone, so for
-its files all three stay blank and the readings appear as **Recorded (as
-stored, no zone)** instead: in the list view, in the HTML report, in the CSV as
-`recorded_times` and in the LAVA tables. See §16.
+- **Never a capture time:** a filesystem timestamp is never used to fill
+  "Captured". All four appear in the details pane, list view and reports, under
+  the same names.
+- **FAT32 / exFAT in an E01:** these store a wall clock with no zone, so the
+  three FS times stay blank and appear as **Recorded (as stored, no zone)**
+  instead. That applies in the list view, HTML report, CSV (`recorded_times`)
+  and LAVA tables. See §16.
+- **VIC exports vary:** one wrote created, written and accessed on most
+  entries; another wrote written on some, created on almost none and accessed
+  on none. GLEAPP reads every timestamp written (`...Z` and `...-05:00` forms),
+  so a sparse column on a VIC case is the export, not a failed parse.
 
-**A Project VIC export decides which of these it carries.** One export wrote
-created, written and accessed on most of its entries; another wrote written on
-some, created on almost none and accessed on none. GLEAPP reads every timestamp
-an export wrote, in both the `...Z` and the `...-05:00` forms, so a sparse
-timestamp column on a VIC case is the export, not a failed parse.
+### Timezone
 
-A filesystem timestamp is **not** a capture time; GLEAPP never fills "Captured"
-from one. All four appear in the details pane, the list view and as report
-fields (**Captured (EXIF)**, **FS created**, **FS written**, **FS accessed**).
+- **Stored as UTC:** filesystem and ingest times.
+- **Timezone selector:** choose common zones, your device's zone, or any IANA name
+  via *Other...*. Daylight saving is applied automatically.
+- **Saved** per case and as the default for new cases, and stamped into the
+  report header.
+- **Never applied to Captured (EXIF):** those are the camera's local wall-clock
+  time, always shown as recorded.
 
-**Timezone.** Filesystem and ingest times are stored in **UTC**. The **Times**
-selector in the control bar (top of the file pane) shows them in a timezone of
-your choice: a shortlist of common zones, your device's zone, or any IANA name
-via *Other...*, with **daylight saving applied automatically**. The choice is
-saved per case and as your default for new cases, and it is stamped into the
-report header. It **never** changes **Captured (EXIF)** values: those are the
-camera's own local wall-clock time and are always shown exactly as recorded.
+### Header
 
-**Header.** **☰ Menu** groups the case tools: under *Case*, ⚙ Categories,
-⚙ Flags, Snapshots and Export Project VIC (Project VIC cases only); under
-*Reference*, Maps, Hash stash, Reference data (NSRL) and Project VIC hash sets;
-under *Help*, Manual and Processing history. Beside it:
+**☰ Menu** groups the case tools:
 
-- **+ Add evidence…** ingests another folder, extraction archive, disk image
-  (E01 or raw) or Project VIC / job JSON into this case.
-- **⇤ Close case** (snapshots first), **Details pane**, **Export report**.
-- **↻ Refresh** re-runs the current filter, so files that no longer match it
-  (e.g. ones you just categorized) drop out of view.
-- **🔔** lists recent report exports.
+| Group | Items |
+|---|---|
+| **Case** | ⚙ Categories, ⚙ Flags, Snapshots, Export Project VIC (VIC cases only) |
+| **Reference** | Maps, Hash stash, Reference data (NSRL), Project VIC hash sets |
+| **Help** | Manual, Processing history |
 
-**Processing history** (☰ Menu → Help) is the case processing log: every
-ingest, process, screening, hash-set match, carve and examiner edit run against
-this case, newest first. A **process** run lists each stage (media processing,
-known-hash match, exact stacking, visual stacking, near-duplicate clustering)
-with a ✓ or ✗ for whether it succeeded, so a stage that failed does not hide
-the ones that worked. The "Show" menu narrows the list to runs, examiner edits,
-or only runs with a failed stage. This is the same audit log written into the
-LAVA export.
+Beside the menu:
+
+| Button | What it does |
+|---|---|
+| **+ Add evidence…** | Ingests another folder, extraction archive, disk image (E01 or raw) or Project VIC / job JSON into this case. |
+| **⇤ Close case** | Snapshots first. |
+| **Details pane**, **Export report** | Toggle the pane; open the export dialog. |
+| **↻ Refresh** | Re-runs the current filter, so files that no longer match (e.g. ones you just categorized) drop out. |
+| **🔔** | Lists recent report exports. |
+
+### Processing history
+
+**☰ Menu → Help.** The case processing log, newest first: every ingest,
+process, screening, hash-set match, carve and examiner edit. It is the same
+audit log written into the LAVA export.
+
+- A **process** run lists each stage (media processing, known-hash match, exact
+  stacking, visual stacking, near-duplicate clustering) with ✓ or ✗, so a
+  failed stage doesn't hide the ones that worked.
+- **Show** narrows the list to runs, examiner edits, or runs with a failed
+  stage.
 
 ## 4. Tiles & badges
 
