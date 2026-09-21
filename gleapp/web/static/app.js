@@ -3501,6 +3501,7 @@ $("#btnAddEvidence").onclick = () => {
   $("#aeScreen").checked = true;
   $("#aeStage").checked = false;
   $("#aeCarve").checked = false;
+  $("#aeExpand").checked = false;
   $("#aeKf").value = 6; $("#aeKfv").textContent = "6";
   $("#aeGo").disabled = false;
   $("#addEvDlg").style.display = "block";
@@ -3522,7 +3523,8 @@ $("#aeGo").onclick = async () => {
     body: JSON.stringify({
       spec: specs[0] || null, sources: folders,
       options: { screen: $("#aeScreen").checked, keyframes: +$("#aeKf").value,
-                 stage: $("#aeStage").checked, carve: $("#aeCarve").checked }
+                 stage: $("#aeStage").checked, carve: $("#aeCarve").checked,
+                 expand_archives: $("#aeExpand").checked }
     })
   }).catch(() => ({ error: true, message: "request failed" }));
   if (ing.error) { $("#aeGo").disabled = false; return toast(ing.message || "Could not start ingest"); }
@@ -3782,7 +3784,8 @@ $("#createGo").onclick = async () => {
     body: JSON.stringify({
       spec: specs[0] || null, sources: folders,
       options: { screen: $("#optScreen").checked, keyframes: +$("#optKf").value,
-                 stage: $("#optStage").checked, carve: $("#optCarve").checked }
+                 stage: $("#optStage").checked, carve: $("#optCarve").checked,
+                 expand_archives: $("#optExpand").checked }
     })
   }).catch(() => ({ error: true, message: "request failed" }));
   if (ing.error) return fail(ing.message || "Ingest failed");

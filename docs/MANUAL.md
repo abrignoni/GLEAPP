@@ -55,6 +55,11 @@ With no case open, GLEAPP shows the **launcher**.
 - *Video preview key frames*: default 6.
 - *Copy media out of extraction archives*: off keeps the case small but the
   archive must stay in place. On makes the case self-contained.
+- *Expand archives found inside the sources*: off by default. Opens each `.zip`,
+  `.7z`, `.tar` or `.gz` found inside a source and registers the images and
+  videos in it. Leave it off for a full file-system extraction that holds many
+  compressed files, and open them later with **Expand archives** in the sidebar
+  (§16). The **+ Add evidence** dialog has the same box.
 - *Recover media*: disk images only, off by default (§16).
 - *Enable hash stash matching*: on by default. Turn it off for a case that
   isn't CSAM / Project VIC related, so an old stashed hit can't re-flag
@@ -842,7 +847,8 @@ Beyond ordinary JPEG/PNG/GIF/WebP/BMP/TIFF and video, GLEAPP decodes:
 
 A `.zip`, `.tar`, `.tar.gz` (or a bare `.gz` / `.bz2` / `.xz`, or a `.tgz` /
 `.tbz2` / `.txz`) or **`.7z`** sitting in a folder or on a walked E01 filesystem
-is opened automatically at ingest. Archives nested inside archives are followed.
+is opened at ingest when *Expand archives found inside the sources* is ticked.
+Archives nested inside archives are followed.
 
 - Its image and video members are written to `extracted/<id>/` and registered as
   ordinary rows, named `<archive>/<member>`, linked back to the container.
@@ -854,7 +860,7 @@ is opened automatically at ingest. Archives nested inside archives are followed.
   external `unrar` binary a self-contained build can't carry), so the container
   row is flagged so you know to extract it separately.
 - Encrypted members (and password-protected `.7z`) are skipped and counted.
-- To run this on a case that was ingested earlier, use **Expand archives** in
+- Unticked, or on a case that was ingested earlier, use **Expand archives** in
   the sidebar (§16).
 
 ### macOS sidecars (`._` files)
@@ -999,8 +1005,9 @@ date, label (`auto`, `manual`, or your text) and size:
 - **Expand archives**: appears below the Source list when the case holds any
   `.zip` / `.tar` / `.gz` etc. Opens each one that has not been expanded yet
   and processes what comes out; **Re-check archives** re-opens them all (use
-  after fixing a source that was unavailable). Archives are expanded
-  automatically at ingest; this is for a case ingested before that, or a
+  after fixing a source that was unavailable). Archives are expanded at ingest
+  only when *Expand archives found inside the sources* is ticked; use this when
+  it was not, for a case ingested before that option existed, or after a
   partial run.
 
 Each reports progress next to its own button. A full reprocess is available
