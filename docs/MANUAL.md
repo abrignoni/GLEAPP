@@ -552,6 +552,11 @@ Accepted files: a plain **MD5 / SHA-1 / SHA-256 list** (one per line, or
 export. Hashes are matched case-insensitively; a header row or blank lines are
 ignored.
 
+A **SQLite hash database**, such as the NSRL RDS, is not accepted here. GLEAPP
+reads the file's first bytes, whatever its name, and refuses it with a message
+that points you at the global store (next section), which holds a reference set
+once for every case. Nothing is added to the case.
+
 **Re-check** (next to *Import hash set...*) re-runs matching against every
 loaded set: case sets, the global store, and the local hash stash, without a
 full reprocess.

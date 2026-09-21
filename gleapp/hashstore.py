@@ -619,9 +619,9 @@ def import_path(path: str | Path, *, name: str | None = None, kind: str = "known
 
     path = Path(path)
     name = name or path.stem
-    with open(path, "rb") as fh:
-        head = fh.read(16)
-    if head.startswith(b"SQLite format 3\x00"):
+    # the same test the case import refuses a SQLite file on, so the two stores
+    # never disagree about which files are SQLite
+    if hashdb.is_sqlite_file(path):
         return import_sqlite(path, name=name, kind=kind, table=table,
                              algos=algos, progress=progress)
 

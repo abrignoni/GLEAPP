@@ -30,7 +30,7 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | **Hashing** | MD5 / SHA-1 / SHA-256 in one pass, plus aHash / pHash / dHash perceptual hashes |
 | **Deduplication** | Three tiers: exact-file **stacking** (same hash), **visual stacking** ("same picture to the eye": pHash *and* dHash agree; collapses like a stack, badged **≈ N**), and a looser browsable **similar-group** cluster. Featureless images (gradients, flat screenshots) are excluded from perceptual grouping |
 | **Project VIC** | Import a Project VIC 2.0 (US) case file directly: registers every `Media` entry, resolves the media folder, keeps MD5 / MediaID / original name & path / MIME / victim-offender flags; **export back** to VIC JSON with your categories filled in |
-| **Known-hash matching** | Import Project VIC JSON, CAID-style, plain CSV/text, or a SQLite database (incl. the **NSRL RDS**, delta merge built in) into a per-case set or the shared **global store**; match on crypto hash then pHash. A `known-good` (NSRL) hit auto-categorizes an uncategorized file **Non-pertinent** and can be hidden with **Hide known-NSRL**. A match against a Project VIC hash set carries that record's MediaID, series, flags, tags and Exif (as text) into the gallery, the HTML, CSV and JSON reports, and LAVA |
+| **Known-hash matching** | Import Project VIC JSON, CAID-style or plain CSV/text lists into a per-case set or the shared **global store**, and a SQLite database (incl. the **NSRL RDS**, delta merge built in) into the global store; match on crypto hash then pHash. A `known-good` (NSRL) hit auto-categorizes an uncategorized file **Non-pertinent** and can be hidden with **Hide known-NSRL**. A match against a Project VIC hash set carries that record's MediaID, series, flags, tags and Exif (as text) into the gallery, the HTML, CSV and JSON reports, and LAVA |
 | **Robustness at scale** | Tens of thousands of files: LSH-banded near-dup clustering (not O(n²)); video *and* GPU-texture decode isolated in child processes (a corrupt clip or a texture-decoder segfault can't crash the run: video batches are bisected and retried); HEIC/HEIF/TIFF/RAW decoded for viewing; **KTX** GPU textures (ASTC/PVRTC/ETC/BC) decoded to images; Apple's proprietary LZFSE assets labeled honestly rather than shown broken; **Retry failed files** re-runs just the errored ones |
 | **Metadata** | EXIF capture time, camera make/model, GPS → decimal degrees; filesystem-time fallback; capture **timeline** via sort |
 | **Video** | Dimensions/duration (OpenCV, no ffmpeg needed), evenly-spaced **key-frame** extraction, per-frame pHash so a still can find its source video |
@@ -362,7 +362,11 @@ Import into **this case** (sidebar **Known hashes → Import hash set…**, or
   characters (32→md5, 40→sha1, 64→sha256), with an optional `,category` after it. No
   other column is read, so a delimited list's PhotoDNA or pHash column does not come
   in this way; use the JSON form for those.
-* **SQLite database** – any table/view with `md5` / `sha1` / `sha256` columns.
+* **SQLite database**, global store only – any table/view with `md5` / `sha1` /
+  `sha256` columns. A case import refuses one and names the global store, which
+  holds a reference set once for every case rather than a copy in each
+  `case.gleapp` and in each of its backup snapshots. `--table`, `--algos` and the
+  NSRL options below need `--global`.
   For the **NSRL RDS**: import the yearly full `.db` directly; a quarterly
   `_delta.sql` merges onto the previous full `.db` before importing (the merge
   uses the `sqlite3` CLI if present, otherwise a built-in fallback, so it works

@@ -94,6 +94,20 @@ def cmd_hashset(args: argparse.Namespace) -> int:
                + (f"  [{pdna:,} PhotoDNA, not matched]" if pdna else ""))
         return 0
 
+    if not args.to_global:
+        # Each of these reads or builds a SQLite hash database, and only the
+        # global store imports one (see hashdb.case_refusal). Refused before
+        # anything is built, rather than ignored.
+        only_global = [flag for flag, value in (
+            ("--table", args.table), ("--algos", args.algos),
+            ("--schema", args.schema), ("--full", args.full),
+            ("--base", args.base), ("--delta", args.delta)) if value]
+        if only_global:
+            verb = "applies" if len(only_global) == 1 else "apply"
+            _p(f"error: {', '.join(only_global)} {verb} only to a SQLite hash "
+               "database, which a case does not import; add --global")
+            return 2
+
     # NSRL RDSv3 helpers: build a .db from a full .sql dump, and/or apply a delta
     src = args.file
     if args.schema and args.full:
@@ -110,8 +124,8 @@ def cmd_hashset(args: argparse.Namespace) -> int:
         _p(f"  updated database: {src}")
 
     if not src:
-        _p("error: give a hash list (.db / VIC json / CSV / text), or --list, "
-           "or --schema/--full/--delta to build one")
+        _p("error: give a hash list (VIC json / CSV / text, or a SQLite .db with "
+           "--global), or --list, or --schema/--full/--delta with --global to build one")
         return 2
 
     algos = tuple(a.strip() for a in args.algos.split(",")) if args.algos else None
@@ -132,6 +146,10 @@ def cmd_hashset(args: argparse.Namespace) -> int:
         _p(f"Imported '{name}' into the global store: {added:,} hashes.")
         note = hashdb.photodna_note(hashstore.algo_counts(hs_id))
     else:
+        # checked before the case is opened, so a refused file creates no case
+        refusal = hashdb.case_refusal(src) or hashdb.kind_refusal(src, args.kind)
+        if refusal:
+            raise ValueError(refusal)
         case = open_case(args.case, create=True, examiner=args.examiner)
         hs_id, added = hashdb.import_hashset(
             case.db, src, name=name, kind=args.kind, actor=case.examiner)
@@ -493,16 +511,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("hashset",
                        help="import a known-hash list (SQLite / NSRL RDSv3 / VIC / CSV)")
-    s.add_argument("file", nargs="?", help="hash list (.db/.json/.csv/.txt); "
-                                           "omit with --list or --schema/--full")
+    s.add_argument("file", nargs="?", help="hash list (.json/.csv/.txt, or a SQLite "
+                                           ".db with --global); omit with --list "
+                                           "or --schema/--full")
     s.add_argument("--name")
     s.add_argument("--kind", choices=["known", "known-good", "other"], default="known")
     s.add_argument("--global", dest="to_global", action="store_true",
                    help="import into the shared global store (all cases use it)")
-    s.add_argument("--table", help="SQLite: table/view with the hash columns "
-                                   "(default: auto - METADATA / FILE / DISTINCT_HASH)")
-    s.add_argument("--algos", help="comma list to import, e.g. sha256,sha1 "
-                                   "(default: all of md5,sha1,sha256 present)")
+    s.add_argument("--table", help="SQLite, with --global: table/view with the hash "
+                                   "columns (default: auto - METADATA / FILE / DISTINCT_HASH)")
+    s.add_argument("--algos", help="SQLite, with --global: comma list to import, e.g. "
+                                   "sha256,sha1 (default: all of md5,sha1,sha256 present)")
     s.add_argument("--schema", help="NSRL: <set>.schema.sql (with --full)")
     s.add_argument("--full", help="NSRL: full <set>.sql data dump (built into a .db)")
     s.add_argument("--base", help="NSRL: previous full <set>.db to apply --delta onto")
