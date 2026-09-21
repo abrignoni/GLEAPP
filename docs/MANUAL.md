@@ -557,9 +557,10 @@ message after the import says how many lines were skipped.
 
 A file with **no hash to import** is refused with the reason, and nothing is
 added to the case: a picture or other binary file, a CSV whose first column
-holds no hash, an empty file, a JSON list whose records carry none, or a list
-holding only the hashes of an empty file. A set already in the case under that
-name is left as it was.
+holds no hash, an empty file, a JSON list whose records carry none, a list
+holding only the hashes of an empty file, or a SQL script, such as the
+`.schema.sql` in an NSRL zip. A set already in the case under that name is
+left as it was.
 
 A **SQLite hash database**, such as the NSRL RDS, is not accepted here. GLEAPP
 reads the file's first bytes, whatever its name, and refuses it with a message
@@ -576,12 +577,17 @@ The global store lives at `%LOCALAPPDATA%\GLEAPP\hashsets\` (macOS
 `~/Library/Application Support/GLEAPP/hashsets/`, Linux
 `~/.config/GLEAPP/hashsets/`) and is shared by every case. It holds large
 reference sets like the NSRL RDS once, instead of copying them into every
-`case.gleapp`. Accepted inputs: a SQLite `.db`, an NSRL `.sql` dump or
-`_delta.sql`, a Project VIC JSON, a CAID export, or a plain hash list.
+`case.gleapp`. Accepted inputs: a SQLite `.db`, such as an NSRL release, an
+NSRL `_delta.sql` merged onto the previous full `.db`, a Project VIC JSON, a
+CAID export, or a plain hash list.
 
 A file with no hash to import is refused here too, before anything is written,
-so a set already stored under that name stays as it was. After an import, the
-message says how many of a list's lines were skipped. **Store** in the **Add a
+so a set already stored under that name stays as it was. The dialog says why
+before the import starts and stays open, except for a SQLite database, which is
+checked as it is imported. A SQL script picked on its own, such as the
+`.schema.sql` beside the `.db` in an NSRL zip, is refused with the file to pick
+instead. After an import, the message says how many of a list's lines were
+skipped. **Store** in the **Add a
 set** form chooses which hashes to read from a SQLite database and does not
 apply to a text or JSON list. On the command line, `--algos` and `--table` are
 refused for a file that is not a SQLite database.
@@ -735,7 +741,9 @@ delta each quarter, then **Re-check** a case.
 Each set publishes a **full** SQLite `.db` once a year (March):
 `RDS_YYYY.03.x_<set>.zip`, tens of GB unzipped, and a **quarterly delta**:
 `RDS_YYYY.MM.x_<set>_delta.zip`, a `<set>_delta.sql` of the changes since.
-Unzip what you download. **Modern** also offers a much smaller *minimal*
+Unzip what you download. The full and delta zips also hold a `.schema.sql`, the
+schema of the database; GLEAPP does not need it, and refuses it if it is picked
+in place of the `.db`. **Modern** also offers a much smaller *minimal*
 database (distinct SHA-256 only); for that, set **Store** to *SHA-256 only* in
 step 2.
 

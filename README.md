@@ -373,14 +373,17 @@ Import into **this case** (sidebar **Known hashes → Import hash set…**, or
   For the **NSRL RDS**: import the yearly full `.db` directly; a quarterly
   `_delta.sql` merges onto the previous full `.db` before importing (the merge
   uses the `sqlite3` CLI if present, otherwise a built-in fallback, so it works
-  from the frozen app). `--schema`/`--full` builds a `.db` from `.sql` dumps.
+  from the frozen app). `--schema`/`--full` builds a `.db` from a schema script and
+  a SQL data dump, for a set that comes that way; NIST publishes a full NSRL
+  release as a `.db`, which is imported directly.
   Limit which hashes to store (MD5 alone roughly halves the store). `--list` /
   `--rm ID` (or the sidebar list) manage the global store.
 
 A file with no hash to import is refused, whether it goes into a case or the global
 store: a picture or other binary file, a CSV whose first column holds no hash, an empty file,
-a JSON list whose records carry none, or a list holding only the hashes of an empty
-file. The command exits 2 with the reason, the dialogs show it, and nothing is
+a JSON list whose records carry none, a list holding only the hashes of an empty file, or
+a SQL script, such as the `.schema.sql` in an NSRL full or delta zip. The command
+exits 2 with the reason, the dialogs show it, and nothing is
 written: no empty set is left behind, and a set already stored under that name stays
 as it was. When only some lines (or JSON records) hold no hash, the rest are imported
 and the result says how many were skipped; a header row counts as one. The count an

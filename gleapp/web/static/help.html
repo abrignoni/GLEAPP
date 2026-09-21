@@ -597,8 +597,9 @@ MD5, SHA-1 or SHA-256 in its first column, such as a header row, is skipped, and
 after the import says how many lines were skipped.</p>
 <p>A file with <strong>no hash to import</strong> is refused with the reason, and nothing is
 added to the case: a picture or other binary file, a CSV whose first column holds no hash, an
-empty file, a JSON list whose records carry none, or a list holding only the hashes of an empty
-file. A set already in the case under that name is left as it was.</p>
+empty file, a JSON list whose records carry none, a list holding only the hashes of an empty
+file, or a SQL script, such as the <code>.schema.sql</code> in an NSRL zip. A set already in the
+case under that name is left as it was.</p>
 <p>A <strong>SQLite hash database</strong>, such as the NSRL RDS, is not accepted here.
 GLEAPP reads the file's first bytes, whatever its name, and refuses it with a message
 that points you at the global store (below), which holds a reference set once for
@@ -613,13 +614,16 @@ once, shared by every case, at <code>%LOCALAPPDATA%\GLEAPP\hashsets\</code>
 (NSRL)</strong>, or the sidebar's <strong>Known hashes &rarr; "Reference data: ...
 &#x25b8;" line</strong>, which opens a dialog that
 lists the imported sets (each with an <strong>&#x2715;</strong> to remove it) and
-an <strong>Add a set</strong> form. Accepts a SQLite <code>.db</code>, an NSRL
-<code>.sql</code> / delta, Project&nbsp;VIC JSON, CAID JSON, or a hash list. (The
-command line <code>gleapp hashset --global ...</code> does the same, from a source
-install.)</p>
+an <strong>Add a set</strong> form. Accepts a SQLite <code>.db</code>, such as an NSRL
+release, an NSRL <code>_delta.sql</code> merged onto the previous full <code>.db</code>,
+Project&nbsp;VIC JSON, CAID JSON, or a hash list. (The command line
+<code>gleapp hashset --global ...</code> does the same, from a source install.)</p>
 <p>A file with no hash to import is refused here too, before anything is written, so a set
-already stored under that name stays as it was. After an import, the message says how many of
-a list's lines were skipped. <strong>Store</strong> in the <strong>Add a set</strong> form
+already stored under that name stays as it was. The dialog says why before the import starts
+and stays open, except for a SQLite database, which is checked as it is imported. A SQL script
+picked on its own, such as the <code>.schema.sql</code> beside the <code>.db</code> in an NSRL
+zip, is refused with the file to pick instead. After an import, the message says how many of a
+list's lines were skipped. <strong>Store</strong> in the <strong>Add a set</strong> form
 chooses which hashes to read from a SQLite database and does not apply to a text or JSON list.
 On the command line, <code>--algos</code> and <code>--table</code> are refused for a file that
 is not a SQLite database.</p>
@@ -766,7 +770,9 @@ software; skip unless you work vintage systems). Each set publishes a
 (<code>RDS_YYYY.03.x_&lt;set&gt;.zip</code>, tens of GB unzipped) and a
 <strong>quarterly delta</strong>
 (<code>RDS_YYYY.MM.x_&lt;set&gt;_delta.zip</code>, a
-<code>&lt;set&gt;_delta.sql</code> of changes since). Unzip what you download.
+<code>&lt;set&gt;_delta.sql</code> of changes since). Unzip what you download. The full and
+delta zips also hold a <code>.schema.sql</code>, the schema of the database; GLEAPP does not
+need it, and refuses it if it is picked in place of the <code>.db</code>.
 <strong>Modern</strong> also offers a much smaller <em>minimal</em> database
 (distinct SHA-256 only); for that, set <strong>Store</strong> to
 <em>SHA-256 only</em> in step&nbsp;2.</p>
