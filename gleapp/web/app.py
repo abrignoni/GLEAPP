@@ -665,9 +665,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     @app.post("/api/hashset/global/import")
     def hashset_global_import():
         """Import a reference set into the shared global store, in the
-        background: an NSRL RDS ``.db``, a ``.sql`` dump, a quarterly
-        ``_delta.sql`` merged onto the previous full ``.db`` (``base``), or a
-        Project VIC hash set (``.json``), which is read as it is imported."""
+        background: an NSRL RDS ``.db``, a quarterly ``_delta.sql`` merged onto
+        the previous full ``.db`` (``base``), a SQL data dump built into a
+        ``.db`` with its ``schema`` script, a Project VIC hash set (``.json``),
+        which is read as it is imported, or another hash list."""
         if state["job"]["running"]:
             abort(409, description="a job is already running")
         from .. import hashdb, hashstore
@@ -698,8 +699,16 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             abort(400, description=f"schema file not found: {schema}")
         name = str(data.get("name", "")).strip() or Path(src).stem
         if not (schema or is_delta):
-            # checked here, before the job starts, so the examiner sees why
-            refusal = hashdb.kind_refusal(src, kind)
+            # checked here, before the job starts, so the examiner sees why and
+            # the dialog stays open. no_hash_refusal stops at the first hash, and
+            # at the first 4096 characters of a binary file or a SQL script (the
+            # .schema.sql in an NSRL zip, picked in place of the .db); a SQLite
+            # database is checked by import_sqlite, inside the job
+            try:
+                refusal = hashdb.kind_refusal(src, kind) or (
+                    None if hashdb.is_sqlite_file(src) else hashdb.no_hash_refusal(src))
+            except (OSError, ValueError) as exc:
+                abort(400, description=f"could not read hash list: {exc}")
             if refusal:
                 abort(400, description=refusal)
         case = state["case"]
@@ -746,6 +755,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                          message=f"{name}: {added:,} hashes imported"
                          + (f" — {hits} case hit(s)" if case is not None else "")
                          + (f". {extras}" if extras else ""))
+            except ValueError as exc:
+                # a refusal or an unreadable list, worded for the examiner; the
+                # command line prints these the same way, without the type name
+                j.update(running=False, stage="error", error=str(exc))
             except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                 j.update(running=False, stage="error",
                          error=f"{type(exc).__name__}: {exc}")

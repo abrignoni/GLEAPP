@@ -151,6 +151,27 @@ _UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 # without a byte-order mark.
 _NUL = "\x00"
 
+# A SQL script opens with a statement, after any blank lines and comments. An NSRL
+# full or delta release is a zip holding one beside what GLEAPP imports: a full
+# release holds the SQLite .db and a .schema.sql (CREATE TABLE and CREATE VIEW),
+# and a delta holds a _delta.sql of INSERT, UPDATE and DELETE statements and the
+# .schema.sql (NIST, RDSv3.pdf). The keyword alone is not enough: a CSV header
+# can be "Create" or "Update", so the words that follow it count too.
+# Each prefix piece can match in one way only, so a failed match costs a single
+# pass. "\s+" inside the "*", or a comment body that can run past the next "*/",
+# splits a run of spaces or comments in exponentially many ways: with a lazy
+# comment body, 22 empty comments before a non-SQL word took 0.26 s, and each
+# further comment doubled it.
+_SQL_START = re.compile(
+    r"\A(?:\s|--[^\n]*(?:\n|\Z)|/\*(?:[^*]|\*(?!/))*\*/)*"
+    r"(?:CREATE\s+(?:TABLE|VIEW|INDEX|UNIQUE|TRIGGER|TEMP|TEMPORARY|VIRTUAL)\b"
+    r"|INSERT\s+(?:OR\s+\w+\s+)?INTO\b|REPLACE\s+INTO\b"
+    r"|UPDATE\s+\S+\s+SET\b|DELETE\s+FROM\b"
+    r"|DROP\s+(?:TABLE|VIEW|INDEX|TRIGGER)\b"
+    r"|BEGIN(?:\s+(?:DEFERRED|IMMEDIATE|EXCLUSIVE))?(?:\s+TRANSACTION)?\s*;"
+    r"|PRAGMA\s+\w+)",
+    re.IGNORECASE | re.DOTALL)
+
 
 def _open_text(path: Path):
     """A hash list opened as text: UTF-16 when it starts with a UTF-16
@@ -189,8 +210,9 @@ class ListCounts:
 
     ``read`` is the number of non-blank lines of a text list, or of records of
     a JSON one, and ``skipped`` how many of those held no hash at all.
-    ``empty`` counts the hashes of an empty file, which no store keeps, and
-    ``binary`` is set when a text list held NUL characters and was not read.
+    ``empty`` counts the hashes of an empty file, which no store keeps.
+    ``binary`` is set when a text list held NUL characters, and ``sql`` when it
+    opened with a SQL statement; neither is read any further.
     """
 
     unit: str = "line"
@@ -198,6 +220,7 @@ class ListCounts:
     skipped: int = 0
     empty: int = 0
     binary: bool = False
+    sql: bool = False
 
     def skipped_note(self) -> str:
         """One sentence saying how many lines or records held no hash, or ""
@@ -217,6 +240,12 @@ class ListCounts:
                    "binary file does (a picture, an archive, a disk image) or text "
                    "in an encoding GLEAPP does not read. GLEAPP reads UTF-8 or "
                    "ASCII, and UTF-16 that starts with a byte-order mark.")
+        elif self.sql:
+            why = (f"{name} is a SQL script, not a hash list. An NSRL release is "
+                   "imported into Reference data as the .db file from its zip; "
+                   "the .schema.sql beside it is that database's schema, and a "
+                   "quarterly _delta.sql is merged onto the previous full .db "
+                   "(Quarterly delta, or --base and --delta on the command line).")
         elif not self.read:
             why = (f"{name} holds no records." if self.unit == "record"
                    else f"{name} is empty: it has no non-blank line.")
@@ -273,6 +302,9 @@ class ListReader:
             sample = fh.read(4096)
             if _NUL in sample:
                 counts.binary = True
+                return
+            if _SQL_START.match(sample):
+                counts.sql = True
                 return
             fh.seek(0)
             # A NUL further in is dropped here rather than left to the csv

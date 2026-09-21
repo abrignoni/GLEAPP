@@ -536,8 +536,11 @@ def build_parser() -> argparse.ArgumentParser:
                                    "columns (default: auto - METADATA / FILE / DISTINCT_HASH)")
     s.add_argument("--algos", help="SQLite, with --global: comma list to import, e.g. "
                                    "sha256,sha1 (default: all of md5,sha1,sha256 present)")
-    s.add_argument("--schema", help="NSRL: <set>.schema.sql (with --full)")
-    s.add_argument("--full", help="NSRL: full <set>.sql data dump (built into a .db)")
+    s.add_argument("--schema", help="the schema script a --full dump is built on, "
+                                    "e.g. the .schema.sql in an NSRL zip")
+    s.add_argument("--full", help="a full SQL data dump to build into a .db (with "
+                                  "--schema); NIST publishes a full NSRL release as a "
+                                  ".db, which is imported directly")
     s.add_argument("--base", help="NSRL: previous full <set>.db to apply --delta onto")
     s.add_argument("--delta", help="NSRL: <set>_delta.sql to merge onto the base .db")
     s.add_argument("--list", action="store_true", help="list the global store's sets")
