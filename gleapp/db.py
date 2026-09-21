@@ -64,9 +64,9 @@ _CASE_SENSITIVE_ALGOS = (PHOTODNA_ALGO,)
 
 # The MD5, SHA-1 and SHA-256 of empty input. Every zero-byte file has them, so a
 # hash-set entry holding one names no content, and a match on it would flag every
-# empty file in a case. NSRL data carries them, and a Project VIC set can too.
-# No store keeps them (``CaseDB.add_hashset_entries``, ``hashstore._norm``, the
-# stash) and matching never looks one up (``hashdb.match_all``).
+# empty file in a case. No store keeps them (``CaseDB.add_hashset_entries``,
+# ``hashstore._norm``, the stash) and matching never looks one up
+# (``hashdb.match_all``).
 EMPTY_FILE_HASHES = {
     "md5": "d41d8cd98f00b204e9800998ecf8427e",
     "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",

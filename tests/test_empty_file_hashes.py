@@ -1,14 +1,13 @@
 """The hashes of an empty file are never kept from a hash list, and never matched.
 
 Every zero-byte file has the same MD5, SHA-1 and SHA-256, so a hash-set entry
-holding one of them names no content: it can only say that a file is empty. NSRL
-data carries those hashes, and a Project VIC set can too. The global store has
-always left them out. A set imported into one case kept them, so every empty file
-in that case became a hit, and one with no category took the entry's category as
-its own. Measured with a synthetic Project VIC set on the command line: imported
-into the case, an empty file came out a category 1 hit carrying the entry's
-MediaID and was put in category 1; imported into the global store, it was not a
-hit.
+holding one of them names no content: it can only say that a file is empty. A
+hash list can still carry them. The global store has always left them out. A set
+imported into one case kept them, so every empty file in that case became a hit,
+and one with no category took the entry's category as its own. Measured with a
+synthetic Project VIC set on the command line: imported into the case, an empty
+file came out a category 1 hit carrying the entry's MediaID and was put in
+category 1; imported into the global store, it was not a hit.
 
 Everything here is synthetic.
 """
