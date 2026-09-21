@@ -38,6 +38,7 @@ from .db import PHASH_ALGO, PHOTODNA_ALGO, is_empty_file_hash
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
 _ALGO_BY_LEN = {32: "md5", 40: "sha1", 64: "sha256"}
 _HASH_COLS = ("sha256", "sha1", "md5")
+_ALGO_NAMES = {"md5": "MD5", "sha1": "SHA-1", "sha256": "SHA-256"}
 _BATCH = 100_000
 
 _SCHEMA = """
@@ -284,6 +285,16 @@ def _flush(batch: list) -> None:
     batch.clear()
 
 
+def _has_storable(src: sqlite3.Connection, tbl: str, algo: str, where: str) -> bool:
+    """True when the column holds a value ``_norm`` keeps. Reads in table order
+    and stops at the first one, so a real hash database costs a row."""
+    cur = src.execute(f'SELECT "{algo}" FROM "{tbl}"{where}')
+    try:
+        return any(_norm(algo, raw) is not None for (raw,) in cur)
+    finally:
+        cur.close()
+
+
 def _find_hash_table(src: sqlite3.Connection, prefer: str | None) -> tuple[str, list[str]]:
     present = [r[0] for r in src.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")]
@@ -374,6 +385,14 @@ def import_sqlite(src_path: str | Path, *, name: str, kind: str = "known-good",
         size_col = next((c for c in ("bytes", "file_size", "size") if c in cols), None)
         where = (f' WHERE "{size_col}" IS NULL OR "{size_col}" > 0'
                  if size_col else "")
+        # asked before _create_set, which empties a set of the same name
+        if not any(_has_storable(src, tbl, algo, where) for algo in want):
+            labels = [_ALGO_NAMES[a] for a in want]
+            names = (", ".join(labels[:-1]) + " or " + labels[-1]
+                     if len(labels) > 1 else labels[0])
+            raise ValueError(
+                f"{src_path.name} holds no hash to import: its {tbl} table has no "
+                f"{names} value GLEAPP can store. Nothing was imported.")
 
         hs_id = _create_set(name, str(src_path), kind)
         _bulk_begin()
@@ -613,8 +632,16 @@ def apply_delta(base_db: str | Path, delta_sql: str | Path,
 def import_path(path: str | Path, *, name: str | None = None, kind: str = "known",
                 table: str | None = None, algos: tuple[str, ...] | None = None,
                 progress: Callable[[int, int], None] | None = None,
+                counts: "hashdb.ListCounts | None" = None,
                 ) -> tuple[int, int]:
-    """Import a hash list into the global store. Returns (set_id, entries)."""
+    """Import a hash list into the global store. Returns (set_id, entries).
+
+    ``table`` and ``algos`` choose what to read from a SQLite database, and are
+    refused for any other file rather than ignored. A file that gives no hash
+    to store raises
+    ``ValueError`` before the set is created, so a set already stored under the
+    name stays as it was. ``counts`` as in ``hashdb.import_hashset``.
+    """
     from . import hashdb  # local: hashdb imports nothing from us at module load
 
     path = Path(path)
@@ -624,18 +651,19 @@ def import_path(path: str | Path, *, name: str | None = None, kind: str = "known
     if hashdb.is_sqlite_file(path):
         return import_sqlite(path, name=name, kind=kind, table=table,
                              algos=algos, progress=progress)
+    if table or algos:
+        raise ValueError(
+            f"{path.name} is not a SQLite database, and a table or a choice of "
+            "hashes applies only to one.")
 
     # Read as it is imported, never whole: a national Project VIC set is one
-    # JSON document of several gigabytes.
-    refusal = hashdb.kind_refusal(path, kind)
+    # JSON document of several gigabytes. Refused before _create_set, which
+    # empties a set of the same name.
+    refusal = hashdb.kind_refusal(path, kind) or hashdb.no_hash_refusal(path)
     if refusal:
         raise ValueError(refusal)
-    details = None
+    details = vicdetails.Stager() if jsonstream.starts_as_json(path) else None
     vic = hashdb.is_vics_file(path)
-    if jsonstream.starts_as_json(path):
-        details = vicdetails.Stager()
-        entries = hashdb.iter_json_entries(path, details=details)
-    else:
-        entries = hashdb._iter_delimited(path)
+    entries = hashdb.ListReader(path, details=details, counts=counts)
     return _import_entries(name, str(path), kind, entries, progress=progress,
                            details=details, vic=vic)

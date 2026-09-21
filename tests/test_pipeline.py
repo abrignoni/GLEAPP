@@ -398,8 +398,9 @@ def test_hashset_import_endpoint_flags_and_removes(tmp_path):
     import_detail = json.loads(next(
         row["detail"] for row in cl.get("/api/audit").get_json()
         if row["action"] == "hashset_import"))
+    # the header row is the one non-blank line without a hash
     assert import_detail == {"name": "CyberTip 9999", "kind": "known", "added": 2,
-                             "source": lst.name, "photodna": 0}
+                             "source": lst.name, "photodna": 0, "skipped": 1}
 
     rows = {x["rel_path"]: dict(x) for x in c.db.iter_files()}
     assert rows["hit.jpg"]["hashset_hit"] == "CyberTip 9999"

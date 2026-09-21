@@ -9,7 +9,14 @@ Supported input formats
 * **Plain text / CSV / TSV** - the first column of each line, taken as a hash
   when it is 32, 40 or 64 hex characters (md5 / sha1 / sha256). This path
   reads no other column, so a delimited list's PhotoDNA or pHash column is not
-  imported; those come in through the JSON form above.
+  imported; those come in through the JSON form above. UTF-8 or ASCII, or
+  UTF-16 that starts with a byte-order mark.
+
+Both stores read a list through ``ListReader``, which counts the lines or
+records that held no hash, so an import can say how many it skipped. A file
+that gives no hash to store at all is refused (``no_hash_refusal``) before a
+set is created, so an import never leaves an empty set behind, nor empties a
+set already stored under the same name.
 
 A **SQLite hash database** (the NSRL RDS, say) is not a case input: it goes
 into the global store (``gleapp.hashstore``), which every case is matched
@@ -29,8 +36,9 @@ from __future__ import annotations
 import csv
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Mapping
+from typing import Generator, Iterator, Mapping
 
 from . import jsonstream, vicdetails
 from .db import PHASH_ALGO, PHOTODNA_ALGO, CaseDB, is_empty_file_hash
@@ -132,29 +140,211 @@ def _record_entries(rec: object) -> Iterator[tuple[str, str, int | None]]:
                 yield algo, val.strip(), cat
 
 
-def _iter_delimited(path: Path) -> Iterator[tuple[str, str, int | None]]:
-    with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as fh:
-        sample = fh.read(4096)
-        fh.seek(0)
-        if "," in sample or "\t" in sample:
-            reader = csv.reader(fh, delimiter="\t" if "\t" in sample else ",")
-            for row in reader:
-                if not row:
-                    continue
-                val = row[0].strip().strip('"')
+# UTF-16 text starts with one of these byte-order marks. In Windows PowerShell
+# 5.1, Out-File and the > and >> operators write UTF-16LE with one (Microsoft's
+# about_Character_Encoding), so a list saved from it arrives this way. Read as
+# UTF-8, such a list imported as nothing.
+_UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
+
+# A text list GLEAPP can read never holds NUL. A binary file does (a picture, an
+# archive, a disk image), and so does text in another encoding, such as UTF-16
+# without a byte-order mark.
+_NUL = "\x00"
+
+
+def _open_text(path: Path):
+    """A hash list opened as text: UTF-16 when it starts with a UTF-16
+    byte-order mark, UTF-8 (with or without a mark, so ASCII too) otherwise."""
+    with open(path, "rb") as fh:
+        head = fh.read(2)
+    encoding = "utf-16" if head in _UTF16_BOMS else "utf-8-sig"
+    return open(path, "r", encoding=encoding, errors="replace", newline="")
+
+
+def _storable(algo: str, value: object) -> str | None:
+    """``value`` as the stores keep it, or None when neither would keep it.
+
+    An MD5, SHA-1 or SHA-256 has to be hexadecimal of that algorithm's length,
+    and is folded to lower case, as a pHash is. A PhotoDNA value is kept as
+    written: it travels base64-encoded as often as hex, and base64 is
+    case-sensitive. The hashes of an empty file are the caller's to count and
+    drop (see ``db.EMPTY_FILE_HASHES``).
+    """
+    v = str(value).strip()
+    if not v:
+        return None
+    if algo == PHOTODNA_ALGO:
+        return v
+    v = v.lower()
+    if algo == PHASH_ALGO:
+        return v
+    if _HEX.match(v) and _ALGO_BY_LEN.get(len(v)) == algo:
+        return v
+    return None
+
+
+@dataclass
+class ListCounts:
+    """What an import read from a hash list, and what it could not use.
+
+    ``read`` is the number of non-blank lines of a text list, or of records of
+    a JSON one, and ``skipped`` how many of those held no hash at all.
+    ``empty`` counts the hashes of an empty file, which no store keeps, and
+    ``binary`` is set when a text list held NUL characters and was not read.
+    """
+
+    unit: str = "line"
+    read: int = 0
+    skipped: int = 0
+    empty: int = 0
+    binary: bool = False
+
+    def skipped_note(self) -> str:
+        """One sentence saying how many lines or records held no hash, or ""
+        when none did. Said wherever an import is reported."""
+        if not self.skipped:
+            return ""
+        if self.unit == "record":
+            return (f"Skipped {self.skipped:,} of {self.read:,} records: no MD5, "
+                    "SHA-1, SHA-256, pHash or PhotoDNA value.")
+        return (f"Skipped {self.skipped:,} of {self.read:,} non-blank lines: no "
+                "MD5, SHA-1 or SHA-256 in the first column.")
+
+    def refusal(self, name: str) -> str:
+        """Why a list that gave no hash to store is refused."""
+        if self.binary:
+            why = (f"{name} is not a text hash list: it holds NUL characters, as a "
+                   "binary file does (a picture, an archive, a disk image) or text "
+                   "in an encoding GLEAPP does not read. GLEAPP reads UTF-8 or "
+                   "ASCII, and UTF-16 that starts with a byte-order mark.")
+        elif not self.read:
+            why = (f"{name} holds no records." if self.unit == "record"
+                   else f"{name} is empty: it has no non-blank line.")
+        elif self.empty:
+            why = (f"{name} holds no hash to import. Every hash in it is the hash of "
+                   "an empty file, which GLEAPP never stores: every zero-byte file "
+                   "has the same one, so it identifies none of them.")
+        elif self.unit == "record":
+            if self.read == 1:
+                which = "its one record carries no"
+            else:
+                which = f"none of its {self.read:,} records carries an"
+            why = (f"{name} holds no hash to import: {which} MD5, SHA-1, SHA-256, "
+                   "pHash or PhotoDNA value.")
+        else:
+            if self.read == 1:
+                which = "its one non-blank line has no"
+            else:
+                which = f"none of its {self.read:,} non-blank lines has an"
+            why = (f"{name} holds no hash to import: {which} MD5, SHA-1 or SHA-256 "
+                   "(32, 40 or 64 hexadecimal characters) in the first column.")
+        return why + " Nothing was imported."
+
+
+class ListReader:
+    """Reads a hash list (text, CSV, TSV or JSON) one line or record at a time.
+
+    Iterating yields ``(algo, value, category, media_id)`` for every hash a
+    store keeps, the value already in the form the stores keep it, and fills
+    ``counts`` in as it goes, so an import can say what it skipped, or why
+    there was nothing to import. ``details``, when given, receives every JSON
+    record as it is read, as ``iter_json_entries`` feeds it.
+    """
+
+    def __init__(self, path: str | Path, *,
+                 details: vicdetails.Stager | None = None,
+                 counts: ListCounts | None = None) -> None:
+        self.path = Path(path)
+        self.details = details
+        self.is_json = jsonstream.starts_as_json(self.path)
+        self.counts = counts if counts is not None else ListCounts()
+        self.counts.unit = "record" if self.is_json else "line"
+
+    def __iter__(self) -> Iterator[tuple[str, str, int | None, int | None]]:
+        return self.entries()
+
+    def entries(self) -> Generator[tuple[str, str, int | None, int | None], None, None]:
+        """The entries, read as they are asked for."""
+        return self._records() if self.is_json else self._lines()
+
+    def _lines(self) -> Generator[tuple[str, str, int | None, int | None], None, None]:
+        counts = self.counts
+        with _open_text(self.path) as fh:
+            sample = fh.read(4096)
+            if _NUL in sample:
+                counts.binary = True
+                return
+            fh.seek(0)
+            # A NUL further in is dropped here rather than left to the csv
+            # module, which raises on one before Python 3.11 and reads it after.
+            lines = (line.replace(_NUL, "") for line in fh)
+            quoted = "," in sample or "\t" in sample
+            rows: Iterator[list[str]] = (
+                csv.reader(lines, delimiter="\t" if "\t" in sample else ",")
+                if quoted else ([line] for line in lines))
+            for row in rows:
+                if not any(field.strip() for field in row):
+                    continue                        # a blank line
+                counts.read += 1
+                val = row[0].strip()
+                if quoted:
+                    val = val.strip('"')
                 algo = _algo_for(val)
-                if not algo:
+                if algo is None:
+                    counts.skipped += 1
+                    continue
+                if is_empty_file_hash(algo, val):
+                    counts.empty += 1
                     continue
                 cat = None
                 if len(row) > 1 and row[1].strip().isdigit():
                     cat = int(row[1].strip())
-                yield algo, val, cat
-        else:
-            for line in fh:
-                val = line.strip()
-                algo = _algo_for(val)
-                if algo:
-                    yield algo, val, None
+                yield algo, val.lower(), cat, None
+
+    def _records(self) -> Generator[tuple[str, str, int | None, int | None], None, None]:
+        counts = self.counts
+        records = jsonstream.iter_records(self.path)
+        try:
+            for rec in records:
+                counts.read += 1
+                if self.details is not None:
+                    mid = self.details.add(rec)
+                else:
+                    det = vicdetails.record_details(rec)
+                    mid = det["media_id"] if det else None
+                had_hash = False
+                for algo, value, cat in _record_entries(rec):
+                    if is_empty_file_hash(algo, value):
+                        counts.empty += 1
+                        had_hash = True
+                        continue
+                    kept = _storable(algo, value)
+                    if kept is None:
+                        continue            # not a value that algorithm can have
+                    had_hash = True
+                    yield algo, kept, cat, mid
+                if not had_hash:
+                    counts.skipped += 1
+        finally:
+            records.close()
+
+
+def no_hash_refusal(path: str | Path) -> str | None:
+    """Why ``path`` gives no hash to import, or None when it gives one.
+
+    Reads only as far as the first hash a store would keep, so a real list
+    costs a line or a record; a file without one is read to its end. Asked
+    before a set is created, so a refused file leaves no empty set behind, and
+    a set already stored under the same name is left as it was.
+    """
+    reader = ListReader(path)
+    entries = reader.entries()
+    try:
+        if next(entries, None) is not None:
+            return None
+    finally:
+        entries.close()
+    return reader.counts.refusal(Path(path).name)
 
 
 def algo_counts(conn, hashset_id: int) -> dict[str, int]:
@@ -258,29 +448,33 @@ def import_hashset(
     name: str | None = None,
     kind: str = "known",
     actor: str = "examiner",
+    counts: ListCounts | None = None,
 ) -> tuple[int, int]:
-    """Import a hash list into the case. Returns (hashset_id, entries_added).
+    """Import a hash list into the case. Returns (hashset_id, entries_added),
+    the entries this import added to the set, read back from the case, as the
+    global store reports what it stored. A set already in the case under the
+    same name is added to, so a hash it held already is not counted again.
 
     The file is read as it is imported, never loaded whole. A file the case
-    cannot take (``case_refusal``, ``kind_refusal``) raises ``ValueError``
-    before any set is created.
+    cannot take (``case_refusal``, ``kind_refusal``) or one that gives no hash
+    to store (``no_hash_refusal``) raises ``ValueError`` before any set is
+    created. ``counts``, when given, is filled in with what the list held and
+    how many of its lines or records held no hash (see ``ListCounts``).
     """
     path = Path(path)
     name = name or path.stem
-    refusal = case_refusal(path) or kind_refusal(path, kind)
+    refusal = (case_refusal(path) or kind_refusal(path, kind)
+               or no_hash_refusal(path))
     if refusal:
         raise ValueError(refusal)
-    details = None
-    if jsonstream.starts_as_json(path):
-        details = vicdetails.Stager()
-        entries = iter_json_entries(path, details=details)
-    else:
-        entries = _iter_delimited(path)
+    details = vicdetails.Stager() if jsonstream.starts_as_json(path) else None
+    reader = ListReader(path, details=details, counts=counts)
 
     hs_id = db.create_hashset(name, source=str(path), kind=kind,
                               vic=is_vics_file(path))
+    before = _stored_count(db.conn, hs_id)
     try:
-        added = db.add_hashset_entries(hs_id, entries, details=details)
+        db.add_hashset_entries(hs_id, reader, details=details)
     except BaseException:
         # A file that fails part-way (a truncated download, say) must not leave
         # a partial set behind that reads as complete. Nothing of this import is
@@ -288,11 +482,21 @@ def import_hashset(
         # rolling back also leaves a set already stored under this name as it was.
         db.conn.rollback()
         raise
-    note = photodna_note(algo_counts(db.conn, hs_id))
+    added = _stored_count(db.conn, hs_id) - before
+    notes = [n for n in (photodna_note(algo_counts(db.conn, hs_id)),
+                         reader.counts.skipped_note()) if n]
     db.audit_log(actor, "import_hashset",
                  f"{name}: {added} entries from {path.name}"
-                 + (f". {note}" if note else ""))
+                 + (". " + " ".join(notes) if notes else ""))
     return hs_id, added
+
+
+def _stored_count(conn, hashset_id: int) -> int:
+    """The entry count a case keeps on the set's row, which
+    ``CaseDB.add_hashset_entries`` sets from the entries themselves."""
+    row = conn.execute("SELECT count FROM hashsets WHERE id = ?",
+                       (hashset_id,)).fetchone()
+    return int(row[0] or 0)
 
 
 def hit_source(hit: Mapping[str, object]) -> str:
