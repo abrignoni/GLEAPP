@@ -62,6 +62,24 @@ PHOTODNA_ALGO = "photodna"
 # so those are stored exactly as the list wrote them.
 _CASE_SENSITIVE_ALGOS = (PHOTODNA_ALGO,)
 
+# The MD5, SHA-1 and SHA-256 of empty input. Every zero-byte file has them, so a
+# hash-set entry holding one names no content, and a match on it would flag every
+# empty file in a case. No store keeps them (``CaseDB.add_hashset_entries``,
+# ``hashstore._norm``, the stash) and matching never looks one up
+# (``hashdb.match_all``).
+EMPTY_FILE_HASHES = {
+    "md5": "d41d8cd98f00b204e9800998ecf8427e",
+    "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+}
+
+
+def is_empty_file_hash(algo: str, value: object) -> bool:
+    """True when ``value`` is the ``algo`` hash of empty input, whatever its
+    letter case or surrounding space."""
+    empty = EMPTY_FILE_HASHES.get(algo)
+    return empty is not None and value is not None and str(value).strip().lower() == empty
+
 # How a row's file was recovered, the vocabulary of ``files.origin``. Three ways,
 # not two: the middle one is a file the filesystem no longer lists but still
 # named, and it is neither of the others.
@@ -786,7 +804,9 @@ class CaseDB:
 
     def add_hashset_entries(self, hashset_id: int, rows: Iterable[tuple],
                             *, details: "vicdetails.Stager | None" = None) -> int:
-        """Add entries to a set; returns how many were offered.
+        """Add entries to a set; returns how many were offered, not counting
+        the hashes of empty input, which are never stored (see
+        ``EMPTY_FILE_HASHES``).
 
         A hash list arrives in random order with respect to the key the table
         is clustered on, so the rows are appended to a TEMP table first and
@@ -811,6 +831,8 @@ class CaseDB:
             for algo, value, category, *rest in rows:
                 value = (value.strip() if algo in _CASE_SENSITIVE_ALGOS
                          else value.lower().strip())
+                if is_empty_file_hash(algo, value):
+                    continue
                 batch.append((algo, value, category, rest[0] if rest else None))
                 n += 1
                 if len(batch) >= 50_000:

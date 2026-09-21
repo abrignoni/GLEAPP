@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 
 from . import appconfig
+from .db import is_empty_file_hash
 
 STASH_NAME = "Local Hash Stash"
 STASH_CATEGORIES = (1, 2, 3)
@@ -59,7 +60,6 @@ _conn_path: str | None = None
 _cache: dict[str, dict] | None = None
 
 _HEX32 = frozenset("0123456789abcdef")
-_EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
 
 
 # -- location -----------------------------------------------------------------
@@ -191,7 +191,7 @@ def _md5(value: object) -> str | None:
     if value is None:
         return None
     v = str(value).strip().lower()
-    if len(v) != 32 or set(v) - _HEX32 or v == _EMPTY_MD5:
+    if len(v) != 32 or set(v) - _HEX32 or is_empty_file_hash("md5", v):
         return None
     return v
 

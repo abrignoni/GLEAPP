@@ -375,6 +375,10 @@ Import into **this case** (sidebar **Known hashes → Import hash set…**, or
 is hidden by the sidebar's **Hide known-NSRL**. **Re-check known hashes** in the
 gallery re-runs matching without a full reprocess.
 
+The hashes of an empty file are left out of every list, whether it goes into a case
+or the global store, and never matched: every zero-byte file has the same MD5, SHA-1
+and SHA-256, so they identify none of them.
+
 ### PhotoDNA is stored, not matched
 
 A Project VIC or CAID list often carries a PhotoDNA value beside the cryptographic

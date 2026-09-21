@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Iterator, Mapping
 
 from . import jsonstream, vicdetails
-from .db import PHASH_ALGO, PHOTODNA_ALGO, CaseDB
+from .db import PHASH_ALGO, PHOTODNA_ALGO, CaseDB, is_empty_file_hash
 from .hashing import hamming
 
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
@@ -299,6 +299,11 @@ def match_all(db: CaseDB, row, *, phash_threshold: int = 6,
     for a case that isn't CSAM/Project VIC related, where a stashed cat 1-3
     hash re-flagging unrelated media would be noise, not a hit. ``use_vic=False``
     skips every Project VIC hash set the same way.
+
+    A hash of empty input is never looked up, whatever a set holds: every
+    zero-byte file has it, so it identifies none of them (see
+    ``db.EMPTY_FILE_HASHES``). No import stores one now, but a set imported into
+    a case by an earlier version can still hold it.
     """
     from . import hashstore, stash
 
@@ -315,7 +320,7 @@ def match_all(db: CaseDB, row, *, phash_threshold: int = 6,
 
     for algo in ("sha256", "sha1", "md5"):
         val = row[algo] if algo in row.keys() else None
-        if not val:
+        if not val or is_empty_file_hash(algo, val):
             continue
         for h in db.match_hash_all(algo, val):
             add({"name": h["name"], "kind": h["kind"], "category": h["category"],

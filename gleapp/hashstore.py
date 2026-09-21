@@ -33,17 +33,11 @@ from pathlib import Path
 from typing import Callable
 
 from . import appconfig, jsonstream, vicdetails
-from .db import PHASH_ALGO, PHOTODNA_ALGO
+from .db import PHASH_ALGO, PHOTODNA_ALGO, is_empty_file_hash
 
 _HEX = re.compile(r"^[0-9a-fA-F]+$")
 _ALGO_BY_LEN = {32: "md5", 40: "sha1", 64: "sha256"}
 _HASH_COLS = ("sha256", "sha1", "md5")
-# hashes of a zero-byte file - present in the NSRL data, never worth matching
-_EMPTY = {
-    "md5": "d41d8cd98f00b204e9800998ecf8427e",
-    "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-}
 _BATCH = 100_000
 
 _SCHEMA = """
@@ -226,7 +220,8 @@ def _norm(algo: str, value: object) -> str | None:
     v = str(value).strip().lower()
     if not v or not _HEX.match(v) or _ALGO_BY_LEN.get(len(v)) != algo:
         return None
-    if v == _EMPTY.get(algo):
+    # the hash of a zero-byte file names no content (see db.EMPTY_FILE_HASHES)
+    if is_empty_file_hash(algo, v):
         return None
     return v
 

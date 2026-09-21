@@ -47,7 +47,8 @@ def test_import_sqlite_metadata_table(tmp_path):
     assert n == 6
     assert hashstore.lookup("sha256", "c" * 64)["kind"] == "known-good"
     assert hashstore.lookup("md5", "A" * 32) is not None      # case-insensitive
-    assert hashstore.lookup("sha1", "0" * 40) is None         # empty-file hash
+    assert hashstore.lookup(
+        "sha1", "da39a3ee5e6b4b0d3255bfef95601890afd80709") is None   # empty-file hash
 
     # re-import replaces, doesn't accumulate
     _, n2 = hashstore.import_sqlite(src, name="NSRL-test", kind="known-good")

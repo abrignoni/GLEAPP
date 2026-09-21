@@ -507,6 +507,14 @@ checks each file's SHA-256, then SHA-1, then MD5 (exact) and then its pHash
 - the **global store**: `%LOCALAPPDATA%\GLEAPP\hashsets\`, shared by every
   case, where large reference sets like the NSRL RDS live.
 
+An empty (zero-byte) file is never matched by its hashes. Every empty file has
+the same MD5, SHA-1 and SHA-256, so they cannot tell one file from another.
+GLEAPP leaves them out of every list it imports, into a case or into the global
+store, keeps them out of your hash stash, and never looks them up. A set
+imported into a case before GLEAPP left them out can still hold them:
+**Re-check** takes the flag off an empty file that set flagged, and a category
+the file took from that match stays until you change it.
+
 Set **kinds**:
 
 | Kind | A hit... |
