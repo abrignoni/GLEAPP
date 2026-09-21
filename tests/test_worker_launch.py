@@ -5,7 +5,7 @@ looks for ``gleapp`` in the current directory first. From anywhere but the
 checkout root the child could not import it, so every video, GPU texture and
 Windows.edb read failed with no sign that the worker had never run. From a
 directory holding another ``gleapp`` package, the child ran that package's
-worker instead. Each test here runs the real worker through the call site
+worker instead. The launch tests run the real worker through the call site
 GLEAPP uses, with the working directory moved away from the checkout
 (``gleapp/workers.py`` has the launch).
 """

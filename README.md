@@ -543,7 +543,8 @@ gleapp/
   pipeline.py   orchestration: threaded workers, single DB writer
   report.py     CSV / JSON / HTML / KMZ export
   projectvic.py Project VIC 2.0 import + round-trip export
-  _vidworker.py / _texworker.py   isolated decode subprocesses
+  _vidworker.py / _texworker.py / _edbworker.py   isolated decode and read subprocesses
+  workers.py    starts them, from a frozen build or from source
   backup.py     case snapshots (auto + manual), pruning
   db.py         SQLite schema + helpers (one case = one file)
   case.py       case open/create + ingest-source spec parsing
