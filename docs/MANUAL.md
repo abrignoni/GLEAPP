@@ -781,7 +781,8 @@ decision; the stash holds only hashes of files **you** categorized.
 
 1. Work a case as normal: categorize files into codes 1, 2 and 3.
 2. Click **☰ Menu → Reference → Hash stash**. The panel shows how many of this case's
-   files are eligible (category 1-3 with an MD5) and the current stash totals.
+   files are eligible (category 1-3, with an MD5 other than an empty file's) and
+   the current stash totals.
 3. Click **Add this case's hashes to the stash**. Every eligible file's MD5 is
    saved with its code and the case name as the source note. The stash file is
    created on first use.

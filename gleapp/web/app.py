@@ -748,13 +748,16 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
 
     # ---- local hash stash (its own file - see gleapp/stash.py) -------
     def _stash_candidates(case):
-        """This case's files eligible for the stash: (md5, category) in 1-3."""
+        """This case's files eligible for the stash: (md5, category) in 1-3,
+        with an MD5 the stash keeps (``stash.normalize_md5``), so the count the
+        panel shows is the number Add submits."""
         from .. import stash
         ph = ",".join("?" * len(stash.STASH_CATEGORIES))
-        return case.db.conn.execute(
+        rows = case.db.conn.execute(
             f"SELECT md5, category FROM files WHERE category IN ({ph}) "
             "AND md5 IS NOT NULL AND md5 != ''",
             tuple(stash.STASH_CATEGORIES)).fetchall()
+        return [r for r in rows if stash.normalize_md5(r["md5"])]
 
     @app.get("/api/stash")
     def stash_status():
