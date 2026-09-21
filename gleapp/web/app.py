@@ -604,13 +604,20 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "known", "known-good", "other") else "known"
         name = str(data.get("name", "")).strip() or Path(raw).stem
         from .. import hashdb
-        # checked here so the examiner reads the reason, not "could not read"
-        refusal = hashdb.case_refusal(raw) or hashdb.kind_refusal(raw, kind)
+        # checked here so the examiner reads the reason, not "could not read".
+        # no_hash_refusal reads to the first hash, and through a file with none.
+        try:
+            refusal = (hashdb.case_refusal(raw) or hashdb.kind_refusal(raw, kind)
+                       or hashdb.no_hash_refusal(raw))
+        except (OSError, ValueError) as exc:
+            abort(400, description=f"could not read hash list: {exc}")
         if refusal:
             abort(400, description=refusal)
+        listed = hashdb.ListCounts()
         try:
             hs_id, added = hashdb.import_hashset(
-                case.db, raw, name=name, kind=kind, actor=case.examiner)
+                case.db, raw, name=name, kind=kind, actor=case.examiner,
+                counts=listed)
             counts = hashdb.algo_counts(case.db.conn, hs_id)
         except (OSError, ValueError, sqlite3.Error) as exc:
             abort(400, description=f"could not read hash list: {exc}")
@@ -619,12 +626,15 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "name": name, "kind": kind, "added": added,
             "source": Path(raw).name,  # basename only - never the full local path
             "photodna": counts.get(hashdb.PHOTODNA_ALGO, 0),
+            "skipped": listed.skipped,
         }))
         _rematch_job(case, f"Flagging files against {name}…")
         return jsonify({"ok": True, "id": hs_id, "name": name,
                         "kind": kind, "entries": added,
                         "photodna": counts.get(hashdb.PHOTODNA_ALGO, 0),
-                        "photodna_note": note})
+                        "photodna_note": note,
+                        "skipped": listed.skipped,
+                        "skipped_note": listed.skipped_note()})
 
     @app.post("/api/hashset/remove")
     def hashset_remove():
@@ -709,11 +719,16 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                     j.update(message=f"Merging {Path(src).name} onto "
                              f"{Path(base).name}…")
                     path = str(hashstore.apply_delta(base, src))
+                listed = hashdb.ListCounts()
                 _hs, added = hashstore.import_path(
-                    path, name=name, kind=kind, algos=algos,
+                    path, name=name, kind=kind,
+                    # the Store choice applies to a SQLite database, and
+                    # import_path refuses one for any other file
+                    algos=algos if hashdb.is_sqlite_file(path) else None,
                     progress=lambda seen, add: j.update(
                         done=add, message=f"{name}: {add:,} hashes stored "
-                        f"({seen:,} rows scanned)"))
+                        f"({seen:,} rows scanned)"),
+                    counts=listed)
                 hits = 0
                 if case is not None:
                     from ..pipeline import rematch_hashes
@@ -722,12 +737,15 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                             done=d, total=t,
                             message="Re-checking case files against known hashes…"))
                 note = hashdb.photodna_note(hashstore.algo_counts(_hs))
+                skipped = listed.skipped_note()
+                extras = " ".join(n for n in (skipped, note) if n)
                 j.update(running=False, stage="done",
                          stats={"entries": added, "hashset_hits": hits,
-                                "photodna_note": note},
+                                "photodna_note": note, "skipped": listed.skipped,
+                                "skipped_note": skipped},
                          message=f"{name}: {added:,} hashes imported"
                          + (f" — {hits} case hit(s)" if case is not None else "")
-                         + (f". {note}" if note else ""))
+                         + (f". {extras}" if extras else ""))
             except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                 j.update(running=False, stage="error",
                          error=f"{type(exc).__name__}: {exc}")

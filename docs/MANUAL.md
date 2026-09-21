@@ -549,8 +549,17 @@ them; the matches also appear in the report's known-hash section.
 
 Accepted files: a plain **MD5 / SHA-1 / SHA-256 list** (one per line, or
 `hash,category`), a **CSV / TSV**, a **Project VIC JSON**, or a **CAID**
-export. Hashes are matched case-insensitively; a header row or blank lines are
-ignored.
+export, in UTF-8 or ASCII, or in UTF-16 that starts with a byte-order mark
+(which Windows PowerShell 5.1 writes with `>` and `Out-File`). Hashes are
+matched case-insensitively. Blank lines are ignored. A line with no MD5, SHA-1
+or SHA-256 in its first column, such as a header row, is skipped, and the
+message after the import says how many lines were skipped.
+
+A file with **no hash to import** is refused with the reason, and nothing is
+added to the case: a picture or other binary file, a CSV whose first column
+holds no hash, an empty file, a JSON list whose records carry none, or a list
+holding only the hashes of an empty file. A set already in the case under that
+name is left as it was.
 
 A **SQLite hash database**, such as the NSRL RDS, is not accepted here. GLEAPP
 reads the file's first bytes, whatever its name, and refuses it with a message
@@ -569,6 +578,13 @@ The global store lives at `%LOCALAPPDATA%\GLEAPP\hashsets\` (macOS
 reference sets like the NSRL RDS once, instead of copying them into every
 `case.gleapp`. Accepted inputs: a SQLite `.db`, an NSRL `.sql` dump or
 `_delta.sql`, a Project VIC JSON, a CAID export, or a plain hash list.
+
+A file with no hash to import is refused here too, before anything is written,
+so a set already stored under that name stays as it was. After an import, the
+message says how many of a list's lines were skipped. **Store** in the **Add a
+set** form chooses which hashes to read from a SQLite database and does not
+apply to a text or JSON list. On the command line, `--algos` and `--table` are
+refused for a file that is not a SQLite database.
 
 Manage it from **☰ Menu → Reference → Reference data (NSRL)**, or the sidebar's
 **Known hashes → "Reference data: ... ▸" line**, which opens the
@@ -632,7 +648,9 @@ value and the category Project VIC assigned.
   as complete.
 - **Re-importing under a name the store already holds replaces that set.** Its
   old entries are cleared when the new import starts, so if the new file then
-  fails, that name is gone until a complete file is imported.
+  fails part-way, that name is gone until a complete file is imported. A file
+  with no hash in it at all is refused before the import starts, and the set
+  stays as it was.
 - **It is not evidence to ingest.** A hash set has no media files, so *Browse
   for JSON* on the launcher, or `gleapp ingest`, says it is a hash set and
   points here instead of reading the file.

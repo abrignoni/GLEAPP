@@ -2831,11 +2831,13 @@ $("#hiGo").onclick = async () => {
   $("#hiGo").disabled = false;
   if (r.error) return toast(r.message || "Import failed");
   $("#hashImportDlg").style.display = "none";
+  const notes = [r.skipped_note, r.photodna_note].filter(Boolean).join(" ");
   toast(`Imported ${r.entries.toLocaleString()} hashes as “${r.name}” — flagging files…`
-    + (r.photodna_note ? `. ${r.photodna_note}` : ""),
-    r.photodna_note ? 9000 : 0);
-  // a toast goes away, so the same fact also sits on the set's own row
-  // (pdnaBadge), in the case audit log, and in the LAVA export's Known Hash Sets
+    + (notes ? ` ${notes}` : ""),
+    notes ? 9000 : 0);
+  // a toast goes away, so the PhotoDNA fact also sits on the set's own row
+  // (pdnaBadge), in the case audit log, and in the LAVA export's Known Hash Sets;
+  // the skipped count is in the case audit log
   trackJob("#rehashInfo", "#taskProg", "Flagging files", async (ok, j) => {
     if (!ok) return;
     const hits = j.stats?.hashset_hits ?? 0;

@@ -139,25 +139,39 @@ def cmd_hashset(args: argparse.Namespace) -> int:
             last[0] = now
             _p(f"  … {seen:,} rows scanned, {added:,} unique hashes stored")
 
+    counts = hashdb.ListCounts()
     if args.to_global:
+        if (args.table or args.algos) and not hashdb.is_sqlite_file(src):
+            # Both choose what to read from a SQLite database. With a text or
+            # JSON list they used to be ignored, so --algos md5 still stored
+            # every SHA-256 the list held.
+            chosen = [flag for flag, value in (
+                ("--table", args.table), ("--algos", args.algos)) if value]
+            verb, them = ("applies", "it") if len(chosen) == 1 else ("apply", "them")
+            _p(f"error: {', '.join(chosen)} {verb} only to a SQLite hash database, "
+               f"and {Path(src).name} is not one; leave {them} off to import the list")
+            return 2
         hs_id, added = hashstore.import_path(
             src, name=name, kind=args.kind, table=args.table,
-            algos=algos, progress=prog)
+            algos=algos, progress=prog, counts=counts)
         _p(f"Imported '{name}' into the global store: {added:,} hashes.")
         note = hashdb.photodna_note(hashstore.algo_counts(hs_id))
     else:
         # checked before the case is opened, so a refused file creates no case
-        refusal = hashdb.case_refusal(src) or hashdb.kind_refusal(src, args.kind)
+        refusal = (hashdb.case_refusal(src) or hashdb.kind_refusal(src, args.kind)
+                   or hashdb.no_hash_refusal(src))
         if refusal:
             raise ValueError(refusal)
         case = open_case(args.case, create=True, examiner=args.examiner)
         hs_id, added = hashdb.import_hashset(
-            case.db, src, name=name, kind=args.kind, actor=case.examiner)
+            case.db, src, name=name, kind=args.kind, actor=case.examiner,
+            counts=counts)
         _p(f"Imported hash set '{name}' into the case: {added:,} entries.")
         note = hashdb.photodna_note(hashdb.algo_counts(case.db.conn, hs_id))
         case.close()
-    if note:
-        _p(f"  {note}")
+    for extra in (counts.skipped_note(), note):
+        if extra:
+            _p(f"  {extra}")
     return 0
 
 

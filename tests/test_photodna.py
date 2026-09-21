@@ -201,7 +201,8 @@ def test_delimited_lists_import_no_perceptual_column(tmp_path):
     """What a CSV/TSV import actually does, pinned because the module docstring
     used to claim this path read a pdna/phash column. It reads the first field
     only and takes it only at an md5/sha1/sha256 length, so neither a PhotoDNA
-    value nor a pHash comes in this way: a list of either imports as empty.
+    value nor a pHash comes in this way: a list of either holds no hash to
+    import, and it is refused rather than left behind as an empty set.
 
     Checked through the public import, so this is what an examiner handing over
     a CAID CSV gets, not what a helper returns.
@@ -216,9 +217,11 @@ def test_delimited_lists_import_no_perceptual_column(tmp_path):
         for name, text in lists.items():
             path = tmp_path / f"{name}.csv"
             path.write_text(text, encoding="utf-8")
-            hs_id, added = hashdb.import_hashset(case.db, path, name=name, kind="known")
-            assert added == 0, f"{name} imported something"
-            assert hashdb.algo_counts(case.db.conn, hs_id) == {}
+            with pytest.raises(ValueError, match="holds no hash to import"):
+                hashdb.import_hashset(case.db, path, name=name, kind="known")
+            assert case.db.conn.execute(
+                "SELECT COUNT(*) FROM hashsets WHERE name = ?", (name,)
+            ).fetchone()[0] == 0, f"{name} left a set behind"
 
         # the same file with an md5 in the first column imports that md5 alone
         with_md5 = tmp_path / "caid.csv"

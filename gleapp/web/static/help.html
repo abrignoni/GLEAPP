@@ -590,8 +590,15 @@ set's hits, or <strong>Any imported hash set</strong> for all of them; matches
 also appear in the report.</p>
 <p>Accepted: a plain <strong>MD5 / SHA-1 / SHA-256 list</strong> (one per line, or
 <code>hash,category</code>), a <strong>CSV / TSV</strong>, a <strong>Project&nbsp;VIC
-JSON</strong>, or a <strong>CAID</strong> export. Matching is case-insensitive; a
-header row and blank lines are ignored.</p>
+JSON</strong>, or a <strong>CAID</strong> export, in UTF-8 or ASCII, or in UTF-16 that starts
+with a byte-order mark (which Windows PowerShell 5.1 writes with <code>&gt;</code> and
+<code>Out-File</code>). Matching is case-insensitive. Blank lines are ignored. A line with no
+MD5, SHA-1 or SHA-256 in its first column, such as a header row, is skipped, and the message
+after the import says how many lines were skipped.</p>
+<p>A file with <strong>no hash to import</strong> is refused with the reason, and nothing is
+added to the case: a picture or other binary file, a CSV whose first column holds no hash, an
+empty file, a JSON list whose records carry none, or a list holding only the hashes of an empty
+file. A set already in the case under that name is left as it was.</p>
 <p>A <strong>SQLite hash database</strong>, such as the NSRL RDS, is not accepted here.
 GLEAPP reads the file's first bytes, whatever its name, and refuses it with a message
 that points you at the global store (below), which holds a reference set once for
@@ -610,6 +617,12 @@ an <strong>Add a set</strong> form. Accepts a SQLite <code>.db</code>, an NSRL
 <code>.sql</code> / delta, Project&nbsp;VIC JSON, CAID JSON, or a hash list. (The
 command line <code>gleapp hashset --global ...</code> does the same, from a source
 install.)</p>
+<p>A file with no hash to import is refused here too, before anything is written, so a set
+already stored under that name stays as it was. After an import, the message says how many of
+a list's lines were skipped. <strong>Store</strong> in the <strong>Add a set</strong> form
+chooses which hashes to read from a SQLite database and does not apply to a text or JSON list.
+On the command line, <code>--algos</code> and <code>--table</code> are refused for a file that
+is not a SQLite database.</p>
 
 <h3>Project VIC hash sets</h3>
 <p>A Project&nbsp;VIC hash set, such as the one a national VICS portal distributes, is a
@@ -672,8 +685,9 @@ category Project&nbsp;VIC assigned.</p>
   <li><strong>A file that ends part-way, such as a truncated download, fails the import</strong>
   and leaves no partial set behind, because a partial set would read as complete.</li>
   <li><strong>Re-importing under a name the store already holds replaces that set.</strong> Its
-  old entries are cleared when the new import starts, so if the new file then fails, that name
-  is gone until a complete file is imported.</li>
+  old entries are cleared when the new import starts, so if the new file then fails part-way,
+  that name is gone until a complete file is imported. A file with no hash in it at all is
+  refused before the import starts, and the set stays as it was.</li>
   <li><strong>It is not evidence to ingest.</strong> A hash set has no media files, so
   <em>Browse for JSON</em> on the launcher, or <code>gleapp ingest</code>, says it is a hash set
   and points here, instead of reading the file.</li>
