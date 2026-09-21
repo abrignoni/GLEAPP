@@ -449,7 +449,10 @@ def _video_failure_reason(path: str, fallback: str) -> str:
 
     An MP4's top-level boxes are walked across the whole file before any of
     them is called absent: an ordinary MP4 can keep its ``moov`` header after
-    the media data, at the end of the file.
+    the media data, at the end of the file. An MP4 holding both its header and
+    its media data is reported as exactly that. The caller's fallback texts
+    guess at a cause, truncation among them, and for such a file the walk
+    found no box running past the end of the file.
     """
     if str(path).lower().endswith(".stream_0_offset_key"):
         return "Snapchat streamed-video fragment - one chunk of a segmented download, not a whole clip"
@@ -463,8 +466,8 @@ def _video_failure_reason(path: str, fallback: str) -> str:
             names, end = _mp4_top_level_boxes(fh, os.fstat(fh.fileno()).st_size)
     except OSError:
         return fallback
+    has_moov, has_mdat = "moov" in names, "mdat" in names
     if end == "complete":
-        has_moov, has_mdat = "moov" in names, "mdat" in names
         if has_moov and not has_mdat:
             return "Fragmented-MP4 init segment - the media data lives in separate fragment files"
         if has_mdat and not has_moov:
@@ -473,6 +476,8 @@ def _video_failure_reason(path: str, fallback: str) -> str:
         return "Fragmented MP4 - incomplete (missing fragments) or unsupported by the decoder"
     if end == "truncated":
         return f"Truncated MP4 - the file ends partway through its '{names[-1]}' box"
+    if has_moov and has_mdat:        # presence holds however the walk ended
+        return "MP4 header and media data both present - no frames could be decoded"
     return fallback
 
 

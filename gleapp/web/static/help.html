@@ -932,11 +932,15 @@ metadata:</p>
   <tr><th>The Error column says</th><th>What it means</th></tr>
   <tr><td><em>Incomplete carve by the source tool</em></td><td>The file name ends in <code>_partial</code> / <code>_embedded_N</code>. The triage tool that built the export tried to carve an image out of a parent file and only got its header. <strong>The real image is in the parent file</strong>; ingest that (e.g. the <code>com.snap.file_manager_*_SCContent_</code> directory from the extraction) and GLEAPP will unpack it.</td></tr>
   <tr><td><em>Truncated PNG / JPEG - file header only, no image data</em></td><td>A valid signature and a few header bytes, then nothing.</td></tr>
+  <tr><td><em>Truncated MP4</em></td><td>The file ends inside one of its MP4 boxes, which the message names: the box declares more bytes than the file has left, so the rest of the file is missing.</td></tr>
   <tr><td><em>Proprietary app-asset container</em></td><td>An app's own texture/filter format (e.g. AR make-up filters), not a standard image.</td></tr>
   <tr><td><em>Snapchat streamed-video fragment</em> / <em>fragmented-MP4 init segment</em> / <em>MP4 media data with no header</em></td><td>A segmented download split across many files; no single file is a playable clip. Reassembling them is an upstream task.</td></tr>
   <tr><td><em>Malformed HEIC/HEIF - declared and decoded image sizes disagree</em></td><td>The file is malformed: the image size it declares and the size it decodes to differ.</td></tr>
   <tr><td><em>Audio-frame fragment</em> / <em>gzip-compressed web-cache data</em></td><td>Not an image or video at all, despite the extension.</td></tr>
 </table>
+<p>A video that holds both its MP4 header (<code>moov</code>) and its media data
+(<code>mdat</code>) but still gives no frames is labelled <em>MP4 header and media data both
+present - no frames could be decoded</em>; GLEAPP does not establish why.</p>
 
 <h2 id="reports">14. Reports &amp; exports</h2>
 <p><strong>Export report</strong> opens a dialog: choose a <strong>scope</strong>

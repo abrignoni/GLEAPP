@@ -8,6 +8,11 @@ data with no header" whenever it failed to decode for some other reason. A
 moov-first file whose ``moov`` ran past 8 KB was reported as an init segment
 the same way, and a 64-bit ``mdat`` header ended the walk early. The text is
 stored in ``files.error``, and the JSON report carries it.
+
+An MP4 holding both its header and its media data now says exactly that. It
+used to take the caller's fallback text, and the one for a clip that gave no
+frames guessed "truncated" for a file in which the walk found no box running
+past the end.
 """
 
 import struct
@@ -23,6 +28,7 @@ NO_FRAMES = "no video frames could be read (truncated or unsupported)"
 NO_HEADER = "MP4 media data with no header - can't be decoded without its init segment"
 INIT_SEGMENT = "Fragmented-MP4 init segment - the media data lives in separate fragment files"
 FRAGMENTED = "Fragmented MP4 - incomplete (missing fragments) or unsupported by the decoder"
+BOTH_PRESENT = "MP4 header and media data both present - no frames could be decoded"
 
 
 def _box(kind: bytes, payload: bytes = b"") -> bytes:
@@ -58,15 +64,26 @@ def test_an_encoder_written_mp4_with_its_moov_at_the_end_is_not_called_headerles
     data = p.read_bytes()
     # the premise: the file has a header, and it lies past the first 8 KB
     assert data[4:8] == b"ftyp" and b"moov" in data[8192:] and b"moov" not in data[:8192]
-    assert _video_failure_reason(str(p), FALLBACK) == FALLBACK
+    assert _video_failure_reason(str(p), FALLBACK) == BOTH_PRESENT
 
 
-def test_the_stored_error_does_not_say_a_moov_at_end_clip_has_no_header(tmp_path):
+def test_the_stored_error_for_a_moov_at_end_clip_neither_denies_its_header_nor_guesses(tmp_path):
     row = {"id": 1, "md5": None, "path": _file(tmp_path, MOOV_AT_END)}
-    for res, expected in ((None, FALLBACK), ({"info": {}, "frames": []}, NO_FRAMES)):
+    for res in ({"info": {}, "frames": []}, None):
         payload = _video_result_to_payload(row, res, screen=False)
         assert payload["status"] == "error"
-        assert payload["fields"]["error"] == expected
+        assert payload["fields"]["error"] == BOTH_PRESENT
+        assert "truncated" not in payload["fields"]["error"].lower()
+
+
+def test_a_video_that_is_not_an_mp4_keeps_the_callers_text(tmp_path):
+    """No box walk runs on it, so nothing has ruled truncation out."""
+    p = tmp_path / "clip.avi"
+    p.write_bytes(b"RIFF" + bytes(4_000))
+    row = {"id": 1, "md5": None, "path": str(p)}
+    assert _video_result_to_payload(row, None, screen=False)["fields"]["error"] == FALLBACK
+    no_frames = _video_result_to_payload(row, {"info": {}, "frames": []}, screen=False)
+    assert no_frames["fields"]["error"] == NO_FRAMES
 
 
 @pytest.mark.parametrize("layout", [
@@ -75,9 +92,11 @@ def test_the_stored_error_does_not_say_a_moov_at_end_clip_has_no_header(tmp_path
                  id="moov first and past 8 KB"),
     pytest.param(FTYP + _box64(b"mdat", bytes(500)) + _box(b"moov", bytes(500)),
                  id="64-bit mdat header then moov"),
+    pytest.param(MOOV_AT_END + struct.pack(">I", 64) + b"\x07\x01\xfe\x80" + bytes(56),
+                 id="both, then a tail that cannot be a box"),
 ])
-def test_an_mp4_holding_both_a_header_and_media_data_gets_the_fallback(tmp_path, layout):
-    assert _video_failure_reason(_file(tmp_path, layout), FALLBACK) == FALLBACK
+def test_an_mp4_holding_both_a_header_and_media_data_says_so(tmp_path, layout):
+    assert _video_failure_reason(_file(tmp_path, layout), FALLBACK) == BOTH_PRESENT
 
 
 @pytest.mark.parametrize("layout, box", [

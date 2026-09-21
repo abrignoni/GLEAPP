@@ -910,10 +910,15 @@ the MD5, VIC MediaID, size and other metadata:
 |---|---|
 | *Incomplete carve by the source tool* | The file name ends in `_partial` / `_embedded_N`. The triage tool that built the export tried to carve an image out of a parent file and only got its header. **The real image is in the parent file**; ingest that (e.g. the `com.snap.file_manager_*_SCContent_` directory from the extraction) and GLEAPP will unpack it. |
 | *Truncated PNG / JPEG - file header only, no image data* | A valid signature and a few header bytes, then nothing. |
+| *Truncated MP4* | The file ends inside one of its MP4 boxes, which the message names: the box declares more bytes than the file has left, so the rest of the file is missing. |
 | *Proprietary app-asset container* | An app's own texture/filter format (e.g. AR make-up filters), not a standard image. |
 | *Snapchat streamed-video fragment* / *fragmented-MP4 init segment* / *MP4 media data with no header* | A segmented download split across many files; no single file is a playable clip. Reassembling them is an upstream task. |
 | *Malformed HEIC/HEIF - declared and decoded image sizes disagree* | The file is malformed: the image size it declares and the size it decodes to differ. |
 | *Audio-frame fragment* / *gzip-compressed web-cache data* | Not an image or video at all, despite the extension. |
+
+A video that holds both its MP4 header (`moov`) and its media data (`mdat`) but still
+gives no frames is labelled *MP4 header and media data both present - no frames could be
+decoded*; GLEAPP does not establish why.
 
 ## 14. Reports & exports
 
