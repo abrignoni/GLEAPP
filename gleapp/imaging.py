@@ -536,7 +536,8 @@ def transcode_isolated(src: str | Path, dest: Path, *, max_side: int = 2200,
                        timeout: int = 40) -> bool:
     """Decode ``src`` to a JPEG at ``dest`` in a child process (crash-safe)."""
     import subprocess
-    import sys
+
+    from .workers import worker_command
 
     src, dest = str(src), Path(dest)
     if dest.exists():
@@ -544,11 +545,7 @@ def transcode_isolated(src: str | Path, dest: Path, *, max_side: int = 2200,
     if Path(src).suffix.lower() not in RISKY_EXTS:
         return to_web_jpeg(src, dest, max_side=max_side)   # safe in-process
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "--texworker"]
-    else:
-        cmd = [sys.executable, "-m", "gleapp._texworker"]
-    cmd += [src, str(dest), str(max_side)]
+    cmd = worker_command("texworker") + [src, str(dest), str(max_side)]
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError):

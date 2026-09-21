@@ -84,6 +84,21 @@ on any platform; a `gleapp.icns` and a `gleapp.ico` there are picked up automati
 the desktop shell is imported. `--texworker <in> <out> <max_side>` decodes an image inside
 the frozen bundle with no window. Both are what CI uses to prove a build actually runs.
 
+## A source run's workers import this package, never the working directory's
+
+Video decoding, GPU-texture decoding and the Windows.edb read each run in a child process.
+A source run started them as `python -m gleapp._vidworker` and so on, and `-m` searches the
+current directory first. Started as `python /path/to/GLEAPP/gleapp.py` from any other
+directory, every child died on `ModuleNotFoundError`, and nothing said the worker had never
+run: a clip that decodes from the checkout root came back with a decode error, no
+thumbnail and no duration. Started from a directory holding another `gleapp` package, the
+child ran that package's worker. `gleapp/workers.py` now starts `python -c` with a
+bootstrap that puts this package's parent directory first on `sys.path`, takes the current
+directory off it, and calls the worker's `main()`, which is what the frozen entry point
+does. `tests/test_worker_launch.py` runs all three workers from an empty directory and
+from one holding a decoy package, with a control proving the decoy is live; all six fail
+on the code before the change. Do not go back to `-m`.
+
 ## Paths
 
 Never publish an absolute path from the examiner's machine into a report or an export.

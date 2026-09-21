@@ -129,15 +129,13 @@ def edb_map_isolated(path: str | Path, *, timeout: int = 60) -> dict[int, tuple[
     """
     import json as _json
     import subprocess
-    import sys
 
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "--edbworker"]
-    else:
-        cmd = [sys.executable, "-m", "gleapp._edbworker"]
+    from .workers import worker_command
+
     try:
-        r = subprocess.run(cmd + [str(path)], capture_output=True, text=True,
-                          timeout=timeout, check=False)
+        r = subprocess.run(worker_command("edbworker") + [str(path)],
+                           capture_output=True, text=True, timeout=timeout,
+                           check=False)
     except (subprocess.TimeoutExpired, OSError):
         return {}
     if r.returncode != 0 or not r.stdout.strip():
