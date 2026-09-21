@@ -2106,6 +2106,7 @@ def _run_job(state: dict, sources, opts: dict) -> None:
         n = ingest_sources(
             case, sources,
             progress=lambda k: job.update(done=k, message=f"Registering files… {k:,}"),
+            expand_archives=bool(opts.get("expand_archives", True)),
         )
         if n:
             # now that the case has content, it's worth remembering

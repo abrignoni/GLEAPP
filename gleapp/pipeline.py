@@ -54,12 +54,17 @@ class RunStats:
         return self.__dict__.copy()
 
 
-def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
+def ingest_sources(case: Case, sources: list[Source], *, progress=None,
+                   expand_archives: bool = True) -> int:
     """Discover files from each source and register them in the DB.
 
     ``progress(n)`` (optional) is called every ~200 files with the running
     count, and the DB is committed at the same cadence so the web UI can show
     files as they are registered rather than only when the whole scan ends.
+
+    ``expand_archives`` opens each archive found inside a source and registers the
+    media in it. Off, the archives are still registered as containers and can be
+    opened later with :func:`gleapp.nested.expand_containers` (Expand archives).
     """
     from . import projectvic
 
@@ -108,10 +113,13 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None) -> int:
     }))
 
     # A .zip / .tar / .gz sitting inside a source is registered as a container;
-    # open it now so its media is processed in the same pass.
-    added = nested.expand_containers(
-        case, progress=(lambda k: progress(n + k)) if progress else None,
-        include_other=any(getattr(s, "include_other", False) for s in sources))
+    # open it now so its media is processed in the same pass, unless the caller
+    # asked not to (a full-filesystem extraction can hold many thousands).
+    added = 0
+    if expand_archives:
+        added = nested.expand_containers(
+            case, progress=(lambda k: progress(n + k)) if progress else None,
+            include_other=any(getattr(s, "include_other", False) for s in sources))
 
     # A cached thumbnail extracted just above has no name of its own; if this
     # source also carried a Windows Search index, try to name it. Best-effort:

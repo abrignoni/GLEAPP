@@ -83,6 +83,12 @@ signals only. Every category decision is the examiner's.</p>
   <li><em>Video preview key frames</em>: default 6.</li>
   <li><em>Copy media out of extraction archives</em>: off keeps the case small but the
   archive must stay in place. On makes the case self-contained.</li>
+  <li><em>Expand archives found inside the sources</em>: off by default. Opens each
+  <code>.zip</code>, <code>.7z</code>, <code>.tar</code> or <code>.gz</code> found inside a
+  source and registers the images and videos in it. Leave it off for a full file-system
+  extraction that holds many compressed files, and open them later with <strong>Expand
+  archives</strong> in the sidebar (&sect;16). The <strong>+&nbsp;Add evidence</strong> dialog
+  has the same box.</li>
   <li><em>Recover media</em>: disk images only, off by default (&sect;16).</li>
   <li><em>Enable hash stash matching</em>: on by default. Turn it off for a case that isn't
   CSAM / Project VIC related, so an old stashed hit can't re-flag unrelated media. You can
@@ -868,7 +874,8 @@ gleapp stash --clear</code></pre>
 <p>A <code>.zip</code>, <code>.tar</code>, <code>.tar.gz</code> (or a bare <code>.gz</code> /
 <code>.bz2</code> / <code>.xz</code>, or a <code>.tgz</code> / <code>.tbz2</code> /
 <code>.txz</code>) or <strong>.7z</strong> sitting in a folder or on a walked E01 filesystem is
-opened automatically at ingest. Archives nested inside archives are followed.</p>
+opened at ingest when <em>Expand archives found inside the sources</em> is ticked.
+Archives nested inside archives are followed.</p>
 <ul>
   <li>Its image and video members are written to <code>extracted/&lt;id&gt;/</code> and registered
   as ordinary rows, named <code>&lt;archive&gt;/&lt;member&gt;</code>, linked back to the
@@ -881,7 +888,7 @@ opened automatically at ingest. Archives nested inside archives are followed.</p
   external <code>unrar</code> binary a self-contained build can't carry), so the container row is
   flagged so you know to extract it separately.</li>
   <li>Encrypted members (and password-protected <code>.7z</code>) are skipped and counted.</li>
-  <li>To run this on a case that was ingested earlier, use <strong>Expand archives</strong> in the
+  <li>Unticked, or on a case that was ingested earlier, use <strong>Expand archives</strong> in the
   sidebar (&sect;16).</li>
 </ul>
 
@@ -1031,8 +1038,9 @@ text) and size:</p>
   <li><strong>Expand archives</strong>: shown below the Source list when the case
   holds any <code>.zip</code> / <code>.tar</code> / <code>.gz</code>. Opens each
   one not expanded yet and processes what comes out; <strong>Re-check
-  archives</strong> re-opens them all. Archives expand automatically at ingest;
-  this is for a case ingested before that.</li>
+  archives</strong> re-opens them all. Archives expand at ingest only when <em>Expand archives
+  found inside the sources</em> is ticked; use this when it was not, or for a case ingested
+  before that option existed.</li>
 </ul>
 <p>Each reports progress next to its own button. A full reprocess is available from
 the command line (<code>gleapp process --force</code>).</p>
