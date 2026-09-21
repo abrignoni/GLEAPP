@@ -592,6 +592,10 @@ also appear in the report.</p>
 <code>hash,category</code>), a <strong>CSV / TSV</strong>, a <strong>Project&nbsp;VIC
 JSON</strong>, or a <strong>CAID</strong> export. Matching is case-insensitive; a
 header row and blank lines are ignored.</p>
+<p>A <strong>SQLite hash database</strong>, such as the NSRL RDS, is not accepted here.
+GLEAPP reads the file's first bytes, whatever its name, and refuses it with a message
+that points you at the global store (below), which holds a reference set once for
+every case. Nothing is added to the case.</p>
 <p><strong>Re-check</strong> (next to <em>Import hash set...</em>) re-runs matching
 against every loaded set: case sets, the global store, and the local hash stash,
 without a full reprocess.</p>

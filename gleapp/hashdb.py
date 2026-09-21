@@ -11,6 +11,10 @@ Supported input formats
   reads no other column, so a delimited list's PhotoDNA or pHash column is not
   imported; those come in through the JSON form above.
 
+A **SQLite hash database** (the NSRL RDS, say) is not a case input: it goes
+into the global store (``gleapp.hashstore``), which every case is matched
+against, and ``import_hashset`` refuses one (see ``case_refusal``).
+
 Matching order per file: sha256 -> sha1 -> md5 -> phash (Hamming <= threshold).
 
 **PhotoDNA is stored, not matched.** It is a 144-byte robust hash, unrelated to
@@ -38,6 +42,10 @@ _ALGO_BY_LEN = {32: "md5", 40: "sha1", 64: "sha256"}
 # Project VIC and CAID spell the field either way; both hold a PhotoDNA value.
 _PHOTODNA_FIELDS = ("photodna", "pdna")
 _PHASH_FIELDS = ("phash",)
+
+# Every valid SQLite database file begins with these 16 bytes, the magic header
+# string of https://www.sqlite.org/fileformat.html (section 1.3.1).
+_SQLITE_HEADER = b"SQLite format 3\x00"
 
 
 def _algo_for(value: str) -> str | None:
@@ -200,6 +208,34 @@ def kind_refusal(path: str | Path, kind: str) -> str | None:
             "known-good: as known-good its matches would carry the benign badge "
             "and an uncategorized match would be moved to Non-pertinent.")
 
+
+def is_sqlite_file(path: str | Path) -> bool:
+    """True when ``path`` is a SQLite database, decided by its first bytes and
+    never by its name. Raises ``OSError`` when the file cannot be read."""
+    with open(path, "rb") as fh:
+        return fh.read(len(_SQLITE_HEADER)) == _SQLITE_HEADER
+
+
+def case_refusal(path: str | Path) -> str | None:
+    """Why ``path`` cannot be imported into a case, or None when it can.
+
+    A SQLite hash database, such as the NSRL RDS, goes into the global store,
+    which holds it once for every case. A copy in a case would add to
+    ``case.gleapp`` and to every backup snapshot of it, since a snapshot is a
+    full copy of that file. The case reader takes text lists and JSON, and it
+    would read a SQLite file as text, which reads none of its tables: an
+    NSRL-shaped database imported that way reported 0 entries and left an empty
+    set behind.
+    """
+    if not is_sqlite_file(path):
+        return None
+    return (f"{Path(path).name} is a SQLite database. A case imports hash lists "
+            "(text, CSV or TSV, Project VIC or CAID JSON); a SQLite hash database "
+            "such as the NSRL RDS goes into the global store, which every case is "
+            "matched against. Import it there: Reference data (NSRL), Add a set; "
+            "from the command line, gleapp hashset <file> --global.")
+
+
 def photodna_note(counts: Mapping[str, int] | None) -> str:
     """One sentence naming the PhotoDNA entries a set holds and why nothing
     matches them, or "" when the set holds none.
@@ -225,11 +261,13 @@ def import_hashset(
 ) -> tuple[int, int]:
     """Import a hash list into the case. Returns (hashset_id, entries_added).
 
-    The file is read as it is imported, never loaded whole.
+    The file is read as it is imported, never loaded whole. A file the case
+    cannot take (``case_refusal``, ``kind_refusal``) raises ``ValueError``
+    before any set is created.
     """
     path = Path(path)
     name = name or path.stem
-    refusal = kind_refusal(path, kind)
+    refusal = case_refusal(path) or kind_refusal(path, kind)
     if refusal:
         raise ValueError(refusal)
     details = None

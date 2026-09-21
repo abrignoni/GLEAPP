@@ -604,7 +604,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "known", "known-good", "other") else "known"
         name = str(data.get("name", "")).strip() or Path(raw).stem
         from .. import hashdb
-        refusal = hashdb.kind_refusal(raw, kind)
+        # checked here so the examiner reads the reason, not "could not read"
+        refusal = hashdb.case_refusal(raw) or hashdb.kind_refusal(raw, kind)
         if refusal:
             abort(400, description=refusal)
         try:
