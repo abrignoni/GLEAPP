@@ -187,7 +187,11 @@ def _migrate_from_global(c: sqlite3.Connection) -> None:
 
 
 # -- normalise --------------------------------------------------------------
-def _md5(value: object) -> str | None:
+def normalize_md5(value: object) -> str | None:
+    """The MD5 as the stash keeps it, in lower case, or None for a value it
+    refuses: anything that is not 32 hex characters, and the MD5 of an empty
+    file. ``add`` and ``lookup`` both go through it, and so does the count of a
+    case's eligible files, so that count is what ``add`` submits."""
     if value is None:
         return None
     v = str(value).strip().lower()
@@ -215,7 +219,7 @@ def _load_cache() -> dict[str, dict]:
 
 def lookup(md5: str) -> dict | None:
     """{'category', 'source'} for a stashed MD5, or None."""
-    v = _md5(md5)
+    v = normalize_md5(md5)
     return (_load_cache() or {}).get(v) if v else None
 
 
@@ -263,7 +267,7 @@ def add(entries) -> dict:
     for e in entries:
         md5, cat = e[0], e[1]
         src = e[2] if len(e) > 2 else None
-        v = _md5(md5)
+        v = normalize_md5(md5)
         try:
             cat = int(cat)
         except (TypeError, ValueError):
@@ -340,7 +344,7 @@ def merge(src: str | Path) -> dict:
     else:
         with open(src, newline="", encoding="utf-8", errors="replace") as fh:
             for row in csv.reader(fh):
-                if not row or not _md5(row[0]):
+                if not row or not normalize_md5(row[0]):
                     continue                       # skips a header row too
                 cat = row[1].strip() if len(row) > 1 else ""
                 if cat.isdigit():

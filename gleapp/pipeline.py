@@ -350,7 +350,8 @@ def rematch_hashes(case: Case, *, progress=None) -> int:
     from .db import NONPERTINENT_CATEGORY
     use_stash = case.db.get_meta("use_stash") != "0"
     use_vic = case.db.get_meta("use_vic") != "0"
-    rows = list(case.db.iter_files("md5 IS NOT NULL OR sha256 IS NOT NULL"))
+    rows = list(case.db.iter_files(
+        "md5 IS NOT NULL OR sha1 IS NOT NULL OR sha256 IS NOT NULL"))
     total, hits = len(rows), 0
     for i, r in enumerate(rows, 1):
         found = hashdb.match_all(case.db, r, use_stash=use_stash, use_vic=use_vic)
