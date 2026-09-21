@@ -361,18 +361,31 @@ Import into **this case** (sidebar **Known hashes → Import hash set…**, or
 * **CSV / text** – the first field of each line, taken as a hash at 32, 40 or 64 hex
   characters (32→md5, 40→sha1, 64→sha256), with an optional `,category` after it. No
   other column is read, so a delimited list's PhotoDNA or pHash column does not come
-  in this way; use the JSON form for those.
+  in this way; use the JSON form for those. UTF-8 and ASCII are read, and UTF-16 that
+  starts with a byte-order mark, which Windows PowerShell 5.1 writes with `>` and
+  `Out-File`.
 * **SQLite database**, global store only – any table/view with `md5` / `sha1` /
   `sha256` columns. A case import refuses one and names the global store, which
   holds a reference set once for every case rather than a copy in each
   `case.gleapp` and in each of its backup snapshots. `--table`, `--algos` and the
-  NSRL options below need `--global`.
+  NSRL options below need `--global`. `--table` and `--algos` choose what to read
+  from a SQLite database, and are refused for any other file.
   For the **NSRL RDS**: import the yearly full `.db` directly; a quarterly
   `_delta.sql` merges onto the previous full `.db` before importing (the merge
   uses the `sqlite3` CLI if present, otherwise a built-in fallback, so it works
   from the frozen app). `--schema`/`--full` builds a `.db` from `.sql` dumps.
   Limit which hashes to store (MD5 alone roughly halves the store). `--list` /
   `--rm ID` (or the sidebar list) manage the global store.
+
+A file with no hash to import is refused, whether it goes into a case or the global
+store: a picture or other binary file, a CSV whose first column holds no hash, an empty file,
+a JSON list whose records carry none, or a list holding only the hashes of an empty
+file. The command exits 2 with the reason, the dialogs show it, and nothing is
+written: no empty set is left behind, and a set already stored under that name stays
+as it was. When only some lines (or JSON records) hold no hash, the rest are imported
+and the result says how many were skipped; a header row counts as one. The count an
+import reports is the entries it stored: a hash listed twice counts once, and a case
+import into a set of the same name counts only the hashes the set did not hold.
 
 `--kind known` flags matches as notable; `--kind known-good` marks benign files
 (NSRL etc.): a hit auto-categorizes an uncategorized file **Non-pertinent** and
