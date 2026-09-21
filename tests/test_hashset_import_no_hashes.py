@@ -402,6 +402,7 @@ def test_the_case_dialog_reports_the_skipped_lines(tmp_path):
 
 
 def test_reference_data_refuses_a_file_with_no_hash_and_keeps_the_set(tmp_path):
+    """Refused before the job starts, so the dialog stays open with the reason."""
     from gleapp.web.app import create_app       # pylint: disable=import-outside-toplevel
     cl = create_app(None).test_client()
     _hs, stored = hashstore.import_path(_md5_list(tmp_path / "list.txt"),
@@ -410,10 +411,9 @@ def test_reference_data_refuses_a_file_with_no_hash_and_keeps_the_set(tmp_path):
     r = cl.post("/api/hashset/global/import", json={
         "path": str(_png(tmp_path / "picture.png")), "name": "Reference",
         "kind": "known-good", "algos": ["md5"]})
-    assert r.status_code == 200, r.get_json()
-    job = _wait_job(cl)
-    assert job["stage"] == "error", job
-    assert "picture.png is not a text hash list" in job["error"]
+    assert r.status_code == 400, r.get_json()
+    assert r.get_json()["message"].startswith("picture.png is not a text hash list")
+    assert not cl.get("/api/job").get_json()["running"]
     (only,) = hashstore.summary()["sets"]
     assert only["count"] == len(_MD5S)
 
