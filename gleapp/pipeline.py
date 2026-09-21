@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import struct
 import threading
 import time
@@ -398,42 +399,80 @@ def rematch_hashes(case: Case, *, progress=None) -> int:
     return hits
 
 
-def _mp4_box_names(raw: bytes, limit: int = 40) -> list[str]:
-    i, out = 0, []
-    while i + 8 <= len(raw) and len(out) < limit:
-        try:
-            size = struct.unpack_from(">I", raw, i)[0]
-        except struct.error:
-            break
-        out.append(raw[i + 4:i + 8].decode("latin1", "replace"))
-        if size < 8:
-            break
-        i += size
-    return out
+def _mp4_top_level_boxes(fh, file_size: int, limit: int = 100_000) -> tuple[list[str], str]:
+    """The top-level box types of an MP4, walked by their declared sizes.
+
+    Each header is read and the walk seeks past the box, so the whole file is
+    covered without reading it. Returns the types in file order and how the
+    walk ended: ``"complete"`` when the boxes account for the file up to its
+    end, or up to fewer than eight trailing bytes, which cannot hold a box;
+    ``"truncated"`` when the last type listed belongs to a box that runs past
+    the end of the file; and ``"unreadable"`` when a header cannot be a box (a
+    size smaller than the header itself, or a type that is not four printable
+    ASCII characters, which is taken as data rather than a header) or ``limit``
+    boxes were read. Only a complete walk shows that a box is absent.
+    """
+    names: list[str] = []
+    pos = 0
+    while file_size - pos >= 8:
+        if len(names) >= limit:
+            return names, "unreadable"
+        fh.seek(pos)
+        head = fh.read(16)
+        if len(head) < 8:
+            return names, "unreadable"
+        size, kind = struct.unpack_from(">I4s", head)
+        if not all(0x20 <= b <= 0x7E for b in kind):
+            return names, "unreadable"
+        name = kind.decode("ascii")
+        if size == 1:                     # the size is the 64-bit field after the type
+            if len(head) < 16:
+                return names + [name], "truncated"
+            size = struct.unpack_from(">Q", head, 8)[0]
+            if size < 16:
+                return names, "unreadable"
+        elif size == 0:                   # the box runs to the end of the file
+            size = file_size - pos
+        elif size < 8:
+            return names, "unreadable"
+        names.append(name)
+        if pos + size > file_size:
+            return names, "truncated"
+        pos += size
+    return names, "complete"
 
 
 def _video_failure_reason(path: str, fallback: str) -> str:
     """Say *why* a video wouldn't decode - most of these are Snapchat's
     segmented streaming cache (an init segment plus byte-range fragments),
-    not standalone playable files."""
+    not standalone playable files.
+
+    An MP4's top-level boxes are walked across the whole file before any of
+    them is called absent: an ordinary MP4 can keep its ``moov`` header after
+    the media data, at the end of the file.
+    """
     if str(path).lower().endswith(".stream_0_offset_key"):
         return "Snapchat streamed-video fragment - one chunk of a segmented download, not a whole clip"
     try:
         with open(path, "rb") as fh:
-            raw = fh.read(8192)
+            head = fh.read(8)
+            if head[:2] in (b"\xff\xf3", b"\xff\xf2", b"\xff\xfb"):
+                return "Audio-frame fragment - contains no video"
+            if head[4:8] != b"ftyp":
+                return fallback
+            names, end = _mp4_top_level_boxes(fh, os.fstat(fh.fileno()).st_size)
     except OSError:
         return fallback
-    if raw[:2] in (b"\xff\xf3", b"\xff\xf2", b"\xff\xfb"):
-        return "Audio-frame fragment - contains no video"
-    if raw[4:8] == b"ftyp":
-        names = _mp4_box_names(raw)
+    if end == "complete":
         has_moov, has_mdat = "moov" in names, "mdat" in names
         if has_moov and not has_mdat:
             return "Fragmented-MP4 init segment - the media data lives in separate fragment files"
         if has_mdat and not has_moov:
             return "MP4 media data with no header - can't be decoded without its init segment"
-        if "moof" in names:
-            return "Fragmented MP4 - incomplete (missing fragments) or unsupported by the decoder"
+    if "moof" in names:
+        return "Fragmented MP4 - incomplete (missing fragments) or unsupported by the decoder"
+    if end == "truncated":
+        return f"Truncated MP4 - the file ends partway through its '{names[-1]}' box"
     return fallback
 
 

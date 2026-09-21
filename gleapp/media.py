@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from . import imaging
+from .workers import worker_command
 
 THUMB_SIZE = (320, 320)
 
@@ -52,13 +53,6 @@ def _frame_to_pil(frame: np.ndarray) -> Image.Image:
     return Image.fromarray(rgb)
 
 
-def _vidworker_cmd() -> list[str]:
-    import sys
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "--vidworker"]
-    return [sys.executable, "-m", "gleapp._vidworker"]
-
-
 def extract_video_isolated(path: str | Path, thumb_dir: Path, *,
                            count: int, screen: bool, timeout: int = 120) -> dict | None:
     """Probe + key frames in a child process; None if it crashes/hangs/times out."""
@@ -66,8 +60,8 @@ def extract_video_isolated(path: str | Path, thumb_dir: Path, *,
     import subprocess
 
     thumb_dir.mkdir(parents=True, exist_ok=True)
-    cmd = _vidworker_cmd() + [str(path), str(thumb_dir), str(count),
-                              "1" if screen else "0"]
+    cmd = worker_command("vidworker") + [str(path), str(thumb_dir), str(count),
+                                         "1" if screen else "0"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError):
@@ -102,8 +96,8 @@ def extract_videos_batch(paths: list[str], thumb_dir: Path, *, count: int,
     try:
         _json.dump(paths, lf)
         lf.close()
-        cmd = _vidworker_cmd() + ["--batch", lf.name, str(thumb_dir),
-                                  str(count), "1" if screen else "0"]
+        cmd = worker_command("vidworker") + ["--batch", lf.name, str(thumb_dir),
+                                             str(count), "1" if screen else "0"]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             lines = (r.stdout or "").splitlines()
