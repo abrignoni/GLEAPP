@@ -116,6 +116,30 @@ def test_build_only_packages_are_not_credited(only_fakes):
     assert entries == [], "build-only packages must not appear in the notices"
 
 
+def test_gleapps_own_distribution_is_not_described_a_second_time(tmp_path, only_fakes):
+    """REPO_NOTICES already carries GLEAPP's LICENSE and every text its wheel ships.
+
+    Every CI job and the frozen build install GLEAPP editable, so its own
+    distribution is among the installed ones, and its dist-info holds the texts
+    pyproject.toml's license-files names. Described as a package it printed GLEAPP's
+    LICENSE a second time, and with the vendored and map texts in license-files it
+    would have repeated each of those too.
+    """
+    licence = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    dist_licence = tmp_path / "gleapp_forensics-0.1.0.dist-info" / "licenses" / "LICENSE"
+    dist_licence.parent.mkdir(parents=True)
+    dist_licence.write_text(licence, encoding="utf-8")
+    own = _FakeDist(make_notices.OWN_DISTRIBUTION, "0.1.0",
+                    files=["gleapp_forensics-0.1.0.dist-info/licenses/LICENSE"],
+                    base=tmp_path, License_Expression="MIT AND Apache-1.1")
+    only_fakes([own])
+    assert make_notices.installed_entries() == []
+    text, unknown = make_notices.build_notices(only={make_notices.OWN_DISTRIBUTION}, root=ROOT)
+    assert unknown == []
+    assert f"{make_notices.OWN_DISTRIBUTION} 0.1.0" not in text
+    assert text.count(licence.strip()) == 1
+
+
 def test_the_webview2_terms_travel_with_the_binaries_that_need_them(only_fakes):
     """pywebview ships Microsoft's WebView2 assemblies and none of their terms.
 
