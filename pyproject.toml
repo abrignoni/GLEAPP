@@ -37,8 +37,16 @@ gleapp-desktop = "gleapp.desktop:main"
 [tool.setuptools.packages.find]
 include = ["gleapp*"]
 
+# Paths are relative to gleapp/. Every tracked file under gleapp/ belongs in the
+# wheel: tools/check_wheel.py builds one in CI and fails if any is left out.
 [tool.setuptools.package-data]
-gleapp = ["web/templates/*", "web/static/*", "models/*.onnx"]
+gleapp = [
+    "web/templates/**/*",
+    "web/static/**/*",
+    "models/**/*",
+    "vendor/LICENSE-*",
+    "vendor/vendored.json",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
