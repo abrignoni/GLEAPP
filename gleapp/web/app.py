@@ -140,7 +140,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             case = state["case"]
             if case is None or not getattr(case.db, "dirty", False):
                 continue
-            due = time.time() - state["last_backup"] >= backup.AUTO_INTERVAL_MIN * 60
+            every = backup.interval_min(case)
+            if not every:                        # examiner turned timed snapshots off
+                continue
+            due = time.time() - state["last_backup"] >= every * 60
             quiet = time.time() - case.db.last_write >= 20  # let edits settle
             if due and quiet:
                 try:
@@ -2032,12 +2035,40 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "dirty": bool(getattr(case.db, "dirty", False)) if case else False,
             "last_write": case.db.last_write if case else 0,
             "last_backup": state["last_backup"],
-            "auto_interval_min": backup.AUTO_INTERVAL_MIN,
+            "auto_interval_min": backup.interval_min(case) if case else backup.AUTO_INTERVAL_MIN,
         })
 
     @app.get("/api/snapshots")
     def snapshots_list():
         return jsonify([s.__dict__ for s in backup.list_snapshots(C())])
+
+    @app.get("/api/snapshot/settings")
+    def snapshot_settings():
+        return jsonify({"interval_min": backup.interval_min(C()),
+                        "choices": list(backup.INTERVAL_CHOICES)})
+
+    @app.post("/api/snapshot/settings")
+    def snapshot_settings_set():
+        case = C()
+        try:
+            minutes = int((request.get_json(force=True) or {}).get("interval_min"))
+            backup.set_interval_min(case, minutes)
+        except (TypeError, ValueError) as exc:
+            abort(400, description=str(exc))
+        case.db.audit_log(case.examiner, "snapshot_interval", json.dumps(
+            {"interval_min": minutes}))
+        return jsonify({"ok": True, "interval_min": minutes})
+
+    @app.post("/api/snapshot/delete")
+    def snapshot_delete():
+        case = C()
+        name = str((request.get_json(force=True) or {}).get("name", ""))
+        try:
+            backup.delete(case, name)
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        case.db.audit_log(case.examiner, "delete_snapshot", json.dumps({"name": name}))
+        return jsonify({"ok": True, "deleted": name})
 
     @app.post("/api/snapshot")
     def snapshot_now():

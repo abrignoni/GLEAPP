@@ -307,6 +307,7 @@
   #stashDlg .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:0}
   #stashDlg .note{font-size:12px;color:var(--muted);margin:8px 0}
   #snapDlg input[type=text]{flex:1;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px;font:inherit}
+  #snapDlg select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
   #snapList .snaprow{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12px}
   #snapList .snaprow > div{flex:1}
   #snapList .snaprow small{color:var(--muted)}
@@ -1063,10 +1064,18 @@
 <div id="snapDlg"><div class="box">
   <h2>Snapshots</h2>
   <div class="muted" style="font-size:12px;margin-bottom:10px">
-    Standalone copies of the whole case. Taken automatically every 10&nbsp;min while
-    you're editing and when the case closes, plus whenever you save one here.
+    Standalone copies of the whole case. Taken automatically while you're editing
+    and when the case closes, plus whenever you save one here. Only the newest 20
+    automatic ones are kept; one you save stays until you delete it.
     <b>Restore</b> saves the current state first, so it's undoable.
   </div>
+  <label class="field" style="display:flex;gap:6px;align-items:center">Automatic snapshots
+    <select id="snapEvery">
+      <option value="10">every 10 min</option>
+      <option value="30">every 30 min</option>
+      <option value="60">every 60 min</option>
+      <option value="0">off (only when the case closes)</option>
+    </select></label>
   <div class="field" style="display:flex;gap:6px">
     <input type="text" id="snapLabel" placeholder="optional label">
     <button class="btn" id="snapSave">Save snapshot now</button>

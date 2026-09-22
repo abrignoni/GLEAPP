@@ -3098,11 +3098,22 @@ async function refreshSnapList() {
     return `<div class="snaprow">
       <div><b>${when}</b> ${tag}<br><small>${esc(s.name)} · ${_snapBytes(s.size)}</small></div>
       <button class="btn" data-snap="${esc(s.name)}">Restore</button>
+      <button class="btn" data-snapdel="${esc(s.name)}">Delete</button>
     </div>`;
   }).join("");
   box.querySelectorAll("button[data-snap]").forEach(b => {
     b.onclick = () => restoreSnap(b.dataset.snap);
   });
+  box.querySelectorAll("button[data-snapdel]").forEach(b => {
+    b.onclick = () => deleteSnap(b.dataset.snapdel);
+  });
+}
+async function deleteSnap(name) {
+  if (!confirm("Delete this snapshot?\n\n" + name + "\n\nThis can't be undone.")) return;
+  const r = await save("/api/snapshot/delete", { name });
+  if (r.error) return toast("Delete failed: " + (r.message || "unknown error"));
+  toast("Snapshot deleted");
+  refreshSnapList();
 }
 async function restoreSnap(name) {
   if (!confirm(
@@ -3117,8 +3128,16 @@ async function restoreSnap(name) {
 function openSnapDlg() {
   $("#snapLabel").value = "";
   $("#snapDlg").style.display = "block";
+  api("/api/snapshot/settings").then(s => { $("#snapEvery").value = String(s.interval_min); })
+    .catch(() => {});
   refreshSnapList();
 }
+$("#snapEvery").onchange = async () => {
+  const r = await save("/api/snapshot/settings", { interval_min: Number($("#snapEvery").value) });
+  if (r.error) return toast("Could not change the interval");
+  toast(r.interval_min ? `Automatic snapshots every ${r.interval_min} min`
+    : "Automatic snapshots off");
+};
 $("#snapSave").onclick = async () => {
   const label = $("#snapLabel").value.trim();
   const r = await save("/api/snapshot", { label: label || null });
@@ -3156,6 +3175,7 @@ const ACTION_LABELS = {
   "unstage-source": "Copies dropped", "relink-source": "Source relinked",
   "recover-deleted": "Recovered deleted records", "expand-archives": "Archives expanded",
   basemap: "Basemap set", snapshot: "Snapshot", restore_snapshot: "Snapshot restored",
+  delete_snapshot: "Snapshot deleted", snapshot_interval: "Snapshot interval changed",
   categorize: "Categorized", category_add: "Category added",
   category_update: "Category updated", category_delete: "Category deleted",
   category_reorder: "Categories reordered", redup: "Re-scanned for duplicates",
@@ -3226,6 +3246,15 @@ function _histDetail(e) {
       d.label ? `labeled "${d.label}"` : null].filter(Boolean);
     return `<div class="hdetail">${esc((when ? "Saved " + when : d.name) +
       (bits.length ? " · " + bits.join(", ") : ""))}</div>`;
+  }
+  if (e.action === "delete_snapshot" && d) {
+    const when = _snapWhen(d.name);
+    return `<div class="hdetail">${esc("Deleted the " +
+      (when ? when + " " : "") + "snapshot")}</div>`;
+  }
+  if (e.action === "snapshot_interval" && d) {
+    return `<div class="hdetail">${esc(d.interval_min
+      ? `Automatic snapshots every ${d.interval_min} min` : "Automatic snapshots off")}</div>`;
   }
   if (e.action === "restore_snapshot" && d) {
     const when = _snapWhen(d.name);
@@ -4200,8 +4229,8 @@ $("#mapViewClose").onclick = closeMapView;
         seenBackup = s.last_backup;
         const t = new Date(s.last_backup * 1000)
           .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        $("#saveState").title = "Last backup snapshot: " + t
-          + `  (auto every ${s.auto_interval_min} min)`;
+        $("#saveState").title = "Last backup snapshot: " + t + (s.auto_interval_min
+          ? `  (auto every ${s.auto_interval_min} min)` : "  (automatic snapshots off)");
       }
     } catch (e) {}
   }, 90000);
