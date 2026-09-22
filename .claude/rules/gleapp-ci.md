@@ -54,7 +54,8 @@ built from `pyproject.toml` held 5 of the 798 tracked non-Python files under `gl
 so it carried the vendored readers and the face models without their licence texts and
 none of the 786 files under `web/static/maps`, whose own four licence texts went with
 them. setuptools expands each package-data pattern with `glob(..., recursive=True)`, so
-`**/*` does descend; measured on setuptools 84.0.0 and on 68.0.0, the declared floor.
+`**/*` does descend; measured on setuptools 84.0.0 and on 77.0.1, the oldest release
+the declared floor admits (PyPI does not carry 77.0.0).
 
 `tools/check_wheel.py` builds the wheel from `git archive HEAD` in a temporary folder
 and fails unless it holds exactly the tracked files under `gleapp/`. It runs in the
