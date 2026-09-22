@@ -4057,8 +4057,8 @@ async function reattachSource(name) {
       if (!name) return;
     }
   }
-  let p = Lr.native ? await pick("folder") : null;
-  if (!p) p = prompt(`Where is the ${name} folder now? Full path to the folder:`);
+  // pick() asks for a typed path itself when there is no file dialog; a cancel is null
+  const p = await pick("folder", `Where is the ${name} folder now? Full path to the folder:`);
   if (!p) return;
   const r = await api("/api/source/relink-folder", {
     method: "POST", headers: { "Content-Type": "application/json" },
