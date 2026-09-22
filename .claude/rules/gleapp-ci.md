@@ -45,6 +45,23 @@ per run while the repository is private. It runs when `packaging/`, `pyproject.t
 
 `tools/check_line_endings.sh` runs in the required test job. See the cross-platform rules.
 
+## The wheel is built and compared with the tracked files
+
+Every job installs the package editable, and an editable install reads the checkout, so
+a wheel can be missing files while every job stays green. It was: on 2026-09-21 a wheel
+built from `pyproject.toml` held 5 of the 798 tracked non-Python files under `gleapp/`.
+`web/static/*` does not descend into folders and no pattern covered the licence files,
+so it carried the vendored readers and the face models without their licence texts and
+none of the 786 files under `web/static/maps`, whose own four licence texts went with
+them. setuptools expands each package-data pattern with `glob(..., recursive=True)`, so
+`**/*` does descend; measured on setuptools 84.0.0 and on 68.0.0, the declared floor.
+
+`tools/check_wheel.py` builds the wheel from `git archive HEAD` in a temporary folder
+and fails unless it holds exactly the tracked files under `gleapp/`. It runs in the
+`pytest` job before the dependencies are installed, since it needs only pip, and took
+5 s locally. It exits 2, not 1, when the wheel could not be built at all, for example
+with no package index to fetch setuptools from.
+
 ## Pull requests from a fork never run CI while the repository is private
 
 GitHub does not run Actions on fork pull requests into a private repository and offers no
@@ -56,3 +73,4 @@ switch for it. Push branches to this repository instead; collaborators have writ
     PYTHONPATH=. python tools/lint_changed.py --base-ref origin/main <changed .py files>
     python tools/ci_import_smoke.py
     bash tools/check_line_endings.sh
+    python tools/check_wheel.py
