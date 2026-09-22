@@ -439,6 +439,16 @@ matches across all of:</p>
   <tr><td><strong>Type</strong></td><td><strong>image</strong>, <strong>video</strong>, or <strong>other</strong> (non-decodable, documents, unknown formats). A fourth value, <strong>archive (container)</strong>, is the only way to see the <code>.zip</code> / <code>.tar</code> / <code>.gz</code> files themselves: they are <strong>hidden from the gallery and reports by default</strong>; only the image and video members found inside them are shown.</td></tr>
   <tr><td><strong>Source</strong></td><td>Restrict to one ingest source (folder name, or the Project&nbsp;VIC source).</td></tr>
 </table>
+<p><strong>Reattach to source…</strong> in the top bar appears when the case holds a folder
+or Project&nbsp;VIC source. If that source's folder has moved or gone, the source is
+<em>unattached</em>: the button turns amber with a &#9888;, and a banner at the top of the
+gallery names the source and the folder it was expected in. This is re-checked every
+minute, so a folder that goes away while the case is open is flagged too. Full-size viewing
+and export need the files; thumbnails, hashes and categories still work.
+<strong>Reattach to source…</strong> asks for the folder's new location and checks every
+file there (same relative path, same size, same MD5) before changing anything. One missing
+or different file refuses it, and the case is left as it was. A reattach is recorded in
+Processing history.</p>
 
 <h3>Carving <em>(disk images only)</em></h3>
 <ul>
