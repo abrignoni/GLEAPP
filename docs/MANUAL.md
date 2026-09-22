@@ -1030,13 +1030,18 @@ exports get a filename suffix.
 Every category, flag and note change is committed immediately (SQLite WAL). The
 header shows "All changes saved · HH:MM" / "Saving..." / a retry prompt on
 failure. A full timestamped copy of `case.gleapp` is snapshotted to `backups/`
-roughly every 10 minutes while there are unsaved-since-last-snapshot edits, and
-always on close / case switch. The newest 20 snapshots are kept.
+every 10 minutes by default while there are unsaved-since-last-snapshot edits,
+and always on close / case switch. The newest 20 automatic snapshots are kept; a
+snapshot you save yourself is never removed automatically.
 
 **☰ Menu → Case → Snapshots** opens a panel that lists every snapshot with its
 date, label (`auto`, `manual`, or your text) and size:
 
-- **Save snapshot now**: makes one on demand, with an optional label.
+- **Automatic snapshots**: every 10, 30 or 60 minutes, or off. Off still takes one
+  when the case closes. The choice is saved with the case.
+- **Save snapshot now**: makes one on demand, with an optional label. It stays
+  until you delete it.
+- **Delete**: removes the selected snapshot. This can't be undone.
 - **Restore**: replaces the live case with the selected snapshot. The current
   state is written to a `pre-restore` snapshot first, so a restore is itself
   undoable; the case then reloads. Restore is blocked while a job is running.

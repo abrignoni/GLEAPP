@@ -4,11 +4,13 @@ A snapshot is a consistent, standalone copy of ``case.gleapp`` written to
 ``<case>/backups/``.  Created:
 
 * manually  - the "Save snapshot" button / ``POST /api/snapshot``
-* automatically - every ``AUTO_INTERVAL_MIN`` minutes if anything changed, and
-  when the case is closed (see ``web/app.py`` and ``desktop.py``)
+* automatically - every ``interval_min(case)`` minutes if anything changed
+  (the examiner picks 10 / 30 / 60 or off in the Snapshots dialog), and when
+  the case is closed (see ``web/app.py`` and ``desktop.py``)
 
 The live case file is already crash-safe (SQLite WAL, commit per action); these
-snapshots are point-in-time recovery copies, pruned to the most recent ``KEEP``.
+snapshots are point-in-time recovery copies. Only automatic ones are pruned, to
+the most recent ``KEEP``; one the examiner saved stays until they delete it.
 """
 
 from __future__ import annotations
@@ -23,6 +25,10 @@ from pathlib import Path
 BACKUP_DIR = "backups"
 KEEP = 20
 AUTO_INTERVAL_MIN = 10
+# Choices for the automatic interval, in minutes; 0 = no timed snapshots
+# (the one taken when the case closes still happens).
+INTERVAL_CHOICES = (10, 30, 60, 0)
+INTERVAL_META = "snapshot_interval_min"
 
 # How many names to try before giving up. Only a competing process can cost an
 # attempt, since _Clock never hands out the same stamp twice in this one.
@@ -118,12 +124,29 @@ def snapshot(case, label: str | None = None, *, auto: bool = False) -> Snapshot:
                     created=st.st_mtime, label=label, auto=auto)
 
 
+def interval_min(case) -> int:
+    """The case's automatic snapshot interval in minutes (0 = off)."""
+    try:
+        v = int(case.db.get_meta(INTERVAL_META) or AUTO_INTERVAL_MIN)
+    except ValueError:
+        return AUTO_INTERVAL_MIN
+    return v if v in INTERVAL_CHOICES else AUTO_INTERVAL_MIN
+
+
+def set_interval_min(case, minutes: int) -> None:
+    if minutes not in INTERVAL_CHOICES:
+        raise ValueError(f"interval must be one of {INTERVAL_CHOICES}")
+    case.db.set_meta(INTERVAL_META, str(minutes))
+
+
 def prune(case, keep: int = KEEP) -> int:
+    """Delete all but the newest ``keep`` automatic snapshots. A snapshot the
+    examiner saved (manual, labeled, pre-restore) is never pruned."""
     d = case.root / BACKUP_DIR
     if not d.is_dir():
         return 0
-    snaps = sorted(d.glob("case-*.gleapp"), key=lambda p: p.stat().st_mtime,
-                   reverse=True)
+    snaps = sorted((p for p in d.glob("case-*.gleapp") if _describe(p).auto),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
     removed = 0
     for p in snaps[keep:]:
         try:
@@ -163,3 +186,8 @@ def snapshot_path(case, name: str) -> Path:
     if p.parent != d or not p.is_file():
         raise ValueError("snapshot not found")
     return p
+
+
+def delete(case, name: str) -> None:
+    """Delete one snapshot by name (the examiner's choice, from the dialog)."""
+    snapshot_path(case, name).unlink()

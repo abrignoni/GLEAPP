@@ -1208,11 +1208,51 @@ def test_backup_prune_keeps_recent(tmp_path):
     try:
         for i in range(backup.KEEP + 5):
             c.db._touch()
-            backup.snapshot(c)
+            backup.snapshot(c, auto=True)
         snaps = backup.list_snapshots(c)
         assert len(snaps) == backup.KEEP
     finally:
         c.close()
+
+
+def test_backup_prune_never_removes_a_snapshot_the_examiner_saved(tmp_path):
+    from gleapp import backup
+
+    c = open_case(tmp_path / "kcase", create=True, examiner="t")
+    try:
+        kept = [backup.snapshot(c).name, backup.snapshot(c, "before review").name]
+        for _ in range(backup.KEEP + 5):
+            backup.snapshot(c, auto=True)
+        snaps = backup.list_snapshots(c)
+        assert sum(s.auto for s in snaps) == backup.KEEP
+        assert set(kept) <= {s.name for s in snaps}
+    finally:
+        c.close()
+
+
+def test_snapshot_interval_setting_and_delete(tmp_path):
+    from gleapp import backup
+    from gleapp.web.app import create_app
+
+    client = create_app(None).test_client()
+    client.post("/api/case/create", json={"path": str(tmp_path / "icase"), "name": "I"})
+    assert client.get("/api/snapshot/settings").get_json()["interval_min"] == backup.AUTO_INTERVAL_MIN
+    for minutes in (30, 60, 0, 10):
+        assert client.post("/api/snapshot/settings",
+                           json={"interval_min": minutes}).status_code == 200
+        assert client.get("/api/snapshot/settings").get_json()["interval_min"] == minutes
+        assert client.get("/api/save-state").get_json()["auto_interval_min"] == minutes
+    assert client.post("/api/snapshot/settings", json={"interval_min": 7}).status_code == 400
+    assert client.post("/api/snapshot/settings", json={}).status_code == 400
+
+    name = client.post("/api/snapshot", json={"label": "keep"}).get_json()["name"]
+    assert client.post("/api/snapshot/delete", json={"name": name}).status_code == 200
+    assert name not in {s["name"] for s in client.get("/api/snapshots").get_json()}
+    assert client.post("/api/snapshot/delete", json={"name": name}).status_code == 400
+    assert client.post("/api/snapshot/delete",
+                       json={"name": "../case.gleapp"}).status_code == 400
+    actions = [r["action"] for r in client.get("/api/audit").get_json()]
+    assert "delete_snapshot" in actions and "snapshot_interval" in actions
 
 
 def _use_creeping_clock(monkeypatch, backup, step_us=100):
