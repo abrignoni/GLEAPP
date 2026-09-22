@@ -48,15 +48,21 @@ BUILD_ONLY = {
 }
 
 # Licence texts that live in this repo rather than in a package. The vendored
-# readers are MIT and Impacket is Apache 1.1, and all of them ask for the notice to
-# travel with a binary copy.
+# readers and the YuNet model are MIT, the SFace model is Apache 2.0 and Impacket is
+# Apache 1.1, and all of them ask for the notice to travel with a binary copy. A
+# vendored file's or a model's label names that file, and tests/test_notices.py relies
+# on it to check that every model packaging/gleapp.spec copies out of gleapp/models
+# has an entry here.
 REPO_NOTICES = [
     ("GLEAPP", "LICENSE"),
     ("Impacket (gleapp/vendor/impacket_ese.py)", "gleapp/vendor/LICENSE-impacket"),
     ("qnxprobe (gleapp/vendor/qnxprobe.py)", "gleapp/vendor/LICENSE-qnxprobe"),
     ("ewfprobe (gleapp/vendor/ewfprobe.py)", "gleapp/vendor/LICENSE-ewfprobe"),
     ("mediacarve (gleapp/vendor/mediacarve.py)", "gleapp/vendor/LICENSE-mediacarve"),
-    ("SFace face-recognition model (gleapp/models)", "gleapp/models/LICENSE-sface"),
+    ("SFace face-recognition model (gleapp/models/face_recognition_sface_2021dec.onnx)",
+     "gleapp/models/LICENSE-sface"),
+    ("YuNet face-detection model (gleapp/models/face_detection_yunet_2023mar.onnx)",
+     "gleapp/models/LICENSE-yunet"),
 ]
 
 # Binaries a package carries without carrying their terms. pywebview bundles

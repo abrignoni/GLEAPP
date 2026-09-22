@@ -634,8 +634,9 @@ python tools/make_test_media.py test_media
 ## Credits
 
 GLEAPP is built on Pillow, OpenCV, NumPy, ImageHash, Flask, SQLite, the YuNet
-face detector and the SFace face-recognition model (both OpenCV Zoo; SFace is
-Apache-2.0, its license shipped at `gleapp/models/LICENSE-sface`),
+face detector and the SFace face-recognition model (both OpenCV Zoo; YuNet is
+MIT and SFace is Apache-2.0, their licenses shipped at
+`gleapp/models/LICENSE-yunet` and `gleapp/models/LICENSE-sface`),
 pi-heif/libheif, texture2ddecoder, LZFSE, Zstd, tzdata and more. Every bundled
 package's licence text travels inside the build, assembled by
 `tools/make_notices.py` and reachable from Help or at `/notices`. This product
