@@ -1343,8 +1343,9 @@ text rather than a link, because a link would be the one outbound address on the
 <p>The table below names each component. The full licence texts travel inside the
 build, because that is what most of these licences ask for:
 <a href="/notices" target="_blank" rel="noopener">open the third-party notices</a>.
-It includes GLEAPP's own MIT licence, the vendored readers, and every bundled
-package's text. This product includes software developed by SecureAuth Corporation
+It includes GLEAPP's own MIT licence, the vendored readers and face models, and
+every bundled package's text.
+This product includes software developed by SecureAuth Corporation
 (https://www.secureauth.com/) and Fortra (https://www.fortra.com).</p>
 
 <h3>Libraries GLEAPP is built on</h3>
@@ -1384,7 +1385,8 @@ no bundler, no web fonts, nothing loaded from a CDN.</p>
     face-detection CNN by <strong>Shiqi&nbsp;Yu</strong>, <strong>Wei&nbsp;Wu</strong>
     and <strong>Yuantao&nbsp;Feng</strong>, distributed through the
     <strong>OpenCV&nbsp;Zoo</strong> project (MIT). Run on the CPU via OpenCV's
-    DNN module.</li>
+    DNN module. The full license text ships with the model at
+    <code>gleapp/models/LICENSE-yunet</code>, as the license requires.</li>
   <li><strong>SFace</strong>: the bundled face-recognition model behind
     "find matching faces" (<code>face_recognition_sface_2021dec.onnx</code>,
     ~39&nbsp;MB). Contributed by <strong>Yaoyao&nbsp;Zhong</strong> (based on

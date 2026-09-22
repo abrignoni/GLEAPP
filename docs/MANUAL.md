@@ -1425,10 +1425,10 @@ GLEAPP stands on a lot of other people's work.
 The table below names each component. The full licence texts travel inside the build,
 because that is what most of these licences ask for: open **Help -> Third-party
 notices**, or `/notices` in the browser. The file carries GLEAPP's own MIT licence,
-the vendored readers, and every bundled package's text, and it is assembled at build
-time from the packages the build actually contains rather than kept by hand
-(`tools/make_notices.py`). A build is refused if a bundled package has neither a
-licence text nor a declared licence.
+the vendored readers and face models, and every bundled package's text, and it is
+assembled at build time from the packages the build actually contains rather than
+kept by hand (`tools/make_notices.py`). A build is refused if a bundled package has
+neither a licence text nor a declared licence.
 
 This product includes software developed by SecureAuth Corporation
 (https://www.secureauth.com/) and Fortra (https://www.fortra.com).
@@ -1471,7 +1471,8 @@ no bundler, no web fonts, nothing loaded from a CDN.
   ~230 KB). A lightweight face-detection CNN by **Shiqi Yu**, **Wei Wu** and
   **Yuantao Feng**, distributed through the **OpenCV Zoo** project (MIT
   license). GLEAPP runs the March-2023 model on the CPU through OpenCV's DNN
-  module.
+  module. The full license text ships alongside the model at
+  `gleapp/models/LICENSE-yunet`, as the license requires.
 - **SFace**: the bundled face-recognition model that powers "find matching
   faces" (`face_recognition_sface_2021dec.onnx`, ~39 MB). Contributed by
   **Yaoyao Zhong** (based on the SFace loss described in Zhong et al.,
