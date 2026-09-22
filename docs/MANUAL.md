@@ -1425,10 +1425,10 @@ GLEAPP stands on a lot of other people's work.
 The table below names each component. The full licence texts travel inside the build,
 because that is what most of these licences ask for: open **Help -> Third-party
 notices**, or `/notices` in the browser. The file carries GLEAPP's own MIT licence,
-the vendored readers and face models, and every bundled package's text, and it is
-assembled at build time from the packages the build actually contains rather than
-kept by hand (`tools/make_notices.py`). A build is refused if a bundled package has
-neither a licence text nor a declared licence.
+the vendored readers, the face models, the map code, styles and fonts, and every
+bundled package's text, and it is assembled at build time from the packages the
+build actually contains rather than kept by hand (`tools/make_notices.py`). A build
+is refused if a bundled package has neither a licence text nor a declared licence.
 
 This product includes software developed by SecureAuth Corporation
 (https://www.secureauth.com/) and Fortra (https://www.fortra.com).
@@ -1453,7 +1453,7 @@ This product includes software developed by SecureAuth Corporation
 | **pywebview** | the native desktop window in the offline build | Roman Sirokov & contributors | BSD-3 |
 | **MapLibre GL JS** | draws the offline map in the gallery | MapLibre contributors | BSD-3 |
 | **PMTiles** + **pmtiles.js** | the single-file tileset format the basemap is read from | Protomaps | Specification public domain; reference code BSD-3 |
-| **Protomaps basemap style** & sprites | the map's look | Protomaps (sprite icons derived from the MIT-licensed tangrams/icons) | BSD-3 |
+| **Protomaps basemap style** & sprites | the map's look | Protomaps (sprite icons derived from the MIT-licensed tangrams/icons) | BSD-3 code; the style design is CC0 |
 | **Noto Sans** | the map's label glyphs | Google | SIL Open Font License |
 | **OpenStreetMap** | the data in a Protomaps basemap you import | © OpenStreetMap contributors, credited on the map as the license asks | ODbL |
 | **Microsoft Edge WebView2 Runtime** | the webview the desktop window uses on Windows. Ships with Windows and is **not** bundled | Microsoft | proprietary, not redistributed |

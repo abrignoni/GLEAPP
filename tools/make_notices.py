@@ -48,11 +48,13 @@ BUILD_ONLY = {
 }
 
 # Licence texts that live in this repo rather than in a package. The vendored
-# readers and the YuNet model are MIT, the SFace model is Apache 2.0 and Impacket is
-# Apache 1.1, and all of them ask for the notice to travel with a binary copy. A
-# vendored file's or a model's label names that file, and tests/test_notices.py relies
-# on it to check that every model packaging/gleapp.spec copies out of gleapp/models
-# has an entry here.
+# readers and the YuNet model are MIT, the SFace model is Apache 2.0, Impacket is
+# Apache 1.1, the map code is BSD-3-Clause with some MIT parts and the map glyphs are
+# OFL 1.1, and each asks for its notice to travel with a binary copy (the Protomaps
+# text also covers the style design, which is CC0 and asks nothing). A vendored file's
+# or a model's label names that file, and tests/test_notices.py relies on it to check
+# that every model packaging/gleapp.spec copies out of gleapp/models has an entry
+# here. tests/test_licence_metadata.py checks every licence text under gleapp/ has one.
 REPO_NOTICES = [
     ("GLEAPP", "LICENSE"),
     ("Impacket (gleapp/vendor/impacket_ese.py)", "gleapp/vendor/LICENSE-impacket"),
@@ -63,7 +65,21 @@ REPO_NOTICES = [
      "gleapp/models/LICENSE-sface"),
     ("YuNet face-detection model (gleapp/models/face_detection_yunet_2023mar.onnx)",
      "gleapp/models/LICENSE-yunet"),
+    ("MapLibre GL JS (gleapp/web/static/maps/maplibre-gl.js, maplibre-gl.css)",
+     "gleapp/web/static/maps/LICENSE-maplibre-gl.txt"),
+    ("PMTiles (gleapp/web/static/maps/pmtiles.js)",
+     "gleapp/web/static/maps/LICENSE-pmtiles.txt"),
+    ("Protomaps basemap styles and sprites (gleapp/web/static/maps/layers-*.json, sprites/)",
+     "gleapp/web/static/maps/LICENSE-protomaps-basemaps.txt"),
+    ("Noto Sans map glyphs (gleapp/web/static/maps/fonts/)",
+     "gleapp/web/static/maps/fonts/OFL.txt"),
 ]
+
+# GLEAPP's own distribution, as pyproject.toml names it. REPO_NOTICES already carries
+# its LICENSE and every other licence text its wheel names in license-files, so
+# describing it again as an installed package would print each of them a second time.
+# tests/test_licence_metadata.py pins this to the name in pyproject.toml.
+OWN_DISTRIBUTION = "gleapp-forensics"
 
 # Binaries a package carries without carrying their terms. pywebview bundles
 # Microsoft's WebView2 SDK assemblies on Windows and ships only its own BSD licence,
@@ -176,17 +192,18 @@ def _entry(dist: md.Distribution) -> dict:
 
 
 def installed_entries(only: set[str] | None = None) -> list[dict]:
-    """One entry per shipped distribution, skipping the build-only ones.
+    """One entry per shipped distribution, skipping the build-only ones and GLEAPP's own.
 
     ``only`` is the set of distribution names the build actually bundles. Without
     it every installed distribution is described, which over-reports rather than
     under-reports: a notices file listing something absent is untidy, one missing
-    something present is the failure worth avoiding.
+    something present is the failure worth avoiding. GLEAPP itself is skipped because
+    REPO_NOTICES already carries every text its wheel does.
     """
     entries, seen = [], set()
     for dist in md.distributions():
         name = _norm(dist.metadata["Name"] or "")
-        if not name or name in BUILD_ONLY or name in seen:
+        if not name or name in BUILD_ONLY or name == OWN_DISTRIBUTION or name in seen:
             continue
         if only is not None and name not in only:
             continue

@@ -9,10 +9,21 @@ version = "0.1.0"
 description = "GLEAPP - Graphics · Logs · Examination · Automated Processing · Parsing: an open-source image/video forensic triage toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
-# Only LICENSE: setuptools' default patterns would also take the NOTICES.txt that
-# tools/make_notices.py writes at the repo root.
-license-files = ["LICENSE"]
+# The licence of the whole wheel, what it bundles included: GLEAPP, the vendored
+# readers and the YuNet model are MIT, Impacket's ESE code Apache 1.1, the SFace model
+# Apache 2.0, the map code BSD-3-Clause with some MIT parts, the map style design CC0
+# and the map glyphs OFL 1.1. tests/test_licence_metadata.py ties both fields to the
+# licence texts themselves.
+license = "MIT AND Apache-1.1 AND Apache-2.0 AND BSD-3-Clause AND OFL-1.1 AND CC0-1.0"
+# Every licence text the wheel ships. Naming them also keeps setuptools' default
+# patterns from taking the NOTICES.txt that tools/make_notices.py writes at the repo root.
+license-files = [
+    "LICENSE",
+    "gleapp/vendor/LICENSE-*",
+    "gleapp/models/LICENSE-*",
+    "gleapp/web/static/maps/LICENSE-*",
+    "gleapp/web/static/maps/fonts/OFL.txt",
+]
 authors = [{ name = "charpy4n6" }]
 dependencies = [
     "Pillow>=10.2",
