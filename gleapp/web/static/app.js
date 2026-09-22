@@ -4040,9 +4040,10 @@ function showFolderStatus(list) {
       + "border-radius:6px;background:rgba(201,138,43,.12);font-size:13px";
     $("#main").prepend(el);
   }
-  el.innerHTML = bad.map(s => `<div style="margin:2px 0">⚠ <b>${esc(s.name)}</b> is unattached:
-    its files were not found in <code>${esc(s.root || "their recorded folder")}</code>.
-    Full-size viewing and export need them; thumbnails, hashes and categories still work.
+  // the last folder only, with the full path on hover, to keep the banner to one line
+  const short = root => root ? "…\\" + root.split(/[\\/]/).filter(Boolean).pop() : "its folder";
+  el.innerHTML = bad.map(s => `<div style="margin:2px 0">⚠ <b>${esc(s.name)}</b> is unattached.
+    Files not found in <code title="${esc(s.root || "")}">${esc(short(s.root))}</code>.
     <button data-frelink="${esc(s.name)}" style="margin-left:8px">Reattach to source…</button></div>`).join("");
   el.querySelectorAll("[data-frelink]").forEach(b => b.onclick = () => reattachSource(b.dataset.frelink));
 }
