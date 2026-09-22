@@ -3496,6 +3496,9 @@ $("#aeTypePath").addEventListener("keydown", e => {
   if (e.key === "Enter") { aeAddSource($("#aeTypePath").value); $("#aeTypePath").value = ""; }
 });
 $("#aeKf").addEventListener("input", () => $("#aeKfv").textContent = $("#aeKf").value);
+for (const id of ["optExpand", "aeExpand"])
+  $("#" + id).addEventListener("change", () =>
+    $("#" + id + "Warn").style.display = $("#" + id).checked ? "block" : "none");
 $("#btnAddEvidence").onclick = () => {
   AE.sources = [];
   aeRenderSources();
@@ -3504,6 +3507,7 @@ $("#btnAddEvidence").onclick = () => {
   $("#aeStage").checked = false;
   $("#aeCarve").checked = false;
   $("#aeExpand").checked = false;
+  $("#aeExpandWarn").style.display = "none";
   $("#aeKf").value = 6; $("#aeKfv").textContent = "6";
   $("#aeGo").disabled = false;
   $("#addEvDlg").style.display = "block";
