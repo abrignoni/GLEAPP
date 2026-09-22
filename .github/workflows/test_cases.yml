@@ -44,6 +44,14 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
+      # Every job installs the package editable, this one included, and an editable
+      # install reads the checkout, so a package-data pattern in pyproject.toml that
+      # misses a file leaves the wheel short and nothing notices. This builds the wheel
+      # from HEAD and compares it with the tracked files under gleapp/. It needs pip
+      # and nothing from requirements.txt.
+      - name: The wheel carries every tracked file under gleapp/
+        run: python tools/check_wheel.py
+
       # pyliblzfse publishes no Linux wheel, so pip builds it from source here. That
       # needs nothing beyond the compiler the runner already has, but it is the reason
       # this step is slower than the requirements list suggests.
