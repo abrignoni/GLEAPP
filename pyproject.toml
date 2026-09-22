@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=68"]
+# setuptools 77 is the first to take `license` as an SPDX string and `license-files`.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +9,10 @@ version = "0.1.0"
 description = "GLEAPP - Graphics · Logs · Examination · Automated Processing · Parsing: an open-source image/video forensic triage toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+# Only LICENSE: setuptools' default patterns would also take the NOTICES.txt that
+# tools/make_notices.py writes at the repo root.
+license-files = ["LICENSE"]
 authors = [{ name = "charpy4n6" }]
 dependencies = [
     "Pillow>=10.2",
