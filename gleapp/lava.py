@@ -111,6 +111,64 @@ def _mime_for(path: Path) -> str:
     return _MIME.get(path.suffix.lower(), "application/octet-stream")
 
 
+# The ISO base media brands of an HEIC/HEIF still image. AVIF ("avif", "avis") is
+# left out on purpose: LAVA's viewer is Chromium, which shows AVIF but not HEIC.
+_HEIF_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1"}
+
+
+# Leading bytes of the image formats LAVA's viewer displays, for a file whose
+# extension does not say what it is.
+_MAGIC = ((b"\xff\xd8\xff", ".jpg"), (b"\x89PNG\r\n\x1a\n", ".png"),
+          (b"GIF87a", ".gif"), (b"GIF89a", ".gif"), (b"BM", ".bmp"))
+
+
+def _sniff_suffix(path: Path) -> str | None:
+    """The extension a file's bytes say it has, for the formats in ``_MAGIC`` and
+    WebP, or None."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return None
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    for magic, suffix in _MAGIC:
+        if head.startswith(magic):
+            return suffix
+    return None
+
+
+def _is_heif(path: Path) -> bool:
+    """Whether a file is HEIC/HEIF, decided by its bytes, not its name: a Project VIC
+    or extraction file often has no extension at all."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return False
+    return len(head) == 12 and head[4:8] == b"ftyp" and head[8:12] in _HEIF_BRANDS
+
+
+def _heif_to_jpeg(path: Path) -> bytes | None:
+    """The image as a JPEG LAVA can show, upright per its EXIF orientation, or None
+    if it cannot be decoded (the original is then placed as it is). The same
+    conversion iLEAPP makes before it hands LAVA an HEIC."""
+    import io
+
+    # The HEIF decoder is registered by ``imaging``, which ``report`` (imported
+    # above) loads, the same way the HTML report decodes HEIC.
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(path) as im:
+            im = ImageOps.exif_transpose(im)
+            out = io.BytesIO()
+            im.convert("RGB").save(out, format="JPEG", quality=90)
+    except (OSError, ValueError, SyntaxError):
+        return None
+    return out.getvalue()
+
+
 def _epoch(value) -> int | None:
     """An epoch column as the integer LAVA stores for a ``datetime``.
 
@@ -151,6 +209,8 @@ class _Writer:
         self.considered: list[tuple[str, str, int, bool]] = []
         self.media_written = 0
         self.media_bytes = 0
+        # HEIC/HEIF files put in the report as a JPEG, since LAVA cannot show them
+        self.heif_converted = 0
         # (name, sha256) of the basemap any location maps were drawn on, and the
         # tile cache and record the overview reuses so its tiles are decoded once
         self.basemap: tuple[str, str] = ("", "")
@@ -219,7 +279,17 @@ class _Writer:
         local = Path(local)
         if not local.is_file():
             return False
-        suffix = local.suffix.lower() or ".bin"
+        if _is_heif(local):
+            jpeg = _heif_to_jpeg(local)
+            if jpeg is not None:
+                self.heif_converted += 1
+                return self.add_bytes(media_id, jpeg, ".jpg", source_path=source_path,
+                                      created_at=created_at, updated_at=updated_at)
+        suffix = local.suffix.lower()
+        if suffix not in _MIME:
+            # an iPhone .THM is a JPEG, and a Project VIC file often has no
+            # extension: named by its bytes, LAVA shows it as the image it is
+            suffix = _sniff_suffix(local) or suffix or ".bin"
         relative = f"media/{media_id}{suffix}"
         canonical = self.dest / relative
         if not canonical.exists():
@@ -249,7 +319,7 @@ class _Writer:
         return media_id in self._items
 
     def add_bytes(self, media_id: str, data: bytes, suffix: str, *,
-                  source_path: str) -> bool:
+                  source_path: str, created_at=None, updated_at=None) -> bool:
         """Put an image this tool generated in the report, rather than a file the
         evidence carried. ``source_path`` says where it came from, since there is no
         path inside the evidence that would be true of it."""
@@ -269,7 +339,7 @@ class _Writer:
         self.db.execute(
             "INSERT INTO _lava_media_items VALUES (?,?,?,?,?,?,?,?)",
             (media_id, source_path, relative, _mime_for(canonical),
-             "not parsed yet", 0, 0, 0))
+             "not parsed yet", _epoch(created_at) or 0, _epoch(updated_at) or 0, 0))
         self._items.add(media_id)
         return True
 
@@ -1311,7 +1381,9 @@ def _media_note(thumbs: bool) -> str:
                 "at most 320 pixels on its long side, not the file itself")
     return ("The Media column shows the file itself, placed in this report as a "
             "copy, or as a hard link to the file the case read where the export was "
-            "asked for one")
+            "asked for one. An HEIC or HEIF image is the exception: LAVA cannot display "
+            "that format, so it is placed as a JPEG converted from the file, and the "
+            "hashes in the row are the original file's, not the JPEG's")
 
 
 SCOPE_NOTE = (
@@ -1532,6 +1604,7 @@ def _write_screen_output(case: Case, dest: Path, *, writer: "_Writer",
         ("Files in this report", f"{len(rows):,}"),
         ("Media files written", f"{writer.media_written:,}"),
         ("Media bytes written", f"{writer.media_bytes:,}"),
+        ("HEIC/HEIF placed as JPEG", f"{writer.heif_converted:,}"),
         ("Media column holds",
          "GLEAPP thumbnails" if thumbs else "the files themselves"),
     ]

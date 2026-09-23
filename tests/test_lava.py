@@ -1203,3 +1203,71 @@ def test_a_category_whose_artifacts_are_all_empty_is_not_in_the_manifest(tmp_pat
     groups = _manifest(out)["artifacts"]
     assert not [name for name, entries in groups.items() if not entries], groups
     assert "GLEAPP Duplicates" not in groups and "GLEAPP Hash Sets" not in groups
+
+
+def test_heic_is_placed_as_a_jpeg_lava_can_show(tmp_path):
+    """LAVA's viewer is Chromium, which cannot decode HEIC, so an HEIC original came
+    out as a blank media cell. It is converted to JPEG, found by its bytes so an
+    HEIC with no extension (Project VIC names files by hash) is caught too, and a
+    file that only claims the name is placed as it is."""
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    ev = tmp_path / "heic_ev"
+    ev.mkdir()
+    Image.new("RGB", (64, 48), (200, 30, 30)).save(ev / "IMG_0001.HEIC", format="HEIF")
+    Image.new("RGB", (48, 64), (30, 30, 200)).save(ev / "no_extension", format="HEIF")
+    Image.new("RGB", (40, 40), (30, 200, 30)).save(ev / "plain.jpg")
+    c = open_case(tmp_path / "hcase", create=True, examiner="t")
+    try:
+        ingest_sources(c, [Source(name="heic_ev", path=str(ev), include_other=True)])
+        process(c, workers=1, keyframes=2, screen=False)
+        out = tmp_path / "lava"
+        lava.export_lava(c, out, maps=False, keyframes=False)
+    finally:
+        c.close()
+    db = sqlite3.connect(out / "_lava_artifacts.db")
+    try:
+        items = db.execute(
+            "SELECT source_path, extraction_path, type FROM _lava_media_items").fetchall()
+    finally:
+        db.close()
+    by_name = {Path(sp).name: (rel, mime) for sp, rel, mime in items}
+    for name in ("IMG_0001.HEIC", "no_extension"):
+        rel, mime = by_name[name]
+        assert rel.endswith(".jpg") and mime == "image/jpeg", (name, rel, mime)
+        assert (out / "_HTML" / rel).read_bytes()[:3] == b"\xff\xd8\xff"
+        with Image.open(out / rel) as im:
+            assert im.format == "JPEG"
+    assert by_name["plain.jpg"][0].endswith(".jpg")
+    screen = (out / "_HTML" / "_Script_Logs" / "Screen_Output.html").read_text(encoding="utf-8")
+    assert "HEIC/HEIF placed as JPEG" in screen
+
+
+def test_an_image_with_an_unknown_extension_is_named_by_its_bytes(tmp_path):
+    """An iPhone .THM is a JPEG. Placed as ``.thm`` it was typed
+    application/octet-stream and LAVA showed nothing; it is now placed as ``.jpg``.
+    A file whose bytes are not an image keeps its own extension."""
+    ev = tmp_path / "thm_ev"
+    ev.mkdir()
+    Image.new("RGB", (40, 30), (90, 90, 200)).save(ev / "IMG_0033.THM", format="JPEG")
+    (ev / "notes.dat").write_bytes(b"not an image at all")
+    c = open_case(tmp_path / "tcase", create=True, examiner="t")
+    try:
+        ingest_sources(c, [Source(name="thm_ev", path=str(ev), include_other=True)])
+        process(c, workers=1, keyframes=2, screen=False)
+        out = tmp_path / "lava"
+        lava.export_lava(c, out, maps=False, keyframes=False)
+    finally:
+        c.close()
+    db = sqlite3.connect(out / "_lava_artifacts.db")
+    try:
+        by_name = {Path(sp).name: (rel, mime) for sp, rel, mime in db.execute(
+            "SELECT source_path, extraction_path, type FROM _lava_media_items")}
+    finally:
+        db.close()
+    rel, mime = by_name["IMG_0033.THM"]
+    assert rel.endswith(".jpg") and mime == "image/jpeg", (rel, mime)
+    assert (out / "_HTML" / rel).is_file()
+    if "notes.dat" in by_name:
+        assert by_name["notes.dat"][0].endswith(".dat")
