@@ -247,12 +247,18 @@ function filterParams() {
 /* load the current page (call reload() to also reset to page 1).
    opts.keepScroll: keep the current scroll position (used by the live refresh
    while a processing job is running). */
+// Every load() is numbered, and only the newest one may draw: on a large case a
+// request takes seconds, so a slower earlier reply (a sort or filter the examiner
+// has already changed) must not land last and overwrite the one they asked for.
+let loadSeq = 0;
 async function load(opts = {}) {
+  const seq = ++loadSeq;
   state.similarOf = null;
   if (!state.vstack && !state.stack) $("#simBanner").style.display = "none";
   const scroll = { mainT: $("#main").scrollTop, mainL: $("#main").scrollLeft,
                    gridT: $("#grid").scrollTop, gridL: $("#grid").scrollLeft };
   const d = await api("/api/files?" + filterParams());
+  if (seq !== loadSeq) return;                 // a newer load() has superseded this one
   state.total = d.total;
   const pages = Math.max(1, Math.ceil(d.total / state.pageSize));
   if (state.page > pages) { state.page = pages; return load(opts); }
@@ -337,7 +343,9 @@ function gotoPage(n) {
 }
 
 async function showSimilar(id) {
+  const seq = ++loadSeq;
   const d = await api(`/api/similar/${id}?threshold=14`);
+  if (seq !== loadSeq) return;
   rememberPlace(id);
   state.similarOf = id;
   state.files = d.files;
@@ -1638,7 +1646,9 @@ function loadKeyframeFaceBoxes(fileId, film) {
   }).catch(() => {});
 }
 async function showFaceMatches(faceId) {
+  const seq = ++loadSeq;
   const d = await api(`/api/face-match/${faceId}`);
+  if (seq !== loadSeq) return;
   rememberPlace();
   state.similarOf = faceId;   // reuses the same "special result set" plumbing as find-similar
   state.files = d.files;
