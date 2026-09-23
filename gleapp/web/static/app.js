@@ -257,14 +257,17 @@ async function load(opts = {}) {
   if (!state.vstack && !state.stack) $("#simBanner").style.display = "none";
   const scroll = { mainT: $("#main").scrollTop, mainL: $("#main").scrollLeft,
                    gridT: $("#grid").scrollTop, gridL: $("#grid").scrollLeft };
+  const t0 = performance.now();
   const d = await api("/api/files?" + filterParams());
   if (seq !== loadSeq) return;                 // a newer load() has superseded this one
+  const tGot = performance.now();
   state.total = d.total;
   const pages = Math.max(1, Math.ceil(d.total / state.pageSize));
   if (state.page > pages) { state.page = pages; return load(opts); }
   state.files = d.files;
   renderFiles(d.files);
   renderPager();
+  noteTiming(seq, t0, tGot, d);
   updateStat();
   refreshSections();
   if (opts.keepScroll) {
@@ -357,9 +360,32 @@ async function showSimilar(id) {
 }
 
 function updateStat() {
-  $("#statLine").innerHTML = state.similarOf
+  const t = !state.similarOf && state.lastTiming;
+  $("#statLine").innerHTML = (state.similarOf
     ? `<b>${state.files.length}</b> similar files`
-    : `<b>${state.total}</b> files · <b>${state.sel.size}</b> selected`;
+    : `<b>${state.total}</b> files · <b>${state.sel.size}</b> selected`)
+    + (t ? ` <span class="muted" style="font-size:11px">· ${(t.total / 1000).toFixed(2)} s</span>` : "");
+  $("#statLine").title = t
+    ? `Last gallery update: ${(t.total / 1000).toFixed(2)} s for ${t.rows} rows
+`
+      + `server ${(t.server / 1000).toFixed(2)} s · transfer ${(t.transfer / 1000).toFixed(2)} s · `
+      + `drawing ${(t.draw / 1000).toFixed(2)} s`
+    : "";
+}
+// How long the last gallery update took, split into the server's own time (the
+// database query), getting the reply to the page, and drawing it, so a slow
+// click on a big case can be pinned on one of them. Drawing is measured to the
+// next painted frame.
+function noteTiming(seq, t0, tGot, d) {
+  const server = d.server_ms || 0, net = tGot - t0;
+  const set = draw => {
+    if (seq !== loadSeq) return;
+    state.lastTiming = { total: net + draw, server, transfer: Math.max(0, net - server),
+                         draw, rows: (d.files || []).length };
+    updateStat();
+  };
+  set(performance.now() - tGot);
+  requestAnimationFrame(() => requestAnimationFrame(() => set(performance.now() - tGot)));
 }
 
 /* ---------- rendering ---------- */
