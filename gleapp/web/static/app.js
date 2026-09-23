@@ -19,7 +19,7 @@ const state = {
   sources: [],
   view: "grid",                   // "grid" | "list"
   listCols: null,                 // Set of visible column keys (list view)
-  sortCol: "name", sortDir: "asc",
+  sortCol: "file_path", sortDir: "asc",
   colFilters: {},                 // { colKey: [{col,op,val}, …] }
   colWidths: {},                  // { colId: pixels } — list-view column widths
   tz: "UTC",                      // display timezone for epoch timestamps (not EXIF)
@@ -231,7 +231,7 @@ function filterParams() {
   // both views sort by the same state.sortCol / state.sortDir, so switching view
   // never re-sorts the results; the grid's Sort dropdown and the list's column
   // headers are two ways to set it
-  p.set("sort", state.sortCol || "name");
+  p.set("sort", state.sortCol || "file_path");
   p.set("dir", state.sortDir || "asc");
   if (state.view === "list") {
     const cf = [];
@@ -994,12 +994,11 @@ function toggleColMenu() {
 // state, and any list sort is reflected back onto the dropdown (a list-only sort
 // like Camera or MD5 shows as a transient "— column —" entry).
 const GRID_SORT_TO_LIST = {
-  path: ["name", "asc"], date: ["created_dt", "asc"], size: ["size", "asc"],
+  path: ["file_path", "asc"], size: ["size", "desc"],
   skin: ["skin_ratio", "desc"], faces: ["faces", "desc"],
 };
 const LIST_SORT_TO_GRID = {
-  name: "path", file_path: "path", rel_path: "path", orig_name: "path", path: "path",
-  created_dt: "date", size: "size", skin_ratio: "skin", faces: "faces",
+  file_path: "path", size: "size", skin_ratio: "skin", faces: "faces",
 };
 
 // Show state.sortCol/Dir on the grid's Sort dropdown.
@@ -2289,7 +2288,7 @@ $("#btnClearFilters").onclick = () => {
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
   $("#fcollapse").checked = true;
   $("#fskin").value = "0"; $("#fskinv").textContent = "Any";
-  state.sortCol = "name"; state.sortDir = "asc";
+  state.sortCol = "file_path"; state.sortDir = "asc";
   reflectGridSort();
   state.vstack = null; state.stack = null; state.similarOf = null;
   $("#simBanner").style.display = "none";

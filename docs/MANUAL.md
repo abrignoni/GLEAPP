@@ -476,7 +476,10 @@ The **Show** options:
 
 ### Sort
 
-Path, capture date, size, skin ratio (desc) or faces (desc).
+Path (the file path, A-Z; the default), size (largest first), skin ratio
+(highest first) or faces (most first). The grid and the list view share one
+sort: clicking a list-view header changes the grid's order too. To order by
+capture date, click the list view's **Captured (EXIF)** header.
 "Thumbnails per page" (50-1500) and "Tile size" are remembered between sessions.
 
 ## 9. Duplicates & similarity
