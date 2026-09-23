@@ -116,6 +116,28 @@ def _mime_for(path: Path) -> str:
 _HEIF_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1"}
 
 
+# Leading bytes of the image formats LAVA's viewer displays, for a file whose
+# extension does not say what it is.
+_MAGIC = ((b"\xff\xd8\xff", ".jpg"), (b"\x89PNG\r\n\x1a\n", ".png"),
+          (b"GIF87a", ".gif"), (b"GIF89a", ".gif"), (b"BM", ".bmp"))
+
+
+def _sniff_suffix(path: Path) -> str | None:
+    """The extension a file's bytes say it has, for the formats in ``_MAGIC`` and
+    WebP, or None."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return None
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    for magic, suffix in _MAGIC:
+        if head.startswith(magic):
+            return suffix
+    return None
+
+
 def _is_heif(path: Path) -> bool:
     """Whether a file is HEIC/HEIF, decided by its bytes, not its name: a Project VIC
     or extraction file often has no extension at all."""
@@ -263,7 +285,11 @@ class _Writer:
                 self.heif_converted += 1
                 return self.add_bytes(media_id, jpeg, ".jpg", source_path=source_path,
                                       created_at=created_at, updated_at=updated_at)
-        suffix = local.suffix.lower() or ".bin"
+        suffix = local.suffix.lower()
+        if suffix not in _MIME:
+            # an iPhone .THM is a JPEG, and a Project VIC file often has no
+            # extension: named by its bytes, LAVA shows it as the image it is
+            suffix = _sniff_suffix(local) or suffix or ".bin"
         relative = f"media/{media_id}{suffix}"
         canonical = self.dest / relative
         if not canonical.exists():
