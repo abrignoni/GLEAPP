@@ -1014,6 +1014,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     @app.get("/api/files")
     def list_files():
         case = C()
+        started = time.perf_counter()
         q = request.args
         where, params = [], []
 
@@ -1158,7 +1159,23 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         offset = int(q.get("offset", 0))
         where_sql = (" WHERE " + " AND ".join(where)) if where else ""
 
-        if collapse:
+        # The default gallery (collapse on, no filter) reads the stored group
+        # representative instead of working it out: on a case of 400,000 files
+        # about 0.2 s a click against 1 s. With any filter the representative
+        # has to be the lowest id among the rows that match, which the stored
+        # one need not be, so filtered views keep the query below.
+        heads = collapse and where == ["kind != 'archive'"] and not params
+        if heads and not case.db.group_heads_fresh():
+            case.db.refresh_group_heads()
+        if heads:
+            head_where = " WHERE grp_head = 1 AND kind != 'archive'"
+            sql = (f"SELECT {FIELDS} FROM files WHERE id IN ("
+                   f"SELECT id FROM files{head_where} ORDER BY {sort} LIMIT ? OFFSET ?) "
+                   f"ORDER BY {sort}")
+            rows = case.db.conn.execute(sql, (limit, offset)).fetchall()
+            total = case.db.conn.execute(
+                f"SELECT COUNT(*) n FROM files{head_where}").fetchone()["n"]
+        elif collapse:
             # One row per visual group (exact stack / visual stack), and the
             # representative is picked from the rows that already match the
             # filters - so an attribute filter (Has GPS, faces, camera, ...)
@@ -1203,7 +1220,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             d["stack_count"] = stack_n.get(r["stack_id"], 1)
             d["vstack_count"] = vstack_n.get(r["vstack_id"], 0)
             out.append(d)
-        return jsonify({"total": total, "offset": offset, "files": out})
+        # server time for this request, shown by the gallery's timing readout
+        return jsonify({"total": total, "offset": offset, "files": out,
+                        "server_ms": round((time.perf_counter() - started) * 1000)})
 
     @app.get("/api/file/<int:file_id>")
     def get_file(file_id: int):

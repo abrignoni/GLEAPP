@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sqlite3
 import struct
 import threading
 import time
@@ -690,6 +691,13 @@ def process(
         "cluster_near", "Clustering near-duplicates…",
         lambda: dedupe.cluster_near(case.db, threshold=phash_cluster_threshold,
                                     progress=progress)) or 0
+
+    # store each duplicate group's representative now, so the gallery's first
+    # collapsed view after processing does not pay for it (seconds on a big case)
+    try:
+        case.db.refresh_group_heads()
+    except sqlite3.Error:
+        traceback.print_exc()   # the gallery recomputes it on demand anyway
 
     # screening ran inline with processing (screen=True) - record it so the UI
     # doesn't keep offering "Run screening" for a collection that's already done

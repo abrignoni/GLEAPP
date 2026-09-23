@@ -366,12 +366,14 @@ class CaseDB:
             ("volume_base", "INTEGER"), ("recorded_times", "TEXT"),
             ("container_id", "INTEGER"), ("hashset_vic", "TEXT"),
             ("hashset_sources", "TEXT"), ("hashset_mask", "INTEGER"),
+            ("grp_head", "INTEGER NOT NULL DEFAULT 1"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
         # indexes on migrated columns - only creatable once the column exists
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_vstack ON files(vstack_id)")
+        self._ensure_group_heads()
         cat_cols = {r["name"] for r in self.conn.execute(
             "PRAGMA table_info(categories)")}
         if "locked" not in cat_cols:
@@ -393,6 +395,52 @@ class CaseDB:
         vicdetails.ensure_schema(self.conn)
         self._migrate_tags_to_flags()
         self.conn.commit()
+
+    # -- duplicate-group representatives -------------------------------------
+    # The gallery's "Collapse duplicates" shows one tile per group
+    # (COALESCE(vstack_id, stack_id, id)), the lowest id in it. Working that out
+    # per request read every row: about 1 s a click on a case of 400,000 files.
+    # ``grp_head`` stores it instead. The database itself marks the stored value
+    # stale (meta grp_heads = 'stale') whenever group membership can change - a
+    # stack id written, a grouped row added, any row removed - so no writer can
+    # leave it wrong; a stale value is never used, only recomputed.
+    GRP_KEY = "COALESCE(vstack_id, stack_id, id)"
+
+    def _ensure_group_heads(self) -> None:
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_head ON files(grp_head, kind)")
+        stale = ("INSERT OR REPLACE INTO meta(key, value) "
+                 "VALUES ('grp_heads', 'stale')")
+        when = "(SELECT value FROM meta WHERE key = 'grp_heads') IS NOT 'stale'"
+        self.conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_grp_heads_update AFTER UPDATE OF "
+            f"stack_id, vstack_id ON files WHEN {when} BEGIN {stale}; END")
+        self.conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_grp_heads_insert AFTER INSERT ON files "
+            f"WHEN (NEW.stack_id IS NOT NULL OR NEW.vstack_id IS NOT NULL) AND {when} "
+            f"BEGIN {stale}; END")
+        self.conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_grp_heads_delete AFTER DELETE ON files "
+            f"WHEN {when} BEGIN {stale}; END")
+        if self.conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'grp_heads'").fetchone() is None:
+            self.conn.execute(stale)
+
+    def group_heads_fresh(self) -> bool:
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'grp_heads'").fetchone()
+        return bool(row) and row["value"] == "fresh"
+
+    def refresh_group_heads(self) -> None:
+        """Recompute ``grp_head`` for every row (about 3.4 s on 530,000 rows)."""
+        with self.lock:
+            # only the rows whose answer changed are written
+            self.conn.execute(
+                "UPDATE files SET grp_head = 1 - grp_head WHERE grp_head != "
+                f"(id IN (SELECT MIN(id) FROM files GROUP BY {self.GRP_KEY}))")
+            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) "
+                              "VALUES ('grp_heads', 'fresh')")
+            self.conn.commit()
 
     def _migrate_tags_to_flags(self) -> None:
         """One-time (schema v17): fold the old freeform ``tags`` table into
