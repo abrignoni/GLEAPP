@@ -396,6 +396,17 @@ So `dcim 2024-07` finds files whose path mentions DCIM and whose date is in July
 | **Type** | **image**, **video**, or **other** (non-decodable, documents, unknown formats). A fourth value, **archive (container)**, is the only way to see the `.zip` / `.tar` / `.gz` files themselves: they are **hidden from the gallery and reports by default**; only the image and video members found inside them are shown. |
 | **Source** | Restrict to one ingest source (folder name, or the Project VIC source). |
 
+**Reattach to source…** in the top bar appears when the case holds a folder or
+Project VIC source. If that source's folder has moved or gone, the source is
+*unattached*: the button turns amber with a ⚠, and a banner at the top of the
+gallery names the source and the folder it was expected in. This is re-checked
+every minute, so a folder that goes away while the case is open is flagged too.
+Full-size viewing and export need the files; thumbnails, hashes and categories
+still work. **Reattach to source…** asks for the folder's new location and checks
+every file there (same relative path, same size, same MD5) before changing
+anything. One missing or different file refuses it, and the case is left as it
+was. A reattach is recorded in Processing history.
+
 ### Carving *(disk images only)*
 
 - **How recovered** has four choices:

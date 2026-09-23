@@ -2257,6 +2257,7 @@ async function refreshContext() {
   if (c.needs_case) return;
   state.basemap = c.basemap || null;
   showSourceStatus(c.archive_sources);
+  showFolderStatus(c.folder_sources);
   state.cats = c.categories || [];
   try { await refreshCats(); } catch (e) {}
   state.flags = c.flags || [];
@@ -3158,7 +3159,7 @@ $("#btnSnapshot").onclick = openSnapDlg;
 const HIST_RUN_ACTIONS = new Set([
   "ingest", "ingest-archive", "process", "screen_pass", "rematch_hashes", "redup",
   "hashset_import", "hashset_remove", "import_vic", "export_vic",
-  "carve-source", "stage-source", "unstage-source", "relink-source",
+  "carve-source", "stage-source", "unstage-source", "relink-source", "relink-folder",
   "snapshot", "restore_snapshot",
 ]);
 // GLEAPP-triggered actions (a timer, a close-time save) read this exact actor
@@ -3173,6 +3174,7 @@ const ACTION_LABELS = {
   import_vic: "Project VIC imported", export_vic: "Project VIC exported",
   "carve-source": "Carved for deleted media", "stage-source": "Copied into case",
   "unstage-source": "Copies dropped", "relink-source": "Source relinked",
+  "relink-folder": "Reattached to source",
   "recover-deleted": "Recovered deleted records", "expand-archives": "Archives expanded",
   basemap: "Basemap set", snapshot: "Snapshot", restore_snapshot: "Snapshot restored",
   delete_snapshot: "Snapshot deleted", snapshot_interval: "Snapshot interval changed",
@@ -4007,6 +4009,71 @@ function showSourceStatus(list) {
   });
 }
 
+/* ---------- folder and Project VIC sources ---------- */
+// A folder ingest or a Project VIC import records each file's full path, so moving
+// that folder leaves full-size viewing and export with nothing to open. The top bar
+// carries "Reattach to source" whenever the case has such a source, amber with a
+// banner under it while one is unattached; the status is re-checked every minute,
+// so a folder that goes away while the case is open is flagged too. The server
+// accepts a new folder only if it holds every file at the same relative path with
+// the same size and MD5; it runs as a job.
+let folderSources = [];
+function showFolderStatus(list) {
+  folderSources = Array.isArray(list) ? list : [];
+  const bad = folderSources.filter(s => s.status !== "ok");
+  const btn = $("#btnReattach");
+  if (btn) {
+    btn.style.display = folderSources.length ? "" : "none";
+    btn.textContent = bad.length ? "⚠ Reattach to source…" : "Reattach to source…";
+    btn.style.borderColor = bad.length ? "#c98a2b" : "";
+    btn.style.color = bad.length ? "#c98a2b" : "";
+    btn.title = bad.length
+      ? bad.map(s => `${s.name} is unattached: its files were not found in ${s.root || "their folder"}`).join("\n")
+      : "Point this case at the folder its evidence was moved to";
+  }
+  let el = $("#folderBanner");
+  if (!bad.length) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "folderBanner";
+    el.style.cssText = "margin:6px 12px;padding:8px 12px;border:1px solid #c98a2b;"
+      + "border-radius:6px;background:rgba(201,138,43,.12);font-size:13px";
+    $("#main").prepend(el);
+  }
+  // the last folder only, with the full path on hover, to keep the banner to one line
+  const short = root => root ? "…\\" + root.split(/[\\/]/).filter(Boolean).pop() : "its folder";
+  el.innerHTML = bad.map(s => `<div style="margin:2px 0">⚠ <b>${esc(s.name)}</b> is unattached.
+    Files not found in <code title="${esc(s.root || "")}">${esc(short(s.root))}</code>.
+    <button data-frelink="${esc(s.name)}" style="margin-left:8px">Reattach to source…</button></div>`).join("");
+  el.querySelectorAll("[data-frelink]").forEach(b => b.onclick = () => reattachSource(b.dataset.frelink));
+}
+async function reattachSource(name) {
+  if (!name) {
+    const bad = folderSources.filter(s => s.status !== "ok");
+    const pool = bad.length ? bad : folderSources;
+    if (pool.length === 1) name = pool[0].name;
+    else {
+      name = prompt("Reattach which source?\n\n" + pool.map(s => s.name).join("\n"), pool[0].name);
+      if (!name) return;
+    }
+  }
+  // pick() asks for a typed path itself when there is no file dialog; a cancel is null
+  const p = await pick("folder", `Where is the ${name} folder now? Full path to the folder:`);
+  if (!p) return;
+  const r = await api("/api/source/relink-folder", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, path: p })
+  }).catch(() => ({ error: true, message: "request failed" }));
+  if (r.error) { toast(r.message || "Reattach refused"); return; }
+  toast(`Checking every ${name} file in the new folder…`);
+  liveTick = 0; liveJob();                       // the bottom bar follows the job
+}
+$("#btnReattach").onclick = () => reattachSource();
+setInterval(async () => {
+  if (!folderSources.length) return;
+  try { showFolderStatus(await api("/api/source/folder-status")); } catch (e) {}
+}, 60000);
+
 /* ---------- offline maps ---------- */
 // GLEAPP ships no map data and the page requests none from anywhere: the examiner
 // imports a basemap file (Maps), the server hands the gallery a style whose every URL
@@ -4194,6 +4261,7 @@ $("#mapViewClose").onclick = closeMapView;
     state.sources = c.sources || [];
     state.basemap = c.basemap || null;
     showSourceStatus(c.archive_sources);
+    showFolderStatus(c.folder_sources);
     setupTz(c);
     try { await refreshCats(); } catch (e) {}
     try { await refreshFlags(); } catch (e) {}

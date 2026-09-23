@@ -25,7 +25,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 
-from .. import appconfig, archive, backup, basemaps, categories, flags, lava, report
+from .. import appconfig, archive, backup, basemaps, categories, flags, lava, relink, report
 from ..case import open_case, parse_source_spec
 from ..db import ORIGINS, TOOL_ACTOR
 from ..facematch import find_matching_faces
@@ -1513,6 +1513,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "examiner": case.examiner,
             "sources": srcs,
             "archive_sources": archive.source_status(case),
+            "folder_sources": relink.folder_status(case),
             "basemap": basemaps.get_active(),
             "basemaps": len(basemaps.list_basemaps()),
             "clusters": clusters,
@@ -1667,6 +1668,42 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         except ValueError as exc:
             abort(400, description=str(exc))
         return jsonify({"ok": True, **status})
+
+    @app.get("/api/source/folder-status")
+    def source_folder_status():
+        return jsonify(relink.folder_status(C()))
+
+    @app.post("/api/source/relink-folder")
+    def source_relink_folder():
+        """Point a folder or Project VIC source at the folder it was moved to. Runs as
+        a job, since every file's MD5 is checked before anything changes."""
+        case = C()
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        body = request.get_json(force=True) or {}
+        name = str(body.get("name", ""))
+        raw = str(body.get("path", "")).strip().strip('"')
+        if not name or not raw:
+            abort(400, description="name and path are required")
+        if not Path(raw).is_dir():
+            abort(400, description=f"not a folder: {raw}")
+        state["job"] = {"running": True, "stage": "process", "done": 0, "total": 0,
+                        "message": f"Checking {name} files in the new folder…",
+                        "stats": None, "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                r = relink.relink_folder(
+                    case, name, raw, progress=lambda d, t: j.update(done=d, total=t))
+                j.update(running=False, stage="done",
+                         message=f"{name} reattached: {r['files']:,} files",
+                         stats={"relinked": r["files"]})
+            except (ValueError, OSError, sqlite3.Error) as exc:
+                j.update(running=False, stage="error", error=str(exc))
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
 
     @app.post("/api/source/stage")
     def source_stage():
