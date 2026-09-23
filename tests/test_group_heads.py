@@ -111,3 +111,16 @@ def test_the_collapsed_gallery_matches_the_query_it_replaced(tmp_path):
             assert isinstance(got["server_ms"], int)
     finally:
         ref.close()
+
+
+def test_per_row_key_frame_lookups_use_an_index(tmp_path):
+    """Each gallery row checks for key frames by file_id. Unindexed, that read the
+    whole key-frame table once per row: 8 s for a page of 1,500 on a case with
+    150,000 frames."""
+    case = open_case(tmp_path / "kcase", create=True, examiner="t")
+    try:
+        plan = " ".join(str(r[-1]) for r in case.db.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT 1 FROM keyframes WHERE file_id = ? LIMIT 1", (1,)))
+        assert "USING" in plan and "INDEX" in plan, plan
+    finally:
+        case.close()
