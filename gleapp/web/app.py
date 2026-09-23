@@ -1150,6 +1150,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             sort = f"{_sort_expr} {_dir}, id {_dir}"
         else:
             sort = _legacy_sort.get(q.get("sort", "path"), "rel_path")
+            # ties broken by id, so a page boundary never depends on the query plan
+            if sort != "id":
+                sort += ", id"
 
         limit = min(int(q.get("limit", 500)), 5000)
         offset = int(q.get("offset", 0))
@@ -1160,11 +1163,16 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             # representative is picked from the rows that already match the
             # filters - so an attribute filter (Has GPS, faces, camera, ...)
             # still surfaces a group when only a non-head member carries it.
+            # The representative is the lowest id in the group, as before. Only
+            # ids go through the grouping and the sort; the full rows are read
+            # for the one page at the end. Carrying every column through both
+            # doubled the time on a large case (1.1 s against 0.6 s for a page
+            # of 200 of about 394,000 rows).
             grp = "COALESCE(vstack_id, stack_id, id)"
-            sql = (f"SELECT {FIELDS} FROM (SELECT {FIELDS}, ROW_NUMBER() OVER "
-                   f"(PARTITION BY {grp} ORDER BY id) AS _rn "
-                   f"FROM files{where_sql}) g WHERE g._rn = 1 "
-                   f"ORDER BY {sort} LIMIT ? OFFSET ?")
+            sql = (f"SELECT {FIELDS} FROM files WHERE id IN ("
+                   f"SELECT id FROM files WHERE id IN ("
+                   f"SELECT MIN(id) FROM files{where_sql} GROUP BY {grp}) "
+                   f"ORDER BY {sort} LIMIT ? OFFSET ?) ORDER BY {sort}")
             rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
             total = case.db.conn.execute(
                 f"SELECT COUNT(DISTINCT {grp}) n FROM files{where_sql}",
