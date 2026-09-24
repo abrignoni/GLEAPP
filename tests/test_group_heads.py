@@ -124,3 +124,37 @@ def test_per_row_key_frame_lookups_use_an_index(tmp_path):
         assert "USING" in plan and "INDEX" in plan, plan
     finally:
         case.close()
+
+
+def test_a_cached_count_never_outlives_a_change(tmp_path):
+    """The gallery keeps how many rows match per query, since a sort, page or page
+    size change does not alter it. Any write to the case must drop it: after a file
+    is categorized the Uncategorized total has to equal a fresh count at once."""
+    from gleapp.web.app import create_app
+
+    case = _case_with_duplicates(tmp_path)
+    root = case.root
+    case.close()
+    client = create_app(str(root)).test_client()
+    ref = open_case(root).db
+    fresh = {
+        "&dupes=collapse": f"SELECT COUNT(DISTINCT {GRP}) FROM files "
+                           "WHERE kind != 'archive' AND category = 0",
+        "": "SELECT COUNT(*) FROM files WHERE kind != 'archive' AND category = 0",
+    }
+    try:
+        for collapse, sql in fresh.items():
+            base = f"/api/files?category=0&sort=file_path{collapse}"
+            before = client.get(base + "&limit=200").get_json()
+            assert client.get(base + "&limit=1500").get_json()["total"] == before["total"]
+            # a file alone in its group, so categorizing it must change the count
+            target = next(f["id"] for f in before["files"]
+                          if f["stack_count"] == 1 and not f["vstack_count"])
+            assert client.post("/api/categorize",
+                               json={"ids": [target], "category": 5}).status_code == 200
+            after = client.get(base + "&limit=1500").get_json()
+            assert target not in [f["id"] for f in after["files"]]
+            assert after["total"] == ref.conn.execute(sql).fetchone()[0], collapse
+            assert after["total"] == before["total"] - 1, collapse
+    finally:
+        ref.close()

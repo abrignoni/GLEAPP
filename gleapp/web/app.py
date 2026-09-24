@@ -1011,6 +1011,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                         "offset": min(offset, size), "bytes": data.hex()})
 
     # ---- listing / filtering --------------------------------
+    _COUNT_CACHE: dict = {}
+
     @app.get("/api/files")
     def list_files():
         case = C()
@@ -1164,6 +1166,23 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         # about 0.2 s a click against 1 s. With any filter the representative
         # has to be the lowest id among the rows that match, which the stored
         # one need not be, so filtered views keep the query below.
+        # How many rows match does not change when only the sort, the page or the
+        # page size does, and on a large case it is a pass over every row, so it
+        # is kept per query until anything in the case is written. The key is the
+        # connection's running total of changed rows, which every insert, update
+        # and delete through it moves (categorizing, processing, re-grouping), so
+        # a count is never reused across a change. The connection itself is part
+        # of the key: a reopened case (a restored snapshot) starts its total at 0.
+        def _count(sql: str, args: tuple) -> int:
+            key = (case.db.conn, sql, args, case.db.conn.total_changes)
+            hit = _COUNT_CACHE.get(key)
+            if hit is None:
+                hit = case.db.conn.execute(sql, args).fetchone()[0]
+                if len(_COUNT_CACHE) >= 64:
+                    _COUNT_CACHE.pop(next(iter(_COUNT_CACHE)))
+                _COUNT_CACHE[key] = hit
+            return hit
+
         heads = collapse and where == ["kind != 'archive'"] and not params
         if heads and not case.db.group_heads_fresh():
             case.db.refresh_group_heads()
@@ -1173,8 +1192,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                    f"SELECT id FROM files{head_where} ORDER BY {sort} LIMIT ? OFFSET ?) "
                    f"ORDER BY {sort}")
             rows = case.db.conn.execute(sql, (limit, offset)).fetchall()
-            total = case.db.conn.execute(
-                f"SELECT COUNT(*) n FROM files{head_where}").fetchone()["n"]
+            total = _count(f"SELECT COUNT(*) n FROM files{head_where}", ())
         elif collapse:
             # One row per visual group (exact stack / visual stack), and the
             # representative is picked from the rows that already match the
@@ -1191,16 +1209,13 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                    f"SELECT MIN(id) FROM files{where_sql} GROUP BY {grp}) "
                    f"ORDER BY {sort} LIMIT ? OFFSET ?) ORDER BY {sort}")
             rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
-            total = case.db.conn.execute(
-                f"SELECT COUNT(DISTINCT {grp}) n FROM files{where_sql}",
-                tuple(params)).fetchone()["n"]
+            total = _count(f"SELECT COUNT(DISTINCT {grp}) n FROM files{where_sql}",
+                           tuple(params))
         else:
             sql = (f"SELECT {FIELDS} FROM files{where_sql} "
                    f"ORDER BY {sort} LIMIT ? OFFSET ?")
             rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
-            total = case.db.conn.execute(
-                f"SELECT COUNT(*) n FROM files{where_sql}",
-                tuple(params)).fetchone()["n"]
+            total = _count(f"SELECT COUNT(*) n FROM files{where_sql}", tuple(params))
 
         # stack / visual-stack sizes for the ids on this page (two aggregate queries)
         def _counts(col: str, ids: set) -> dict:
