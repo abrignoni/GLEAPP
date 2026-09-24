@@ -181,3 +181,42 @@ def test_the_default_path_order_is_read_from_an_index(tmp_path):
                 assert "TEMP B-TREE" not in plan, (where, d, plan)
     finally:
         case.close()
+
+
+def test_categorizing_a_collapsed_tile_categorizes_its_whole_group(tmp_path):
+    """A collapsed gallery tile stands for its duplicate group. Categorizing only
+    the file shown left its copies uncategorized, so the group came back under
+    Uncategorized with another copy as its tile. with_group applies the category to
+    every file in the group; without it (list view, a group view) only the file."""
+    import json
+
+    from gleapp.web.app import create_app
+
+    case = _case_with_duplicates(tmp_path)
+    root = case.root
+    groups = {}
+    for fid, key in case.db.conn.execute(f"SELECT id, {GRP} FROM files"):
+        groups.setdefault(key, []).append(fid)
+    multi = [sorted(m) for m in groups.values() if len(m) > 1]
+    case.close()
+    assert len(multi) >= 2, "the fixture must hold at least two duplicate groups"
+    client = create_app(str(root)).test_client()
+    ref = open_case(root).db
+    cat_of = lambda fid: ref.conn.execute(
+        "SELECT category FROM files WHERE id = ?", (fid,)).fetchone()[0]
+    try:
+        one, other = multi[0], multi[1]
+        r = client.post("/api/categorize", json={"ids": [one[0]], "category": 5,
+                                                  "with_group": True}).get_json()
+        assert r["count"] == len(one) and r["tiles"] == 1
+        assert all(cat_of(fid) == 5 for fid in one)
+        # without it, just the one file
+        client.post("/api/categorize", json={"ids": [other[0]], "category": 5})
+        assert cat_of(other[0]) == 5
+        assert all(cat_of(fid) != 5 for fid in other[1:])
+        audit = [json.loads(a["detail"]) for a in client.get("/api/audit").get_json()
+                 if a["action"] == "categorize"]
+        grouped = next(d for d in audit if d.get("tiles") == 1)
+        assert sorted(grouped["ids"]) == one
+    finally:
+        ref.close()

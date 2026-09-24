@@ -1406,13 +1406,31 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         data = request.get_json(force=True)
         cat = int(data["category"])
         ids = [int(fid) for fid in data["ids"]]
+        tiles = len(ids)
+        # A collapsed gallery tile stands for its whole duplicate group (exact
+        # copies and visual matches, COALESCE(vstack_id, stack_id, id), the
+        # grouping the collapse uses), so categorizing the tile categorizes every
+        # file in the group, not just the one shown.
+        with_group = bool(data.get("with_group"))
+        if with_group and ids:
+            grp = "COALESCE(vstack_id, stack_id, id)"
+            found: set[int] = set()
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                ph = ",".join("?" * len(chunk))
+                found.update(r[0] for r in case.db.conn.execute(
+                    f"SELECT id FROM files WHERE {grp} IN "
+                    f"(SELECT {grp} FROM files WHERE id IN ({ph}))", chunk))
+            ids = sorted(found | set(ids))
         for fid in ids:
             case.db.update_file(fid, category=cat)
-        case.db.audit_log(case.examiner, "categorize", json.dumps(
-            {"category": cat, "label": categories.label(case.db, cat),
-             "count": len(ids), "ids": ids}))
+        detail = {"category": cat, "label": categories.label(case.db, cat),
+                  "count": len(ids), "ids": ids}
+        if with_group:
+            detail["tiles"] = tiles          # what the examiner selected
+        case.db.audit_log(case.examiner, "categorize", json.dumps(detail))
         case.db.commit()
-        return jsonify({"ok": True, "category": cat,
+        return jsonify({"ok": True, "category": cat, "count": len(ids), "tiles": tiles,
                         "label": categories.label(case.db, cat),
                         "color": categories.color(case.db, cat)})
 

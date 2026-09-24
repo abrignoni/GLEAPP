@@ -1293,29 +1293,43 @@ $("#saveState").onclick = () => { if ($("#saveState").className === "error") set
 
 /* ---------- mutations ---------- */
 async function categorize(ids, cat) {
-  await save("/api/categorize", { ids, category: cat });
+  // a collapsed tile stands for its whole duplicate group, so the category goes
+  // to every copy in it; anywhere each file has its own tile, just that file
+  const withGroup = $("#fcollapse").checked && state.view !== "list"
+    && !state.stack && !state.vstack && !state.similarOf;
+  const r = await save("/api/categorize", { ids, category: cat, with_group: withGroup });
   ids.forEach(id => { const f = state.files.find(x => x.id === id); if (f) f.category = cat; });
   refreshTiles(ids);
-  toast(`${cat ? catName(cat) : "Uncategorized"} → ${ids.length} file(s)`);
+  const n = (r && r.count) || ids.length;
+  const msg = `${cat ? catName(cat) : "Uncategorized"} → ${n} file(s)`
+    + (n > ids.length ? ` (${ids.length} tile${ids.length === 1 ? "" : "s"} with their copies)` : "");
   // move the cursor on to the next file under whatever filter is active
   // (the categorized tiles stay put until you hit Refresh) - not just when
   // working the Uncategorized backlog specifically
-  if (cat !== 0) advancePast(ids);
+  let note = "";
+  if (cat !== 0) note = advancePast(ids, cat) || "";
   else if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
+  toast(msg + note, note ? 3500 : undefined);
 }
 
 /* put focus on the first file after the ones just categorized */
-function advancePast(justDone) {
+function advancePast(justDone, cat) {
   const order = state.files.map(f => f.id);
   const done = new Set(justDone);
   let last = -1;
   order.forEach((id, i) => { if (done.has(id)) last = i; });
   const next = last + 1;
   if (next >= order.length) {
-    const pages = Math.max(1, Math.ceil(state.total / state.pageSize));
-    if (!state.similarOf && state.page < pages) return gotoPage(state.page + 1);
+    // The page is done. The categorized files stay in view until the examiner
+    // presses Refresh; nothing reloads or changes page on its own. Under a
+    // Category filter (working Uncategorized) they drop out on that Refresh and
+    // the next files to review move up onto this same page - moving on to
+    // page + 1 here used to skip a whole page of them.
+    const fcat = $("#fcat").value;
+    const dropsOut = fcat !== "any" && +fcat !== cat;
     state.sel.clear(); state.focus = null; syncSel();
-    return;
+    return dropsOut && !state.similarOf && !state.vstack && !state.stack
+      ? " · page done, press Refresh for the next files" : " · page done";
   }
   const id = order[next];
   state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
