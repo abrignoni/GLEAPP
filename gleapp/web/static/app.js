@@ -1293,8 +1293,10 @@ $("#saveState").onclick = () => { if ($("#saveState").className === "error") set
 
 /* ---------- mutations ---------- */
 async function categorize(ids, cat) {
-  // a collapsed tile stands for its whole duplicate group, so the category goes
-  // to every copy in it; anywhere each file has its own tile, just that file
+  // a collapsed tile stands for its duplicate group, so the category also goes to
+  // the files that are the same image (exact copies, and resized or re-saved
+  // versions; see dedupe.versions_of); anywhere each file has its own tile, and in
+  // Find similar, just that file
   const withGroup = $("#fcollapse").checked && state.view !== "list"
     && !state.stack && !state.vstack && !state.similarOf;
   const r = await save("/api/categorize", { ids, category: cat, with_group: withGroup });

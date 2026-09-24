@@ -1407,21 +1407,18 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         cat = int(data["category"])
         ids = [int(fid) for fid in data["ids"]]
         tiles = len(ids)
-        # A collapsed gallery tile stands for its whole duplicate group (exact
-        # copies and visual matches, COALESCE(vstack_id, stack_id, id), the
-        # grouping the collapse uses), so categorizing the tile categorizes every
-        # file in the group, not just the one shown.
+        # A collapsed gallery tile stands for its duplicate group, so categorizing
+        # it also categorizes the files that are the same image: its exact copies,
+        # and visual matches that are a resized or re-saved version of the tile's
+        # own file (dedupe.versions_of). A merely similar image in the same visual
+        # stack, or a Find similar result, is left for the examiner to review.
         with_group = bool(data.get("with_group"))
         if with_group and ids:
-            grp = "COALESCE(vstack_id, stack_id, id)"
-            found: set[int] = set()
-            for i in range(0, len(ids), 500):
-                chunk = ids[i:i + 500]
-                ph = ",".join("?" * len(chunk))
-                found.update(r[0] for r in case.db.conn.execute(
-                    f"SELECT id FROM files WHERE {grp} IN "
-                    f"(SELECT {grp} FROM files WHERE id IN ({ph}))", chunk))
-            ids = sorted(found | set(ids))
+            from .. import dedupe
+            found: set[int] = set(ids)
+            for fid in ids:
+                found |= dedupe.versions_of(case.db, fid)
+            ids = sorted(found)
         for fid in ids:
             case.db.update_file(fid, category=cat)
         detail = {"category": cat, "label": categories.label(case.db, cat),
