@@ -27,7 +27,7 @@ from werkzeug.exceptions import HTTPException
 
 from .. import appconfig, archive, backup, basemaps, categories, flags, lava, relink, report
 from ..case import open_case, parse_source_spec
-from ..db import ORIGINS, TOOL_ACTOR
+from ..db import FILE_PATH_SQL, ORIGINS, TOOL_ACTOR
 from ..facematch import find_matching_faces
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
@@ -59,9 +59,7 @@ LIST_COLS = {
 _COL_EXPR = {
     "name":      "COALESCE(NULLIF(orig_name, ''), "
                  "CASE WHEN media_id IS NULL THEN rel_path END)",
-    "file_path": "COALESCE(NULLIF(orig_path, ''), "
-                 "CASE WHEN media_id IS NULL THEN path END, "
-                 "CASE WHEN media_id IS NULL THEN rel_path END)",
+    "file_path": FILE_PATH_SQL,      # indexed as this exact text (db.py)
 }
 
 
@@ -1011,9 +1009,12 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                         "offset": min(offset, size), "bytes": data.hex()})
 
     # ---- listing / filtering --------------------------------
+    _COUNT_CACHE: dict = {}
+
     @app.get("/api/files")
     def list_files():
         case = C()
+        started = time.perf_counter()
         q = request.args
         where, params = [], []
 
@@ -1150,32 +1151,69 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             sort = f"{_sort_expr} {_dir}, id {_dir}"
         else:
             sort = _legacy_sort.get(q.get("sort", "path"), "rel_path")
+            # ties broken by id, so a page boundary never depends on the query plan
+            if sort != "id":
+                sort += ", id"
 
         limit = min(int(q.get("limit", 500)), 5000)
         offset = int(q.get("offset", 0))
         where_sql = (" WHERE " + " AND ".join(where)) if where else ""
 
-        if collapse:
+        # The default gallery (collapse on, no filter) reads the stored group
+        # representative instead of working it out: on a case of 400,000 files
+        # about 0.2 s a click against 1 s. With any filter the representative
+        # has to be the lowest id among the rows that match, which the stored
+        # one need not be, so filtered views keep the query below.
+        # How many rows match does not change when only the sort, the page or the
+        # page size does, and on a large case it is a pass over every row, so it
+        # is kept per query until anything in the case is written. The key is the
+        # connection's running total of changed rows, which every insert, update
+        # and delete through it moves (categorizing, processing, re-grouping), so
+        # a count is never reused across a change. The connection itself is part
+        # of the key: a reopened case (a restored snapshot) starts its total at 0.
+        def _count(sql: str, args: tuple) -> int:
+            key = (case.db.conn, sql, args, case.db.conn.total_changes)
+            hit = _COUNT_CACHE.get(key)
+            if hit is None:
+                hit = case.db.conn.execute(sql, args).fetchone()[0]
+                if len(_COUNT_CACHE) >= 64:
+                    _COUNT_CACHE.pop(next(iter(_COUNT_CACHE)))
+                _COUNT_CACHE[key] = hit
+            return hit
+
+        heads = collapse and where == ["kind != 'archive'"] and not params
+        if heads and not case.db.group_heads_fresh():
+            case.db.refresh_group_heads()
+        if heads:
+            head_where = " WHERE grp_head = 1 AND kind != 'archive'"
+            sql = (f"SELECT {FIELDS} FROM files WHERE id IN ("
+                   f"SELECT id FROM files{head_where} ORDER BY {sort} LIMIT ? OFFSET ?) "
+                   f"ORDER BY {sort}")
+            rows = case.db.conn.execute(sql, (limit, offset)).fetchall()
+            total = _count(f"SELECT COUNT(*) n FROM files{head_where}", ())
+        elif collapse:
             # One row per visual group (exact stack / visual stack), and the
             # representative is picked from the rows that already match the
             # filters - so an attribute filter (Has GPS, faces, camera, ...)
             # still surfaces a group when only a non-head member carries it.
+            # The representative is the lowest id in the group, as before. Only
+            # ids go through the grouping and the sort; the full rows are read
+            # for the one page at the end. Carrying every column through both
+            # doubled the time on a large case (1.1 s against 0.6 s for a page
+            # of 200 of about 394,000 rows).
             grp = "COALESCE(vstack_id, stack_id, id)"
-            sql = (f"SELECT {FIELDS} FROM (SELECT {FIELDS}, ROW_NUMBER() OVER "
-                   f"(PARTITION BY {grp} ORDER BY id) AS _rn "
-                   f"FROM files{where_sql}) g WHERE g._rn = 1 "
-                   f"ORDER BY {sort} LIMIT ? OFFSET ?")
+            sql = (f"SELECT {FIELDS} FROM files WHERE id IN ("
+                   f"SELECT id FROM files WHERE id IN ("
+                   f"SELECT MIN(id) FROM files{where_sql} GROUP BY {grp}) "
+                   f"ORDER BY {sort} LIMIT ? OFFSET ?) ORDER BY {sort}")
             rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
-            total = case.db.conn.execute(
-                f"SELECT COUNT(DISTINCT {grp}) n FROM files{where_sql}",
-                tuple(params)).fetchone()["n"]
+            total = _count(f"SELECT COUNT(DISTINCT {grp}) n FROM files{where_sql}",
+                           tuple(params))
         else:
             sql = (f"SELECT {FIELDS} FROM files{where_sql} "
                    f"ORDER BY {sort} LIMIT ? OFFSET ?")
             rows = case.db.conn.execute(sql, (*params, limit, offset)).fetchall()
-            total = case.db.conn.execute(
-                f"SELECT COUNT(*) n FROM files{where_sql}",
-                tuple(params)).fetchone()["n"]
+            total = _count(f"SELECT COUNT(*) n FROM files{where_sql}", tuple(params))
 
         # stack / visual-stack sizes for the ids on this page (two aggregate queries)
         def _counts(col: str, ids: set) -> dict:
@@ -1195,7 +1233,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             d["stack_count"] = stack_n.get(r["stack_id"], 1)
             d["vstack_count"] = vstack_n.get(r["vstack_id"], 0)
             out.append(d)
-        return jsonify({"total": total, "offset": offset, "files": out})
+        # server time for this request, shown by the gallery's timing readout
+        return jsonify({"total": total, "offset": offset, "files": out,
+                        "server_ms": round((time.perf_counter() - started) * 1000)})
 
     @app.get("/api/file/<int:file_id>")
     def get_file(file_id: int):
@@ -1474,21 +1514,24 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                    ("source_json", "files_dir", "case_id", "case_number",
                     "source_app", "source_app_version")}
         from .. import detect
-        scr = case.db.conn.execute(
-            "SELECT COUNT(*) n, "
-            "SUM(CASE WHEN faces > 0 THEN 1 ELSE 0 END) wf, "
-            "SUM(CASE WHEN skin_ratio IS NOT NULL AND skin_ratio > 0 THEN 1 ELSE 0 END) ws "
-            "FROM files WHERE kind IN ('image','video') AND thumb IS NOT NULL"
-        ).fetchone()
-        n_err = case.db.conn.execute(
-            "SELECT COUNT(*) n FROM files WHERE error IS NOT NULL").fetchone()["n"]
-        arch = case.db.conn.execute(
-            "SELECT COUNT(*) total, "
-            "SUM(CASE WHEN id IN (SELECT container_id FROM files "
-            "WHERE container_id IS NOT NULL) THEN 1 ELSE 0 END) expanded "
-            "FROM files WHERE kind = 'archive' OR (kind = 'other' AND lower(ext) IN "
-            "('.zip','.tar','.gz','.tgz','.bz2','.tbz2','.xz','.txz','.7z','.rar'))"
-        ).fetchone()
+        # screening, error and archive counts in one pass over the table, not
+        # three: each pass was 0.3-0.6 s on about 530,000 rows
+        _media = "kind IN ('image','video') AND thumb IS NOT NULL"
+        _arch = ("(kind = 'archive' OR (kind = 'other' AND lower(ext) IN "
+                 "('.zip','.tar','.gz','.tgz','.bz2','.tbz2','.xz','.txz','.7z','.rar')))")
+        one = case.db.conn.execute(
+            f"SELECT COALESCE(SUM({_media}), 0) n, "
+            f"SUM(CASE WHEN {_media} AND faces > 0 THEN 1 ELSE 0 END) wf, "
+            f"SUM(CASE WHEN {_media} AND skin_ratio IS NOT NULL AND skin_ratio > 0 "
+            "THEN 1 ELSE 0 END) ws, "
+            "COALESCE(SUM(error IS NOT NULL), 0) n_err, "
+            f"COALESCE(SUM({_arch}), 0) arch_total, "
+            f"SUM(CASE WHEN {_arch} AND id IN (SELECT container_id FROM files "
+            "WHERE container_id IS NOT NULL) THEN 1 ELSE 0 END) arch_expanded "
+            "FROM files").fetchone()
+        scr = {"n": one["n"], "wf": one["wf"], "ws": one["ws"]}
+        n_err = one["n_err"]
+        arch = {"total": one["arch_total"], "expanded": one["arch_expanded"]}
         from .. import hashstore, stash
         cst = case.db.stats()
         try:

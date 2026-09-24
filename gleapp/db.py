@@ -194,6 +194,10 @@ CREATE TABLE IF NOT EXISTS keyframes (
     thumb    TEXT,          -- relative path to the frame image
     phash    TEXT
 );
+-- Every gallery row asks whether its file has key frames, and processing deletes
+-- a video's old frames by file_id. Without this each of those read the whole
+-- table: a page of 1,500 took 8 s with 150,000 frames, 0.3 s with the index.
+CREATE INDEX IF NOT EXISTS idx_keyframes_file ON keyframes(file_id);
 
 -- One row per detected face (a photo, or one video key frame, can hold
 -- several). Populated only when face/skin screening ran at ingest;
@@ -301,6 +305,14 @@ VIC_PRESETS = [
 ]
 
 
+# The list view's File path column: the device path a Project VIC import recorded,
+# else the file's own path. Sorted and filtered on as this expression, and indexed
+# as the same text (see CaseDB._ensure_sort_indexes), so the two must not drift.
+FILE_PATH_SQL = ("COALESCE(NULLIF(orig_path, ''), "
+                 "CASE WHEN media_id IS NULL THEN path END, "
+                 "CASE WHEN media_id IS NULL THEN rel_path END)")
+
+
 class CaseDB:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -366,12 +378,21 @@ class CaseDB:
             ("volume_base", "INTEGER"), ("recorded_times", "TEXT"),
             ("container_id", "INTEGER"), ("hashset_vic", "TEXT"),
             ("hashset_sources", "TEXT"), ("hashset_mask", "INTEGER"),
+            ("grp_head", "INTEGER NOT NULL DEFAULT 1"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
         # indexes on migrated columns - only creatable once the column exists
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_vstack ON files(vstack_id)")
+        # the Source list and "is this archive expanded" read these on every
+        # case open; each was a pass over the table without them
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_source ON files(source)")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_container ON files(container_id)")
+        self._ensure_group_heads()
+        self._ensure_sort_indexes()
         cat_cols = {r["name"] for r in self.conn.execute(
             "PRAGMA table_info(categories)")}
         if "locked" not in cat_cols:
@@ -393,6 +414,66 @@ class CaseDB:
         vicdetails.ensure_schema(self.conn)
         self._migrate_tags_to_flags()
         self.conn.commit()
+
+    # -- duplicate-group representatives -------------------------------------
+    # The gallery's "Collapse duplicates" shows one tile per group
+    # (COALESCE(vstack_id, stack_id, id)), the lowest id in it. Working that out
+    # per request read every row: about 1 s a click on a case of 400,000 files.
+    # ``grp_head`` stores it instead. The database itself marks the stored value
+    # stale (meta grp_heads = 'stale') whenever group membership can change - a
+    # stack id written, a grouped row added, any row removed - so no writer can
+    # leave it wrong; a stale value is never used, only recomputed.
+    GRP_KEY = "COALESCE(vstack_id, stack_id, id)"
+
+    def _ensure_sort_indexes(self) -> None:
+        """Indexes in the gallery's default order, the File path column. SQLite
+        only uses an index on an expression when a query spells it the same way,
+        so the list view sorts on FILE_PATH_SQL itself. With them a page of 1,500
+        is read in order and the query stops, instead of sorting every matching
+        row first: on about 394,000 media rows 0.2-0.4 s became under 0.01 s for
+        the list, a category and the default gallery. They take about 5 s to
+        build on first open and roughly 160 MB on a case that size, since paths
+        are long."""
+        for name, cols in (("idx_files_path_sort", f"{FILE_PATH_SQL}, id"),
+                           ("idx_files_cat_path", f"category, {FILE_PATH_SQL}, id"),
+                           ("idx_files_head_path", f"grp_head, {FILE_PATH_SQL}, id")):
+            self.conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON files({cols})")
+
+    def _ensure_group_heads(self) -> None:
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_head ON files(grp_head, kind)")
+        stale = ("INSERT OR REPLACE INTO meta(key, value) "
+                 "VALUES ('grp_heads', 'stale')")
+        when = "(SELECT value FROM meta WHERE key = 'grp_heads') IS NOT 'stale'"
+        self.conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_grp_heads_update AFTER UPDATE OF "
+            f"stack_id, vstack_id ON files WHEN {when} BEGIN {stale}; END")
+        self.conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_grp_heads_insert AFTER INSERT ON files "
+            f"WHEN (NEW.stack_id IS NOT NULL OR NEW.vstack_id IS NOT NULL) AND {when} "
+            f"BEGIN {stale}; END")
+        self.conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS trg_grp_heads_delete AFTER DELETE ON files "
+            f"WHEN {when} BEGIN {stale}; END")
+        if self.conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'grp_heads'").fetchone() is None:
+            self.conn.execute(stale)
+
+    def group_heads_fresh(self) -> bool:
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'grp_heads'").fetchone()
+        return bool(row) and row["value"] == "fresh"
+
+    def refresh_group_heads(self) -> None:
+        """Recompute ``grp_head`` for every row (about 3.4 s on 530,000 rows)."""
+        with self.lock:
+            # only the rows whose answer changed are written
+            self.conn.execute(
+                "UPDATE files SET grp_head = 1 - grp_head WHERE grp_head != "
+                f"(id IN (SELECT MIN(id) FROM files GROUP BY {self.GRP_KEY}))")
+            self.conn.execute("INSERT OR REPLACE INTO meta(key, value) "
+                              "VALUES ('grp_heads', 'fresh')")
+            self.conn.commit()
 
     def _migrate_tags_to_flags(self) -> None:
         """One-time (schema v17): fold the old freeform ``tags`` table into
@@ -1020,18 +1101,18 @@ class CaseDB:
             r["category"]: r["n"]
             for r in c.execute("SELECT category, COUNT(*) n FROM files GROUP BY category")
         }
-        reviewed = c.execute("SELECT COUNT(*) n FROM files WHERE reviewed=1").fetchone()["n"]
-        hits = c.execute(
-            "SELECT COUNT(*) n FROM files WHERE hashset_hit IS NOT NULL"
-        ).fetchone()["n"]
-        known_good = c.execute(
-            "SELECT COUNT(*) n FROM files WHERE hashset_kind = 'known-good'"
-        ).fetchone()["n"]
-        # files whose match came from a Project VIC hash-set record
-        vic_matches = c.execute(
-            "SELECT COUNT(*) n FROM files WHERE hashset_vic IS NOT NULL "
-            "AND kind != 'archive'"
-        ).fetchone()["n"]
+        # The counts no index answers, taken in one pass over the table rather than
+        # one pass each: on about 530,000 rows each pass was 0.3 s.
+        one = c.execute(
+            "SELECT COALESCE(SUM(reviewed = 1), 0) reviewed, "
+            "COALESCE(SUM(hashset_hit IS NOT NULL), 0) hits, "
+            "COALESCE(SUM(hashset_kind = 'known-good'), 0) known_good, "
+            # files whose match came from a Project VIC hash-set record
+            "COALESCE(SUM(hashset_vic IS NOT NULL AND kind != 'archive'), 0) vic, "
+            "COALESCE(SUM(COALESCE(vstack_id, stack_id, id) != id), 0) collapsed "
+            "FROM files").fetchone()
+        reviewed, hits, known_good = one["reviewed"], one["hits"], one["known_good"]
+        vic_matches = one["vic"]
         stacks = c.execute(
             "SELECT COUNT(DISTINCT stack_id) n FROM files WHERE stack_id IS NOT NULL"
         ).fetchone()["n"]
@@ -1045,10 +1126,7 @@ class CaseDB:
         vstacks = c.execute(
             "SELECT COUNT(DISTINCT vstack_id) n FROM files WHERE vstack_id IS NOT NULL"
         ).fetchone()["n"]
-        collapsed = c.execute(
-            "SELECT COUNT(*) n FROM files "
-            "WHERE COALESCE(vstack_id, stack_id, id) != id"
-        ).fetchone()["n"]
+        collapsed = one["collapsed"]
         flagged = c.execute(
             "SELECT COUNT(DISTINCT file_id) n FROM file_flags"
         ).fetchone()["n"]
