@@ -158,3 +158,26 @@ def test_a_cached_count_never_outlives_a_change(tmp_path):
             assert after["total"] == before["total"] - 1, collapse
     finally:
         ref.close()
+
+
+def test_the_default_path_order_is_read_from_an_index(tmp_path):
+    """The gallery and list sort by File path by default. SQLite uses an index on
+    an expression only when the query spells it the same way, so the list's
+    FILE_PATH_SQL and the indexes share one definition. Read in index order, a
+    page stops after its rows instead of sorting every matching row first:
+    0.2-0.4 s became under 0.01 s on about 394,000 rows."""
+    from gleapp.db import FILE_PATH_SQL
+    from gleapp.web.app import _col_sql
+
+    assert _col_sql("file_path") == FILE_PATH_SQL
+    case = open_case(tmp_path / "pcase", create=True, examiner="t")
+    try:
+        for where in ("kind != 'archive'", "kind != 'archive' AND category = 0",
+                      "grp_head = 1 AND kind != 'archive'"):
+            for d in ("ASC", "DESC"):
+                plan = " ".join(str(r[-1]) for r in case.db.conn.execute(
+                    f"EXPLAIN QUERY PLAN SELECT id FROM files WHERE {where} "
+                    f"ORDER BY {FILE_PATH_SQL} {d}, id {d} LIMIT 1500"))
+                assert "TEMP B-TREE" not in plan, (where, d, plan)
+    finally:
+        case.close()

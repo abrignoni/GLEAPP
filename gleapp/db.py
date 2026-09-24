@@ -305,6 +305,14 @@ VIC_PRESETS = [
 ]
 
 
+# The list view's File path column: the device path a Project VIC import recorded,
+# else the file's own path. Sorted and filtered on as this expression, and indexed
+# as the same text (see CaseDB._ensure_sort_indexes), so the two must not drift.
+FILE_PATH_SQL = ("COALESCE(NULLIF(orig_path, ''), "
+                 "CASE WHEN media_id IS NULL THEN path END, "
+                 "CASE WHEN media_id IS NULL THEN rel_path END)")
+
+
 class CaseDB:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -377,7 +385,14 @@ class CaseDB:
         # indexes on migrated columns - only creatable once the column exists
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_vstack ON files(vstack_id)")
+        # the Source list and "is this archive expanded" read these on every
+        # case open; each was a pass over the table without them
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_source ON files(source)")
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_container ON files(container_id)")
         self._ensure_group_heads()
+        self._ensure_sort_indexes()
         cat_cols = {r["name"] for r in self.conn.execute(
             "PRAGMA table_info(categories)")}
         if "locked" not in cat_cols:
@@ -409,6 +424,20 @@ class CaseDB:
     # stack id written, a grouped row added, any row removed - so no writer can
     # leave it wrong; a stale value is never used, only recomputed.
     GRP_KEY = "COALESCE(vstack_id, stack_id, id)"
+
+    def _ensure_sort_indexes(self) -> None:
+        """Indexes in the gallery's default order, the File path column. SQLite
+        only uses an index on an expression when a query spells it the same way,
+        so the list view sorts on FILE_PATH_SQL itself. With them a page of 1,500
+        is read in order and the query stops, instead of sorting every matching
+        row first: on about 394,000 media rows 0.2-0.4 s became under 0.01 s for
+        the list, a category and the default gallery. They take about 5 s to
+        build on first open and roughly 160 MB on a case that size, since paths
+        are long."""
+        for name, cols in (("idx_files_path_sort", f"{FILE_PATH_SQL}, id"),
+                           ("idx_files_cat_path", f"category, {FILE_PATH_SQL}, id"),
+                           ("idx_files_head_path", f"grp_head, {FILE_PATH_SQL}, id")):
+            self.conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON files({cols})")
 
     def _ensure_group_heads(self) -> None:
         self.conn.execute(
@@ -1072,18 +1101,18 @@ class CaseDB:
             r["category"]: r["n"]
             for r in c.execute("SELECT category, COUNT(*) n FROM files GROUP BY category")
         }
-        reviewed = c.execute("SELECT COUNT(*) n FROM files WHERE reviewed=1").fetchone()["n"]
-        hits = c.execute(
-            "SELECT COUNT(*) n FROM files WHERE hashset_hit IS NOT NULL"
-        ).fetchone()["n"]
-        known_good = c.execute(
-            "SELECT COUNT(*) n FROM files WHERE hashset_kind = 'known-good'"
-        ).fetchone()["n"]
-        # files whose match came from a Project VIC hash-set record
-        vic_matches = c.execute(
-            "SELECT COUNT(*) n FROM files WHERE hashset_vic IS NOT NULL "
-            "AND kind != 'archive'"
-        ).fetchone()["n"]
+        # The counts no index answers, taken in one pass over the table rather than
+        # one pass each: on about 530,000 rows each pass was 0.3 s.
+        one = c.execute(
+            "SELECT COALESCE(SUM(reviewed = 1), 0) reviewed, "
+            "COALESCE(SUM(hashset_hit IS NOT NULL), 0) hits, "
+            "COALESCE(SUM(hashset_kind = 'known-good'), 0) known_good, "
+            # files whose match came from a Project VIC hash-set record
+            "COALESCE(SUM(hashset_vic IS NOT NULL AND kind != 'archive'), 0) vic, "
+            "COALESCE(SUM(COALESCE(vstack_id, stack_id, id) != id), 0) collapsed "
+            "FROM files").fetchone()
+        reviewed, hits, known_good = one["reviewed"], one["hits"], one["known_good"]
+        vic_matches = one["vic"]
         stacks = c.execute(
             "SELECT COUNT(DISTINCT stack_id) n FROM files WHERE stack_id IS NOT NULL"
         ).fetchone()["n"]
@@ -1097,10 +1126,7 @@ class CaseDB:
         vstacks = c.execute(
             "SELECT COUNT(DISTINCT vstack_id) n FROM files WHERE vstack_id IS NOT NULL"
         ).fetchone()["n"]
-        collapsed = c.execute(
-            "SELECT COUNT(*) n FROM files "
-            "WHERE COALESCE(vstack_id, stack_id, id) != id"
-        ).fetchone()["n"]
+        collapsed = one["collapsed"]
         flagged = c.execute(
             "SELECT COUNT(DISTINCT file_id) n FROM file_flags"
         ).fetchone()["n"]

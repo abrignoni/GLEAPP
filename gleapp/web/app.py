@@ -27,7 +27,7 @@ from werkzeug.exceptions import HTTPException
 
 from .. import appconfig, archive, backup, basemaps, categories, flags, lava, relink, report
 from ..case import open_case, parse_source_spec
-from ..db import ORIGINS, TOOL_ACTOR
+from ..db import FILE_PATH_SQL, ORIGINS, TOOL_ACTOR
 from ..facematch import find_matching_faces
 from ..pipeline import ingest_sources, process
 from ..similar import find_similar
@@ -59,9 +59,7 @@ LIST_COLS = {
 _COL_EXPR = {
     "name":      "COALESCE(NULLIF(orig_name, ''), "
                  "CASE WHEN media_id IS NULL THEN rel_path END)",
-    "file_path": "COALESCE(NULLIF(orig_path, ''), "
-                 "CASE WHEN media_id IS NULL THEN path END, "
-                 "CASE WHEN media_id IS NULL THEN rel_path END)",
+    "file_path": FILE_PATH_SQL,      # indexed as this exact text (db.py)
 }
 
 
@@ -1516,21 +1514,24 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                    ("source_json", "files_dir", "case_id", "case_number",
                     "source_app", "source_app_version")}
         from .. import detect
-        scr = case.db.conn.execute(
-            "SELECT COUNT(*) n, "
-            "SUM(CASE WHEN faces > 0 THEN 1 ELSE 0 END) wf, "
-            "SUM(CASE WHEN skin_ratio IS NOT NULL AND skin_ratio > 0 THEN 1 ELSE 0 END) ws "
-            "FROM files WHERE kind IN ('image','video') AND thumb IS NOT NULL"
-        ).fetchone()
-        n_err = case.db.conn.execute(
-            "SELECT COUNT(*) n FROM files WHERE error IS NOT NULL").fetchone()["n"]
-        arch = case.db.conn.execute(
-            "SELECT COUNT(*) total, "
-            "SUM(CASE WHEN id IN (SELECT container_id FROM files "
-            "WHERE container_id IS NOT NULL) THEN 1 ELSE 0 END) expanded "
-            "FROM files WHERE kind = 'archive' OR (kind = 'other' AND lower(ext) IN "
-            "('.zip','.tar','.gz','.tgz','.bz2','.tbz2','.xz','.txz','.7z','.rar'))"
-        ).fetchone()
+        # screening, error and archive counts in one pass over the table, not
+        # three: each pass was 0.3-0.6 s on about 530,000 rows
+        _media = "kind IN ('image','video') AND thumb IS NOT NULL"
+        _arch = ("(kind = 'archive' OR (kind = 'other' AND lower(ext) IN "
+                 "('.zip','.tar','.gz','.tgz','.bz2','.tbz2','.xz','.txz','.7z','.rar')))")
+        one = case.db.conn.execute(
+            f"SELECT COALESCE(SUM({_media}), 0) n, "
+            f"SUM(CASE WHEN {_media} AND faces > 0 THEN 1 ELSE 0 END) wf, "
+            f"SUM(CASE WHEN {_media} AND skin_ratio IS NOT NULL AND skin_ratio > 0 "
+            "THEN 1 ELSE 0 END) ws, "
+            "COALESCE(SUM(error IS NOT NULL), 0) n_err, "
+            f"COALESCE(SUM({_arch}), 0) arch_total, "
+            f"SUM(CASE WHEN {_arch} AND id IN (SELECT container_id FROM files "
+            "WHERE container_id IS NOT NULL) THEN 1 ELSE 0 END) arch_expanded "
+            "FROM files").fetchone()
+        scr = {"n": one["n"], "wf": one["wf"], "ws": one["ws"]}
+        n_err = one["n_err"]
+        arch = {"total": one["arch_total"], "expanded": one["arch_expanded"]}
         from .. import hashstore, stash
         cst = case.db.stats()
         try:
