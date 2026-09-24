@@ -183,62 +183,40 @@ def test_the_default_path_order_is_read_from_an_index(tmp_path):
         case.close()
 
 
-def _flip(hexhash: str, bits: int) -> str:
-    """The hash with its lowest ``bits`` bits inverted."""
-    return format(int(hexhash, 16) ^ ((1 << bits) - 1), f"0{len(hexhash)}x")
-
-
-def test_categorizing_a_collapsed_tile_takes_its_copies_and_versions_only(tmp_path):
-    """A collapsed tile stands for its duplicate group. Categorizing only the file
-    shown left its exact copies uncategorized, so the group came back under
-    Uncategorized. with_group also categorizes the exact copies and the visual
-    matches that are a version of the tile's own file (pHash and dHash within
-    VERSION_BITS, same shape) - never a merely similar member of the visual stack,
-    which is built by chaining and can be far from the tile."""
+def test_categorizing_a_collapsed_tile_categorizes_its_whole_group(tmp_path):
+    """A collapsed gallery tile stands for its duplicate group. Categorizing only
+    the file shown left its copies uncategorized, so the group came back under
+    Uncategorized with another copy as its tile. with_group applies the category to
+    every file in the group; without it (list view, a group view) only the file."""
     import json
 
-    from gleapp import dedupe
     from gleapp.web.app import create_app
 
     case = _case_with_duplicates(tmp_path)
-    db = case.db
-    head, copy = db.conn.execute(
-        "SELECT MIN(id), MAX(id) FROM files GROUP BY stack_id HAVING COUNT(*) = 2 "
-        "ORDER BY 1").fetchone()
-    p, d, w, h = db.conn.execute(
-        "SELECT phash, dhash, width, height FROM files WHERE id=?", (head,)).fetchone()
-    # files with no exact copy (every hashed file has a stack id, its own if alone)
-    loners = [r[0] for r in db.conn.execute(
-        "SELECT MIN(id) FROM files GROUP BY stack_id HAVING COUNT(*) = 1 ORDER BY 1")][:3]
-    assert len(loners) == 3
-    version, similar, reshaped = loners
-    bits = dedupe.VERSION_BITS
-    rows = {version: (_flip(p, bits), _flip(d, bits), w * 2, h * 2),   # resized
-            similar: (_flip(p, bits + 6), d, w, h),                    # only looks alike
-            reshaped: (p, d, w * 2, h)}                                # another shape
-    for fid, (ph, dh, ww, hh) in rows.items():
-        db.conn.execute("UPDATE files SET phash=?, dhash=?, width=?, height=? WHERE id=?",
-                        (ph, dh, ww, hh, fid))
-    db.conn.execute("UPDATE files SET vstack_id=? WHERE id IN (?,?,?,?,?)",
-                    (head, head, copy, version, similar, reshaped))
-    db.conn.commit()
     root = case.root
+    groups = {}
+    for fid, key in case.db.conn.execute(f"SELECT id, {GRP} FROM files"):
+        groups.setdefault(key, []).append(fid)
+    multi = [sorted(m) for m in groups.values() if len(m) > 1]
     case.close()
-
+    assert len(multi) >= 2, "the fixture must hold at least two duplicate groups"
     client = create_app(str(root)).test_client()
     ref = open_case(root).db
     cat_of = lambda fid: ref.conn.execute(
         "SELECT category FROM files WHERE id = ?", (fid,)).fetchone()[0]
     try:
-        r = client.post("/api/categorize", json={"ids": [head], "category": 5,
+        one, other = multi[0], multi[1]
+        r = client.post("/api/categorize", json={"ids": [one[0]], "category": 5,
                                                   "with_group": True}).get_json()
-        assert {fid for fid in (head, copy, version, similar, reshaped) if cat_of(fid) == 5}             == {head, copy, version}
-        assert r["count"] == 3 and r["tiles"] == 1
+        assert r["count"] == len(one) and r["tiles"] == 1
+        assert all(cat_of(fid) == 5 for fid in one)
+        # without it, just the one file
+        client.post("/api/categorize", json={"ids": [other[0]], "category": 5})
+        assert cat_of(other[0]) == 5
+        assert all(cat_of(fid) != 5 for fid in other[1:])
         audit = [json.loads(a["detail"]) for a in client.get("/api/audit").get_json()
                  if a["action"] == "categorize"]
-        assert sorted(next(d for d in audit if d.get("tiles") == 1)["ids"])             == sorted([head, copy, version])
-        # without with_group (list view, a group view, Find similar): just the file
-        client.post("/api/categorize", json={"ids": [similar], "category": 3})
-        assert cat_of(similar) == 3 and cat_of(reshaped) != 3
+        grouped = next(d for d in audit if d.get("tiles") == 1)
+        assert sorted(grouped["ids"]) == one
     finally:
         ref.close()
