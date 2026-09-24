@@ -1301,13 +1301,15 @@ async function categorize(ids, cat) {
   ids.forEach(id => { const f = state.files.find(x => x.id === id); if (f) f.category = cat; });
   refreshTiles(ids);
   const n = (r && r.count) || ids.length;
-  toast(`${cat ? catName(cat) : "Uncategorized"} → ${n} file(s)`
-    + (n > ids.length ? ` (${ids.length} tile${ids.length === 1 ? "" : "s"} with their copies)` : ""));
+  const msg = `${cat ? catName(cat) : "Uncategorized"} → ${n} file(s)`
+    + (n > ids.length ? ` (${ids.length} tile${ids.length === 1 ? "" : "s"} with their copies)` : "");
   // move the cursor on to the next file under whatever filter is active
   // (the categorized tiles stay put until you hit Refresh) - not just when
   // working the Uncategorized backlog specifically
-  if (cat !== 0) advancePast(ids, cat);
+  let note = "";
+  if (cat !== 0) note = advancePast(ids, cat) || "";
   else if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
+  toast(msg + note, note ? 3500 : undefined);
 }
 
 /* put focus on the first file after the ones just categorized */
@@ -1318,24 +1320,16 @@ function advancePast(justDone, cat) {
   order.forEach((id, i) => { if (done.has(id)) last = i; });
   const next = last + 1;
   if (next >= order.length) {
-    const pages = Math.max(1, Math.ceil(state.total / state.pageSize));
-    // Under a Category filter the files just categorized no longer match it
-    // (working Uncategorized is the usual case), so the files after them move
-    // up: the next ones to review are now on this same page, not the next one.
-    // Going to page + 1 skipped a whole page of them.
+    // The page is done. The categorized files stay in view until the examiner
+    // presses Refresh; nothing reloads or changes page on its own. Under a
+    // Category filter (working Uncategorized) they drop out on that Refresh and
+    // the next files to review move up onto this same page - moving on to
+    // page + 1 here used to skip a whole page of them.
     const fcat = $("#fcat").value;
     const dropsOut = fcat !== "any" && +fcat !== cat;
-    if (dropsOut && !state.similarOf && !state.vstack && !state.stack) {
-      state.sel.clear(); state.focus = null;
-      return load().then(() => {
-        const first = state.files[0];
-        if (!first) { syncSel(); return; }
-        state.sel.add(first.id); setFocus(first.id); syncSel(); revealFile(first.id);
-      });
-    }
-    if (!state.similarOf && state.page < pages) return gotoPage(state.page + 1);
     state.sel.clear(); state.focus = null; syncSel();
-    return;
+    return dropsOut && !state.similarOf && !state.vstack && !state.stack
+      ? " · page done, press Refresh for the next files" : " · page done";
   }
   const id = order[next];
   state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
