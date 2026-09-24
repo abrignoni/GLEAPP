@@ -278,9 +278,7 @@ async function load(opts = {}) {
     $("#main").scrollTop = opts.place.top; $("#main").scrollLeft = opts.place.left;
     if (opts.place.focus != null && state.files.some(f => f.id === opts.place.focus)) {
       setFocus(opts.place.focus);
-      const t = document.querySelector(
-        `.tile[data-id="${opts.place.focus}"], .lvrow[data-id="${opts.place.focus}"]`);
-      if (t) t.scrollIntoView({ block: "nearest", inline: "nearest" });
+      revealFile(opts.place.focus);
     }
   } else {
     $("#main").scrollTop = 0;
@@ -842,15 +840,70 @@ function renderList(files) {
   }
   updateSortArrows();
 
-  const tb = document.createElement("tbody");
-  files.forEach(f => tb.appendChild(lvRowEl(f, defs)));
-  tbl.querySelector("tbody").replaceWith(tb);
+  LV.files = files; LV.defs = defs; LV.start = LV.end = -1;
+  renderListWindow(true);
 
   let cnt = g.querySelector(".lvcount");
   if (!files.length) {
     if (!cnt) { cnt = document.createElement("div"); cnt.className = "lvcount"; g.appendChild(cnt); }
     cnt.textContent = "No files match.";
   } else if (cnt) { cnt.remove(); }
+}
+
+/* The list draws only the rows near the screen, with spacer rows standing in for
+   the rest, and swaps them as #main scrolls. Laying out every row of a 1,500-row
+   page (22 columns, about 33,000 cells) took over a second; the rows on screen
+   take a tenth of that. Every row is the same height (a 40 px thumbnail), so a
+   row's position is its index times that height. Selection, focus and keyboard
+   navigation all work from state.files, so a row that is not drawn loses
+   nothing; a newly drawn row takes its sel / focus classes from state. */
+const LV = { files: [], defs: [], start: -1, end: -1, rowH: 43, raf: 0 };
+const LV_BUFFER = 30;                   // rows drawn above and below the screen
+function listRowsTop() {
+  const m = $("#main"), head = $("#grid").querySelector("table.lv thead");
+  if (!head) return 0;
+  return head.getBoundingClientRect().bottom - m.getBoundingClientRect().top + m.scrollTop;
+}
+function renderListWindow(force) {
+  const tbl = $("#grid").querySelector("table.lv");
+  if (state.view !== "list" || !tbl) return;
+  const m = $("#main"), n = LV.files.length, h = LV.rowH;
+  const first = Math.min(n, Math.max(0, Math.floor((m.scrollTop - listRowsTop()) / h)));
+  const shown = Math.ceil(m.clientHeight / h) + 1;
+  if (!force && LV.start <= Math.max(0, first - 10) && LV.end >= Math.min(n, first + shown + 10)) return;
+  const start = Math.max(0, first - LV_BUFFER), end = Math.min(n, first + shown + LV_BUFFER);
+  const span = LV.defs.length || 1;
+  const spacer = px => px > 0
+    ? `<tr class="lvspacer" aria-hidden="true" style="cursor:default"><td colspan="${span}" `
+      + `style="height:${px}px;padding:0;border:0;background:none"></td></tr>` : "";
+  const tb = tbl.querySelector("tbody");
+  tb.innerHTML = spacer(start * h)
+    + LV.files.slice(start, end).map(f => lvRowEl(f, LV.defs).outerHTML).join("")
+    + spacer((n - end) * h);
+  LV.start = start; LV.end = end;
+  // rows are one fixed height; if the stylesheet ever changes it, measure and redraw
+  const row = tb.querySelector("tr.lvrow");
+  const real = row ? Math.round(row.getBoundingClientRect().height) : h;
+  if (real > 0 && real !== h) { LV.rowH = real; renderListWindow(true); }
+}
+$("#main").addEventListener("scroll", () => {
+  if (state.view !== "list" || LV.raf) return;
+  LV.raf = requestAnimationFrame(() => { LV.raf = 0; renderListWindow(false); });
+}, { passive: true });
+window.addEventListener("resize", () => { if (state.view === "list") renderListWindow(false); });
+// Bring a file's tile or row into view. A list row may not be drawn yet, so the
+// list first scrolls to where it sits and draws that stretch.
+function revealFile(id) {
+  if (state.view === "list") {
+    const i = LV.files.findIndex(f => f.id === id);
+    if (i >= 0 && !$("#grid").querySelector(`.lvrow[data-id="${id}"]`)) {
+      const m = $("#main");
+      m.scrollTop = Math.max(0, listRowsTop() + i * LV.rowH - m.clientHeight / 2);
+      renderListWindow(true);
+    }
+  }
+  document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`)
+    ?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function updateSortArrows() {
@@ -1266,7 +1319,7 @@ function advancePast(justDone) {
   }
   const id = order[next];
   state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
-  document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  revealFile(id);
 }
 // Flag picker: a multi-select checklist against the case's own flag list
 // (⚙ Flags), replacing a freeform typed tag - no vocabulary drift between
@@ -1984,7 +2037,7 @@ function moveFocus(delta) {
   }
   const id = ids[i];
   state.sel.clear(); state.sel.add(id); setFocus(id); syncSel();
-  document.querySelector(`.tile[data-id="${id}"], .lvrow[data-id="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  revealFile(id);
 }
 document.addEventListener("keydown", e => {
   if (/input|textarea|select/i.test(e.target.tagName)) return;
