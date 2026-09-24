@@ -1300,12 +1300,12 @@ async function categorize(ids, cat) {
   // move the cursor on to the next file under whatever filter is active
   // (the categorized tiles stay put until you hit Refresh) - not just when
   // working the Uncategorized backlog specifically
-  if (cat !== 0) advancePast(ids);
+  if (cat !== 0) advancePast(ids, cat);
   else if (state.metaOpen && ids.includes(state.focus)) showMeta(state.focus);
 }
 
 /* put focus on the first file after the ones just categorized */
-function advancePast(justDone) {
+function advancePast(justDone, cat) {
   const order = state.files.map(f => f.id);
   const done = new Set(justDone);
   let last = -1;
@@ -1313,6 +1313,20 @@ function advancePast(justDone) {
   const next = last + 1;
   if (next >= order.length) {
     const pages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    // Under a Category filter the files just categorized no longer match it
+    // (working Uncategorized is the usual case), so the files after them move
+    // up: the next ones to review are now on this same page, not the next one.
+    // Going to page + 1 skipped a whole page of them.
+    const fcat = $("#fcat").value;
+    const dropsOut = fcat !== "any" && +fcat !== cat;
+    if (dropsOut && !state.similarOf && !state.vstack && !state.stack) {
+      state.sel.clear(); state.focus = null;
+      return load().then(() => {
+        const first = state.files[0];
+        if (!first) { syncSel(); return; }
+        state.sel.add(first.id); setFocus(first.id); syncSel(); revealFile(first.id);
+      });
+    }
     if (!state.similarOf && state.page < pages) return gotoPage(state.page + 1);
     state.sel.clear(); state.focus = null; syncSel();
     return;
