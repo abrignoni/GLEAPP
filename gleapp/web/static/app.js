@@ -1293,10 +1293,16 @@ $("#saveState").onclick = () => { if ($("#saveState").className === "error") set
 
 /* ---------- mutations ---------- */
 async function categorize(ids, cat) {
-  await save("/api/categorize", { ids, category: cat });
+  // a collapsed tile stands for its whole duplicate group, so the category goes
+  // to every copy in it; anywhere each file has its own tile, just that file
+  const withGroup = $("#fcollapse").checked && state.view !== "list"
+    && !state.stack && !state.vstack && !state.similarOf;
+  const r = await save("/api/categorize", { ids, category: cat, with_group: withGroup });
   ids.forEach(id => { const f = state.files.find(x => x.id === id); if (f) f.category = cat; });
   refreshTiles(ids);
-  toast(`${cat ? catName(cat) : "Uncategorized"} → ${ids.length} file(s)`);
+  const n = (r && r.count) || ids.length;
+  toast(`${cat ? catName(cat) : "Uncategorized"} → ${n} file(s)`
+    + (n > ids.length ? ` (${ids.length} tile${ids.length === 1 ? "" : "s"} with their copies)` : ""));
   // move the cursor on to the next file under whatever filter is active
   // (the categorized tiles stay put until you hit Refresh) - not just when
   // working the Uncategorized backlog specifically
