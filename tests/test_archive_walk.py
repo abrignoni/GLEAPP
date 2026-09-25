@@ -22,6 +22,7 @@ import hashlib
 import io
 import json
 import sqlite3
+import struct
 import sys
 
 import pytest
@@ -673,8 +674,32 @@ def test_a_gpt_partition_is_found_in_the_sectors_its_table_counts(
     sectors when it has none, which is how qnxprobe names it too. The byte
     offsets are written out rather than computed, and the 512-byte row is the
     control: it passed before 4096-byte sectors were read at all."""
+    disk = qnxprobe._gpt_test_image(ss, apfs_bare[0], first_lba, name, APFS_TYPE)  # pylint: disable=protected-access
+    _walks_as_bare(apfs_bare, tmp_path, disk, base, name, prefix)
+
+
+def test_a_hybrid_mbr_beside_an_empty_4096_gpt_counts_4096_byte_sectors(
+        apfs_bare, tmp_path):
+    """A valid GPT with no partition in it still says the disk's sectors are
+    4096 bytes, and an MBR beside it counts the same logical blocks (UEFI 2.10,
+    Table 5.2). qnxprobe 1.31 tested the table for truth, and an empty table is
+    false, so it answered 512 and the MBR record's volume was looked for at an
+    eighth of its offset; 1.32 tests for no table instead. The record here is a
+    hybrid one beside the protective record, of a type GLEAPP does not read, and
+    the volume has no name, so it is labelled by its start in 4096-byte sectors."""
+    raw = apfs_bare[0]
+    disk = qnxprobe._gpt_test_image(4096, raw, 300, "", APFS_TYPE, used=False)  # pylint: disable=protected-access
+    hybrid = bytearray(16)
+    hybrid[4] = 0xAF
+    struct.pack_into("<II", hybrid, 8, 300, len(raw) // 4096)
+    disk[462:478] = hybrid                            # the second MBR record
+    _walks_as_bare(apfs_bare, tmp_path, disk, 1_228_800, "", "lba300")
+
+
+def _walks_as_bare(apfs_bare, tmp_path, disk, base, name, prefix):
+    """The disk lists the container as its one volume at ``base`` and walks to
+    the same files, sizes and bytes as the container does bare, under ``prefix``."""
     raw, sizes, largest, largest_bytes = apfs_bare
-    disk = qnxprobe._gpt_test_image(ss, raw, first_lba, name, APFS_TYPE)  # pylint: disable=protected-access
     image = tmp_path / "ev" / "disk.img"
     image.parent.mkdir()
     image.write_bytes(bytes(disk))
