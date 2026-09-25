@@ -51,6 +51,17 @@ def test_only_html_is_checked_by_default():
     assert checked == {"html"}
 
 
+def _wait_for_export(cl):
+    """An HTML export runs as a job so the bottom bar can follow it; wait for it."""
+    for _ in range(240):
+        job = cl.get("/api/job").get_json()
+        if not job["running"]:
+            assert job["stage"] == "done", job
+            return job
+        time.sleep(0.25)
+    raise AssertionError(f"export still running: {job}")
+
+
 def _case_with_one_image(tmp_path):
     from gleapp.case import Source, open_case          # pylint: disable=import-outside-toplevel
     from gleapp.pipeline import ingest_sources, process  # pylint: disable=import-outside-toplevel
@@ -91,7 +102,7 @@ def test_asking_for_lava_from_the_gallery_writes_a_lava_project(tmp_path):
 
 
 def test_the_other_formats_still_come_back_in_the_response(tmp_path):
-    """Only LAVA is slow enough to need a job; the rest stay inline."""
+    """LAVA and HTML are slow enough to need a job; the rest stay inline."""
     from gleapp.web.app import create_app              # pylint: disable=import-outside-toplevel
     path = _case_with_one_image(tmp_path)
     cl = create_app(None).test_client()
@@ -99,6 +110,20 @@ def test_the_other_formats_still_come_back_in_the_response(tmp_path):
     body = cl.post("/api/report", json={"format": ["csv"], "scope": "all"}).get_json()
     assert "job" not in body
     assert len(body["written"]) == 1 and body["written"][0].endswith(".csv")
+
+
+def test_an_html_report_runs_as_a_job_the_bottom_bar_can_follow(tmp_path):
+    """An HTML report embeds every file's full-size view, which is minutes on a real
+    case; inline, the gallery showed nothing until it was done."""
+    from gleapp.web.app import create_app              # pylint: disable=import-outside-toplevel
+    path = _case_with_one_image(tmp_path)
+    cl = create_app(None).test_client()
+    cl.post("/api/case/open", json={"path": str(path)})
+    body = cl.post("/api/report", json={"format": ["html"], "scope": "all"}).get_json()
+    assert body["job"] is True
+    job = _wait_for_export(cl)
+    assert job["total"] == 1 and job["done"] == 1
+    assert [Path(p).name for p in job["stats"]["written"]] == ["report.html"]
 
 
 def test_the_dialog_offers_the_maps_toggle_the_route_reads():
@@ -135,11 +160,13 @@ def test_unticking_maps_reaches_the_writer_and_is_remembered(tmp_path, monkeypat
     assert cl.post("/api/report",
                    json={"format": ["html"], "scope": "all",
                          "maps": False}).status_code == 200
+    _wait_for_export(cl)
     assert seen.get("maps") is False, seen
     assert cl.get("/api/report/prefs").get_json()["maps"] is False
 
     seen.clear()
     cl.post("/api/report", json={"format": ["html"], "scope": "all", "maps": True})
+    _wait_for_export(cl)
     assert seen.get("maps") is True, seen
     assert cl.get("/api/report/prefs").get_json()["maps"] is True
 
@@ -158,4 +185,5 @@ def test_maps_are_drawn_when_the_request_says_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(report, "export_html",
                         lambda *a, **kw: (seen.update(kw), real(*a, **kw))[1])
     cl.post("/api/report", json={"format": ["html"], "scope": "all"})
+    _wait_for_export(cl)
     assert seen.get("maps") is True, seen

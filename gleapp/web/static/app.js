@@ -2288,7 +2288,8 @@ $("#helpDlg").addEventListener("click", e => {
 
 /* ---------- live processing bar + auto-refresh ---------- */
 let liveTimer = null, liveTick = 0;
-let lastReportScope = "";   // scope label for the LAVA job currently in flight, if any
+let lastReportScope = "";   // scope label for the export job currently in flight, if any
+let lastReportLava = false;  // whether that job is a LAVA export
 function stopLive() {
   if (liveTimer) { clearTimeout(liveTimer); liveTimer = null; }
 }
@@ -2332,8 +2333,9 @@ async function liveJob() {
       exported ? () => openFolder(j.stats.report_dir) : null);
     if (exported) {
       addReportNotification(j.stats.report_dir,
-        `LAVA export (${lastReportScope || "all files"})`);
+        `${lastReportLava ? "LAVA export" : "Export"} (${lastReportScope || "all files"})`);
       lastReportScope = "";
+      lastReportLava = false;
     }
     return;
   }
@@ -2592,9 +2594,10 @@ $("#reportGo").onclick = async () => {
   });
   if (r.error) return toast(r.message || "Export failed");
   if (r.job) {
-    // a LAVA project stages the media and draws a map per geolocated file, so
-    // it runs as a job and the bottom bar follows it to the end
+    // a LAVA project or an HTML report (every file's full-size view embedded)
+    // runs as a job, and the bottom bar follows it to the end
     lastReportScope = r.scope || "";
+    lastReportLava = fmt.includes("lava");
     toast(`Building the report (${r.scope}) — the bar at the bottom follows it`);
     liveTick = 0; liveJob();
     return;

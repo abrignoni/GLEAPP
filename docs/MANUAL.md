@@ -970,7 +970,7 @@ want, or current selection) and one or more **formats**:
 
 | Format | Contents |
 |---|---|
-| HTML report | self-contained page (thumbnails embedded) with your case header, a "Report contents" breakdown, one card per image showing the fields you chose |
+| HTML report | a page (thumbnails embedded) with your case header, a "Report contents" breakdown, one card per image showing the fields you chose |
 | CSV | full metadata, one row per file |
 | JSON | the same data, structured; carries the case header too |
 | KMZ | geolocated media for Google Earth / mapping tools: a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location |
@@ -1022,18 +1022,25 @@ report`, to leave them out.
 
 **Media** (dialog checkboxes, on by default, saved with the case):
 
-- **Embed full-size images**: images embedded downscaled to ≤ 2000 px; click a
-  thumbnail to open it full size in a new tab (HEIC included).
-- **Embed playable videos**: each video file added to the report; a play
+- **Include full-size images**: each original image is copied, byte for byte,
+  into a folder beside the report named after it (`report.html` gets
+  `report_media/`), and clicking a thumbnail opens it in a new tab. A format a
+  browser cannot show (HEIC, TIFF, camera RAW, ...) is copied as it is, with a
+  full-size JPEG of it beside it for the click to open; the card's details link
+  to the original.
+- **Include videos**: each original video is copied into the same folder; a play
   triangle marks video cards and clicking plays the video in a new tab. This is
-  what makes a report large.
+  what makes a report's folder large.
 - **Blur images by default**: sets whether *this* report opens blurred or not -
   baked into the file at export time. Whoever opens it can still flip the
   **Blur images** switch for their own viewing; that choice is never saved back
   into the file, so the next person to open it sees your chosen default again.
 
-The report stays one self-contained file. CLI `report --thumbs-only` for
-thumbnails only.
+Only the thumbnails are embedded, so the page itself stays small. Keep the page
+and its `_media` folder together when you copy or hand over a report: the links
+are relative, so they work wherever the two go, and nothing else. Exporting again
+replaces the folder. CLI `report --thumbs-only` for thumbnails only, with no
+folder.
 
 A **Report contents** breakdown near the top gives the file count for the
 report's scope, split by type and by category (with a percentage and a color

@@ -2068,15 +2068,16 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         }.get(label, "selection")
 
         # A LAVA project stages every file's media, draws a locator map for each
-        # geolocated one and copies the frames out of every video, so it is
-        # minutes of work on a real case rather than the seconds the other
-        # formats take. It runs as a job with the bottom bar following it, and
-        # the formats picked alongside it run in the same job.
-        if "lava" in fmts:
+        # geolocated one and copies the frames out of every video, and an HTML
+        # report embeds every file's full-size view, so either is minutes of work
+        # on a real case rather than the seconds the other formats take. They run
+        # as a job with the bottom bar following it, and the formats picked
+        # alongside run in the same job.
+        if "lava" in fmts or "html" in fmts:
             if state["job"]["running"]:
                 abort(409, description="a job is already running")
             state["job"] = {"running": True, "stage": "export", "done": 0,
-                            "total": 0, "message": "Building the LAVA report…",
+                            "total": 0, "message": "Building the report…",
                             "stats": None, "error": None}
 
             def _job() -> None:
@@ -2240,11 +2241,13 @@ def _write_reports(case, fmts, out, tag, where, label, *, header, fields,
         made.append(str(report.export_json(case, out / f"report{tag}.json", where,
                                            header=header)))
     if "html" in fmts:
+        if stage_cb:
+            stage_cb("Building the HTML report…")
         made.append(str(report.export_html(
             case, out / f"report{tag}.html", where,
             header=header, fields=fields, scope_label=label,
             full_images=full_images, full_videos=full_videos, tz=tz, maps=maps,
-            blur=blur, by_flag=by_flag, only_flags=only_flags)))
+            blur=blur, by_flag=by_flag, only_flags=only_flags, progress=progress)))
     if "kml" in fmts:
         made.append(str(report.export_kml(case, out / f"geolocation{tag}.kmz", where)))
     if "md5" in fmts:
