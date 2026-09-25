@@ -43,7 +43,7 @@ except ImportError:                  # not on sys.path when imported as a module
     except ImportError:
         ewfprobe = None
 
-QNXPROBE_VERSION = "1.31"
+QNXPROBE_VERSION = "1.32"
 
 QNX6_MAGIC     = 0x68191122
 BOOTBLOCK_SIZE = 0x2000
@@ -717,7 +717,9 @@ def disk_sector_size(fh):
     blocks"; Table 5.4, the protective StartingLBA is 1, "the LBA of the GPT
     Partition Header"), so this is the unit for both tables."""
     gpt = parse_gpt(fh)
-    return gpt.sector_size if gpt else SECTOR
+    # An empty table is falsy: a valid GPT with no used entry still names the
+    # sector size, so the test is for no table, not for no entries.
+    return gpt.sector_size if gpt is not None else SECTOR
 
 
 # ---------------------------------------------------------------------------
@@ -9195,7 +9197,7 @@ def partition_regions(fh, size):
     # Read first, reported last: the sector size the GPT header was found at is
     # the unit every LBA on this disk counts, the MBR's included.
     gpt = parse_gpt(fh)
-    ss = gpt.sector_size if gpt else SECTOR
+    ss = gpt.sector_size if gpt is not None else SECTOR
     parts = parse_mbr(fh)
     if parts:
         for idx, t, st, cnt in parts:
@@ -9387,7 +9389,7 @@ def main(path, scan_limit_mib=256, do_list=False, list_depth=2, list_max=400,
         # its header was found at is the unit of every LBA on this disk,
         # the MBR's included (disk_sector_size).
         gpt, gpt_rejected = read_gpt(fh)
-        ss = gpt.sector_size if gpt else SECTOR
+        ss = gpt.sector_size if gpt is not None else SECTOR
         image_rec["sector_bytes"] = ss
         parts = parse_mbr(fh)
         if parts is None:
@@ -9440,7 +9442,7 @@ def main(path, scan_limit_mib=256, do_list=False, list_depth=2, list_max=400,
             # A header that fails its own checks is not used, and saying so
             # keeps "not trusted" from reading as "no partition table".
             print(f"\n  GPT      header signature at byte {at:,} NOT USED: {why}")
-        if gpt:
+        if gpt is not None:
             print(f"\n  GPT      valid, {len(gpt)} partition entries"
                   + (f", {ss}-byte logical sectors" if ss != SECTOR else "")
                   + (f", from the backup header at LBA {gpt.header_lba:,}"
@@ -10617,7 +10619,7 @@ def _flash_fixture_check(image_gz, hashes, listing=None, style="stat", prefix=""
     return res
 
 
-def _gpt_test_image(ss, volume, first_lba, name, type_guid):
+def _gpt_test_image(ss, volume, first_lba, name, type_guid, used=True):
     """A whole disk image with one GPT partition holding ``volume``, for the
     self-test: a protective MBR at LBA 0, the primary header at LBA 1 and its
     entry array from LBA 2, the partition at ``first_lba``, and the backup array
@@ -10651,7 +10653,8 @@ def _gpt_test_image(ss, volume, first_lba, name, type_guid):
     ent[16:32] = uuid.UUID("5a6b7c8d-0000-4000-8000-00000000c0de").bytes_le
     struct.pack_into("<QQQ", ent, 32, first_lba, last_lba, 0)
     ent[56:56 + 2 * len(name)] = name.encode("utf-16-le")
-    arr = bytes(ent) + bytes(ent_sz * (n_ent - 1))
+    # used=False leaves every entry zero: a valid table with no partition in it
+    arr = (bytes(ent) if used else bytes(ent_sz)) + bytes(ent_sz * (n_ent - 1))
 
     def header(my_lba, alt_lba, arr_lba):
         h = bytearray(92)
@@ -12569,6 +12572,29 @@ def self_test():
                 cgood, csaid = False, f"raised {type(exc).__name__}: {exc}"
             cases.append(("a 4096 GPT cut short still names its partition, reaching "
                           "past the end of the file", cgood, csaid))
+            # A valid 4096 GPT with no used entry is still a 4096 disk. An empty
+            # GptTable is falsy, so a truthiness test counted this disk in 512
+            # and looked for a hybrid MBR record's volume at an eighth of its
+            # offset.
+            try:
+                gempty = _gpt_test_image(4096, gvol, 300, "sparse", LINUX_FS, used=False)
+                ghyb = bytearray(16)
+                ghyb[4] = 0x83
+                struct.pack_into("<II", ghyb, 8, 300, len(gvol) // 4096)
+                gempty[462:478] = ghyb
+                efh = io.BytesIO(bytes(gempty))
+                etab = parse_gpt(efh)
+                evols = [v for v in volumes(efh, len(gempty)) if v["label"] == "MBR part 2"]
+                egood = (etab is not None and etab == [] and etab.sector_size == 4096
+                         and disk_sector_size(efh) == 4096 and len(evols) == 1
+                         and evols[0]["base"] == 1228800 and evols[0]["kind"] == "ext4"
+                         and evols[0]["lba"] == 300)
+                esaid = (f"the hybrid record's volume at byte {evols[0]['base']:,}, "
+                         f"{evols[0]['kind']}" if evols else "no MBR volume")
+            except Exception as exc:                 # pylint: disable=broad-except
+                egood, esaid = False, f"raised {type(exc).__name__}: {exc}"
+            cases.append(("a valid 4096 GPT with no used entry still counts the MBR in "
+                          "4096-byte sectors", egood, esaid))
             for label, cond, said in cases:
                 if not cond:
                     ok = False
