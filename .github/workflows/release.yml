@@ -1,6 +1,7 @@
 name: Release
 
-# Builds the frozen desktop app on each platform and attaches the results to a
+# Builds the frozen desktop app on each platform, Intel and Apple silicon Macs both,
+# and attaches the results to a
 # GitHub Release. Pushing a tag like v0.1.0 is the trigger; the release is created
 # as a DRAFT, so the assets can be checked before anyone can download them.
 #
@@ -40,6 +41,12 @@ jobs:
           - os: windows-latest
             platform: windows
           - os: macos-latest
+            platform: macos
+          # Intel Macs. macos-latest is Apple silicon, so without this leg an Intel Mac
+          # gets nothing. macos-13 was retired on 2025-12-04; macos-15-intel is the
+          # replacement and GitHub drops x86_64 macOS entirely after it retires in 2027,
+          # at which point this leg has to go and Intel users need Rosetta or a local build.
+          - os: macos-15-intel
             platform: macos
           - os: ubuntu-latest
             platform: linux
@@ -157,7 +164,7 @@ jobs:
       - name: Upload the assets
         uses: actions/upload-artifact@v4
         with:
-          name: assets-${{ matrix.platform }}
+          name: assets-${{ matrix.os }}
           path: assets/*
           if-no-files-found: error
 
