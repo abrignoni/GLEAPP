@@ -248,7 +248,9 @@ part of a disk while reporting the carve finished is worse than reading all of i
 everything. NTFS answers through `$Bitmap`, FAT32 through its allocation table, exFAT through
 its allocation bitmap, HFS+ through its allocation file and APFS through the container's
 space manager, and F2FS through the per-block valid map in its segment information table
-(qnxprobe 1.29; before that an image carrying an F2FS volume scanned everything).
+(qnxprobe 1.29; before that an image carrying an F2FS volume scanned everything). SquashFS,
+JFFS2, UBI, UBIFS and YAFFS cannot answer: none of their walkers has `free_extents` (checked
+on qnxprobe 1.32), so an image carrying one of them scans everything.
 
 **One quiet volume is enough, and it is usually the small one.** Every Windows disk carries a
 FAT32 EFI system partition of a fifth of a gigabyte beside its NTFS volumes, so until FAT
@@ -294,13 +296,25 @@ Three vendored single-file MIT tools do the work, copied verbatim into `gleapp/v
 with their provenance in `vendored.json` and their hashes asserted by the suite. `ewfprobe`
 presents the acquired disk as a seekable stream, reconstructing chunks across segments;
 `qnxprobe` reads the filesystems inside it (NTFS, APFS including the sealed system volume
-of macOS 11 and later, HFS+, ext, F2FS, FAT32, exFAT and the QNX ones), importing ewfprobe from
+of macOS 11 and later, HFS+, ext, F2FS, FAT32, exFAT, the QNX ones, and from qnxprobe 1.31
+the Linux flash filesystems SquashFS, JFFS2, UBI/UBIFS, YAFFS1 and YAFFS2), importing ewfprobe from
 beside it to open an .E01; `mediacarve` scans the stream for image and video signatures and
 reports each hit as an offset and a length. All three are standard library only, which is
 why they are vendored rather than required: GLEAPP ships as a frozen desktop app, and a
 dependency with a build step is a cost with nothing behind it. Fix them upstream
 (`abrignoni/ewfprobe`, `abrignoni/mediacarve`, `abrignoni/qnxprobe`) and re-vendor with
 `tools/check_vendored.py --update`; an edit made in `gleapp/vendor/` fails the suite.
+
+**The walk reads more than the screen promises.** `_volumes()` walks any volume `identify_fs`
+names and `walker_for` can read, and never consults `WALKED_FILESYSTEMS`, the list the
+launcher, the README, the manual and the in-app help show and `tests/test_supported_inputs.py`
+pins. So a re-vendor that teaches qnxprobe a filesystem makes GLEAPP walk it before the screen
+names it. The flash filesystems qnxprobe 1.31 added arrived this way. Measured on 2026-09-25
+with qnxprobe 1.32: 17 of its flash fixtures (five SquashFS, three JFFS2, four UBI, one UBIFS,
+one YAFFS1, three YAFFS2), each ingested as a raw image, were recognised as disks and walked
+with no volume refused, and on the seven read back every file, 2,677 in all, matched the hashes
+qnxprobe records for its fixture. Naming a filesystem on the screen means changing the
+constant, the pinned test's list and its kinds map, and the README, manual and help together.
 
 A CARVED hit is registered the way a tar member is: `member_offset` is a byte offset and
 reference mode reads the bytes back by seeking to it. For a tar that is an offset into the
