@@ -93,7 +93,8 @@ MODE_STAGED = "staged"
 # does not name the format, so a QNX6 volume is not seen as a volume here at all.
 WALKED_FILESYSTEMS = ("ext2", "ext3", "ext4", "F2FS", "FAT32", "exFAT", "NTFS",
                       "HFS+", "HFSX", "APFS", "QNX4", "QNX EFS", "QNX ETFS",
-                      "QNX IFS")
+                      "QNX IFS", "SquashFS", "JFFS2", "UBI", "UBIFS", "YAFFS1",
+                      "YAFFS2")
 
 FORMAT_ZIP = "zip"
 FORMAT_TAR = "tar"
