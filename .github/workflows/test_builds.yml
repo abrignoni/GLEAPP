@@ -8,9 +8,12 @@ name: Test builds
 #
 # Advisory rather than required, so a paths filter is fine here, and it deliberately
 # leaves gleapp/** out: a logic change inside an existing module almost never breaks the
-# frozen build, and the four legs together bill about 70 minutes per run while the repo
-# is private, the two macOS legs being most of that at a 10x multiplier; a public repo
-# pays nothing for standard runners. Packaging and dependency changes are where frozen-build breaks come from,
+# frozen build, and the four legs together bill about 140 minutes per run while the repo
+# is private; a public repo pays nothing for standard runners. Measured on the run that
+# added the Intel leg: 100 of those minutes are macos-15-intel alone, which took 9
+# minutes of wall clock against Apple silicon's 3 and bills at 10x, so that one leg
+# costs more than the other three together.
+# Packaging and dependency changes are where frozen-build breaks come from,
 # and the weekly schedule covers the rest. Modeled on iLEAPP's test_builds.yml, which
 # is manual only.
 
