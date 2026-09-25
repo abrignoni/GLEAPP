@@ -23,5 +23,18 @@ if __name__ == "__main__":
         from gleapp import __version__
         print(f"GLEAPP {__version__}")
         sys.exit(0)
+    # --selfcheck imports what the desktop shell imports, the native stack included,
+    # and exits without opening a window. --version answers above this line and
+    # --texworker only reaches Pillow, so neither of them loads cv2: the macOS build of
+    # v2026.5.0 passed both and still could not start, because a harfbuzz collision in
+    # the bundle made importing cv2 fail. A frozen build that cannot import these
+    # cannot run, so this is what a smoke test has to call.
+    if "--selfcheck" in sys.argv[1:]:
+        import importlib
+        for name in ("numpy", "PIL.Image", "cv2", "gleapp.web.app", "gleapp.desktop"):
+            importlib.import_module(name)
+            print(f"ok {name}")
+        print("selfcheck passed")
+        sys.exit(0)
     from gleapp.desktop import main
     sys.exit(main())
