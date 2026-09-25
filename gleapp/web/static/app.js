@@ -1673,14 +1673,19 @@ function attachFaceLayer(img, faces, container, onClick) {
     layer.style.width = iRect.width + "px";
     layer.style.height = iRect.height + "px";
   };
+  // dragging the details pane wider resizes the image without resizing the
+  // window, so watch the image and container themselves, not just the window
+  const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => sync()) : null;
   const cleanup = () => {
     window.removeEventListener("resize", sync);
     container.removeEventListener("scroll", sync);
+    if (ro) ro.disconnect();
   };
   if (img.complete && img.naturalWidth) sync();
   else img.addEventListener("load", sync, { once: true });
   window.addEventListener("resize", sync);
   container.addEventListener("scroll", sync);
+  if (ro) { ro.observe(img); ro.observe(container); }
   return cleanup;
 }
 
