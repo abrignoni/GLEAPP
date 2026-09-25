@@ -1,3 +1,5 @@
+<img src="images/gleapp-logo.png" alt="GLEAPP logo" width="128">
+
 # GLEAPP Manual
 
 **GLEAPP**: Graphics · Logs · Examination · Automated Processing · Parsing.

@@ -1,3 +1,5 @@
+<img src="docs/images/gleapp-logo.png" alt="GLEAPP logo" width="128">
+
 # GLEAPP: Graphics · Logs · Examination · Automated Processing · Parsing
 
 An open-source toolkit for **triaging and analyzing large sets of images and
