@@ -9,7 +9,7 @@ name = "gleapp-forensics"
 # what the release workflow checks the tag against. setuptools cannot read it from there
 # with a dynamic attr: the root launcher gleapp.py shadows the package for its importer,
 # the same shadowing pylint hits, so tests/test_version_consistency.py ties the two.
-version = "2026.5.0"
+version = "2026.5.1"
 description = "GLEAPP - Graphics · Logs · Examination · Automated Processing · Parsing: an open-source image/video forensic triage toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
