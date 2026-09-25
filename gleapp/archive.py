@@ -445,20 +445,34 @@ _WALKERS: dict[tuple[str, int], object] = {}
 def _volumes(image) -> list[tuple[int, int | None, str, str]]:
     """[(base offset, size, filesystem, label)] for every volume in an image.
 
-    Built from qnxprobe's own partition parsers and its identify, because it has
-    no single call that answers this. A GPT is tried first, then an MBR, then the
-    whole image as one volume, which is what an acquisition of a single
-    partitionless volume looks like.
+    Built from qnxprobe's own partition parsers and its identify. A GPT is tried
+    first, then an MBR, then the whole image as one volume, which is what an
+    acquisition of a single partitionless volume looks like.
+
+    qnxprobe.volumes() answers much the same question and is not used, because it
+    names volumes differently ("GPT part 1 EFI system partition", and
+    p1_lba2048_efi_system_partition, where this uses the partition's own name)
+    and also lists regions it cannot identify, such as the Microsoft reserved
+    partition. The label here prefixes every walked file's stored name, so
+    switching would rename every file a walk registers.
+
+    Partition tables count logical sectors, which are 4096 bytes on a 4Kn drive
+    or a UFS LUN image. A GPT's LBAs are multiplied by the sector size its header
+    was found at. An MBR counts the same logical blocks (UEFI 2.10, Table 5.2),
+    so its LBAs are multiplied by qnxprobe.disk_sector_size(), the unit qnxprobe
+    reads partition LBAs in.
     """
     out: list[tuple[int, int | None, str, str]] = []
     parts = qnxprobe.parse_gpt(image)
     if parts:
-        regions = [(start * qnxprobe.SECTOR, (end - start + 1) * qnxprobe.SECTOR, name)
+        ss = parts.sector_size
+        regions = [(start * ss, (end - start + 1) * ss, name)
                    for _idx, name, _guid, start, end in parts]
     else:
         mbr = qnxprobe.parse_mbr(image)
+        ss = qnxprobe.disk_sector_size(image)
         # parse_mbr yields (index, type byte, first sector, sector count)
-        regions = ([(start * qnxprobe.SECTOR, count * qnxprobe.SECTOR, "")
+        regions = ([(start * ss, count * ss, "")
                     for _i, _t, start, count in mbr] if mbr else [])
     if not regions:
         regions = [(0, None, "")]
@@ -1206,17 +1220,20 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
         segments = len(img.paths)
         stored = _stored_hash(img)
         vols = _volumes(img)
+        # An unnamed volume is named by where it starts, counted in the disk's
+        # own logical sectors, which is how qnxprobe names it too.
+        ss = qnxprobe.disk_sector_size(img)
         # A partition the table describes past the end of the image is the shape
         # of a split set missing its later segments, or a truncated image. Its
         # files still walk, and the walk reports what it can read, so the case
         # records that the volume is not all here rather than leaving a short
         # listing to read as a small disk.
-        short = [{"label": lb or f"lba{b // qnxprobe.SECTOR}", "size": s, "missing": m}
+        short = [{"label": lb or f"lba{b // ss}", "size": s, "missing": m}
                  for lb, b, s, m in qnxprobe.short_regions(
-                     media_size, [(lb or f"lba{b // qnxprobe.SECTOR}", b, s)
+                     media_size, [(lb or f"lba{b // ss}", b, s)
                                   for b, s, _k, lb in vols if s])]
         for base, size, fskind, label in vols:
-            vol = label or f"lba{base // qnxprobe.SECTOR}"
+            vol = label or f"lba{base // ss}"
             try:
                 walker = qnxprobe.walker_for(fskind, img, base, size)
                 _prime_catalog(walker)

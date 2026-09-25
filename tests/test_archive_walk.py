@@ -626,3 +626,75 @@ def test_a_catalog_that_cannot_be_read_in_one_pass_is_walked_as_before(
     whole.close()
     fallen.close()
 
+
+
+# ---- a partition table whose sectors are 4096 bytes --------------------------
+
+# The type GUID the APFS partition carries in the GPT of the public macOS Big
+# Sur acquisition (corpus key dleapp_macos_bigsur). GLEAPP does not read it; it
+# is here so the table stands for the kind of disk it would come from.
+APFS_TYPE = "7c3457ef-0000-11aa-aa11-00306543ecac"
+
+
+@pytest.fixture(scope="module", name="apfs_bare")
+def _apfs_bare(tmp_path_factory):
+    """The committed APFS container walked with no partition table around it:
+    the container, each file's size by path, and one file's bytes as read back."""
+    raw = gzip.decompress(
+        (Path(__file__).parent / "fixtures" / "apfs-fixture.img.gz").read_bytes())
+    tmp = tmp_path_factory.mktemp("bare")
+    image = tmp / "bare.img"
+    image.write_bytes(raw)
+    case, _ = _ingest(tmp, image, include_other=True)
+    rows = _rows(case)
+    rec = list(archive.source_records(case).values())[0]
+    rel, row = max(rows.items(), key=lambda kv: (kv[1]["size"], kv[0]))
+    dest = tmp / "largest"
+    archive._materialize(rec, row, dest)             # pylint: disable=protected-access
+    case.close()
+    assert all(r.startswith("lba0/") for r in rows)
+    sizes = {r[len("lba0/"):]: v["size"] for r, v in rows.items()}
+    return raw, sizes, rel[len("lba0/"):], dest.read_bytes()
+
+
+@pytest.mark.parametrize("ss, first_lba, name, base, prefix", [
+    (4096, 300, "Macintosh HD", 1_228_800, "Macintosh HD"),
+    (4096, 300, "", 1_228_800, "lba300"),
+    (512, 2048, "", 1_048_576, "lba2048"),
+])
+def test_a_gpt_partition_is_found_in_the_sectors_its_table_counts(
+        apfs_bare, tmp_path, ss, first_lba, name, base, prefix):
+    """A GPT counts its LBAs in the disk's logical sectors, and those are 4096
+    bytes on a 4Kn drive or a UFS LUN image. Multiplying them by 512 looks for
+    the partition at an eighth of its offset, finds no filesystem there, and the
+    disk registers nothing. The same container is wrapped here in a table of each
+    sector size and has to walk exactly as it does bare: the same files at the
+    same sizes, under the partition's name, or under lba<N> in the table's own
+    sectors when it has none, which is how qnxprobe names it too. The byte
+    offsets are written out rather than computed, and the 512-byte row is the
+    control: it passed before 4096-byte sectors were read at all."""
+    raw, sizes, largest, largest_bytes = apfs_bare
+    disk = qnxprobe._gpt_test_image(ss, raw, first_lba, name, APFS_TYPE)  # pylint: disable=protected-access
+    image = tmp_path / "ev" / "disk.img"
+    image.parent.mkdir()
+    image.write_bytes(bytes(disk))
+
+    img = archive._open_image_file(image)            # pylint: disable=protected-access
+    try:
+        vols = archive._volumes(img)                 # pylint: disable=protected-access
+    finally:
+        img.close()
+    assert vols == [(base, len(raw), "apfs", name)]
+
+    case, _ = _ingest(tmp_path, image, include_other=True)
+    rows = _rows(case)
+    rec = list(archive.source_records(case).values())[0]
+    try:
+        assert rows and all(r.startswith(f"{prefix}/") for r in rows), sorted(rows)[:3]
+        assert {r[len(prefix) + 1:]: v["size"] for r, v in rows.items()} == sizes
+        assert {v["volume_base"] for v in rows.values()} == {base}
+        dest = tmp_path / "largest"
+        archive._materialize(rec, rows[f"{prefix}/{largest}"], dest)  # pylint: disable=protected-access
+        assert dest.read_bytes() == largest_bytes
+    finally:
+        case.close()
