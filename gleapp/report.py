@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import csv
 import html
 import io
 import json
 import math
+import re
+import shutil
 import time
 import zipfile
 from collections import Counter
 from pathlib import Path
+from urllib.parse import quote
 
-from . import basemaps, categories, flags, imaging, staticmap, timeutil, vicdetails  # noqa: F401  (imaging: registers HEIF decoder)
+from . import archive, basemaps, categories, flags, imaging, staticmap, timeutil, vicdetails  # noqa: F401  (imaging: registers HEIF decoder)
 from .case import Case
 
 # overview map size - shared so the clickable overlay in _overview_html always
@@ -506,7 +510,10 @@ _HTML_HEAD = """<!doctype html><html class="{blur_cls}"><head><meta charset="utf
    color:#2f6fd8;border:1px solid var(--line);border-radius:5px;padding:1px 9px}}
  h2.catsec .toplink:hover{{background:#2f6fd8;color:#fff;border-color:#2f6fd8}}
  details.kindsec{{margin:14px 0}}
- details.flagsec{{margin-left:18px}}   /* level with a category heading's own text (6px border + 12px padding) */
+ /* a flag (or "No flag") inside a category is a box of its own, headed by the flag,
+    so the Images / Videos groups inside it read as belonging to it */
+ details.flagsec{{margin:16px 0 16px 18px;border:1px solid var(--line);
+   border-left:4px solid var(--fc,var(--mut));border-radius:6px;padding:0 14px 2px}}
  details.kindsec > summary{{cursor:pointer;font-weight:700;font-size:13px;
    list-style:none;padding:4px 0;color:var(--ink)}}
  details.kindsec > summary::-webkit-details-marker{{display:none}}
@@ -516,6 +523,14 @@ _HTML_HEAD = """<!doctype html><html class="{blur_cls}"><head><meta charset="utf
  details.kindsec > .grid{{margin-top:10px}}
  details.flagsec > summary .fsw{{display:inline-block;width:9px;height:9px;border-radius:2px;
    margin-right:5px;vertical-align:1px}}
+ details.flagsec > summary{{font-size:15px;margin:0 -14px;padding:9px 14px 8px;
+   background:rgba(127,127,127,.09);border-radius:0 5px 5px 0}}
+ details.flagsec[open] > summary{{border-bottom:1px solid var(--line);border-radius:0 5px 0 0}}
+ details.flagsec > summary .ftag{{font-size:10px;font-weight:700;text-transform:uppercase;
+   letter-spacing:.08em;color:var(--mut);margin-right:8px}}
+ details.flagsec details.kindsec{{margin:12px 0 12px 8px}}
+ details.flagsec details.kindsec > summary{{font-size:11px;text-transform:uppercase;
+   letter-spacing:.07em;color:var(--mut)}}
  .grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}}
  .card{{border:1px solid var(--line);border-radius:8px;overflow:hidden;break-inside:avoid;
    scroll-margin-top:12px}}
@@ -563,8 +578,23 @@ _HTML_HEAD = """<!doctype html><html class="{blur_cls}"><head><meta charset="utf
     full, unblurred look; click it to keep that one revealed. */
  html.blur .card img{{filter:blur(22px)}}
  html.blur .card img:hover{{filter:none}}
- .card img.openable:hover{{outline:3px solid #2f6fd8;outline-offset:-3px}}
+ .card img.openable:hover,.card a.full:hover img{{outline:3px solid #2f6fd8;outline-offset:-3px}}
+ .card a.full img{{cursor:zoom-in}}
+ /* a locator map's click-to-open viewer, for when the browser refuses a new tab */
+ #lb{{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.92);display:none;
+   flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:14px}}
+ #lb.on{{display:flex}}
+ #lb .lbbar{{display:flex;align-items:center;gap:10px;width:100%;max-width:1400px;
+   color:#cfd3da;font:13px system-ui,-apple-system,Segoe UI,sans-serif}}
+ #lb .lbname{{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+ #lb button{{background:#242833;color:#e6e8ec;border:1px solid #3a4150;border-radius:6px;
+   padding:5px 10px;font:inherit;cursor:pointer}}
+ #lb button:hover{{background:#2f3542}}
+ #lb .lbbody{{flex:1;min-height:0;width:100%;display:flex;align-items:center;justify-content:center}}
+ #lb .lbbody img{{max-width:100%;max-height:100%;object-fit:contain}}
+ body.lbopen{{overflow:hidden}}
  @media print{{
+   #lb{{display:none !important}}
    .wrap{{max-width:none;padding:0}} body{{margin:12mm}}
    .card{{page-break-inside:avoid}} .card img{{background:#fff;filter:none !important}}
    .rptbar{{display:none}}
@@ -973,39 +1003,58 @@ def _donut_svg(case: Case, by_cat: Counter, codes: list[int], n: int) -> str:
         "</svg>")
 
 
-def _view_source(case: Case, d: dict) -> Path:
+def _view_source(case: Case, d: dict, local: Path | None = None) -> Path:
     """The file to build the full-size view from: an LZC-extracted sidecar if
-    one exists, else the ingested original."""
+    one exists, else the ingested original (``local``, when the caller has
+    pulled a reference-mode row's bytes out of its archive or disk image)."""
     ex = case.root / "extracted"
     if ex.is_dir():
         hit = next(ex.glob(f"{d['id']}.*"), None)
         if hit:
             return hit
-    return Path(d["path"])
+    return local or Path(d["path"])
 
 
-# .mov / .m4v are ISO-BMFF like .mp4 - label them video/mp4 so browsers that
-# won't touch "video/quicktime" still try to play them
-_VIDEO_MIME = {".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/mp4",
-               ".webm": "video/webm", ".ogv": "video/ogg", ".mkv": "video/x-matroska",
-               ".avi": "video/x-msvideo", ".3gp": "video/3gpp"}
+# Image formats a browser opens by itself in a tab. Anything else (HEIC, TIFF,
+# camera RAW, GPU textures...) is copied as it is, and a JPEG of it is written
+# beside it for the thumbnail to open, since a browser would only download it.
+_WEB_IMAGE_EXTS = {".jpg", ".jpeg", ".jpe", ".png", ".gif", ".webp", ".bmp", ".avif"}
+# what Pillow calls those formats, for a file whose name carries no extension
+_WEB_IMAGE_FORMATS = {"JPEG": ".jpg", "PNG": ".png", "GIF": ".gif", "WEBP": ".webp",
+                      "BMP": ".bmp", "AVIF": ".avif"}
 
 
-def _video_data_uri(path: Path, max_bytes: int = 60_000_000) -> str:
-    """The video file itself as a data URI, or '' if it's missing or too big
-    to reasonably inline."""
-    p = Path(path)
+def _copy_suffix(d: dict, src: Path, local: Path | None) -> str:
+    """The extension to give a row's copy. A copy pulled out of an archive or disk
+    image sits under a temporary name, so the extension comes from the name the
+    case recorded; a name with none (browser caches are full of them) gets the one
+    its content says, when that is a format a browser can open."""
+    suffix = (Path(d["path"]).suffix if local is not None and src == local else src.suffix)
+    if suffix or d.get("kind") != "image":
+        return suffix
+    from PIL import Image
     try:
-        if p.stat().st_size > max_bytes:
-            return ""
-        raw = p.read_bytes()
-    except OSError:
+        with Image.open(src) as im:
+            return _WEB_IMAGE_FORMATS.get(im.format or "", "")
+    except (OSError, ValueError):   # not an image Pillow reads; keep it as it is
         return ""
-    mime = _VIDEO_MIME.get(p.suffix.lower(), "video/mp4")
-    return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
 
 
-def _fullview_candidates(case: Case, d: dict):
+def _media_name(d: dict, suffix: str) -> str:
+    """A file name for a row's copy in the report's media folder: the row id first,
+    so two files with one name never collide, then the file's own name made safe
+    for every filesystem."""
+    stem = Path(_disp_name(d)).stem
+    stem = re.sub(r"[^\w.\- ]+", "_", stem).strip(" .")[:80] or "file"
+    return f"{d['id']}_{stem}{suffix.lower()}"
+
+
+def _media_href(media_dir: Path, name: str) -> str:
+    """The link to a file in the media folder, relative to the report beside it."""
+    return quote(f"{media_dir.name}/{name}")
+
+
+def _fullview_candidates(case: Case, d: dict, local: Path | None = None):
     """Files, best first, to build a click-to-open 'full size' image from."""
     if d.get("kind") == "video":
         kfs = case.db.conn.execute(
@@ -1016,20 +1065,21 @@ def _fullview_candidates(case: Case, d: dict):
         if d.get("thumb"):
             yield case.thumb_dir / d["thumb"]
         return
-    yield _view_source(case, d)                       # the (LZC sidecar or) original
+    yield _view_source(case, d, local)                # the (LZC sidecar or) original
     v = case.root / "views" / f"{d['id']}.jpg"        # a cached transcode, if any
     if v.exists():
         yield v
 
 
-def _fullview_jpeg(case: Case, d: dict, max_px: int = 2000) -> bytes | None:
+def _fullview_jpeg(case: Case, d: dict, max_px: int = 2000,
+                   local: Path | None = None) -> bytes | None:
     """A downscaled JPEG for click-to-open, or None if nothing works.
 
     Images: the original decoded and capped at max_px. Videos: the middle
     key frame. HEIC/HEIF work because ``imaging`` registers the decoder.
     """
     from PIL import Image
-    for src in _fullview_candidates(case, d):
+    for src in _fullview_candidates(case, d, local):
         try:
             with Image.open(src) as im:
                 im.load()
@@ -1044,16 +1094,57 @@ def _fullview_jpeg(case: Case, d: dict, max_px: int = 2000) -> bytes | None:
     return None
 
 
-def _fullview_data_uri(case: Case, d: dict, max_px: int = 2000) -> str:
-    """``_fullview_jpeg`` as a data URI, or '' if nothing works."""
-    raw = _fullview_jpeg(case, d, max_px)
-    if not raw:
-        return ""
-    return "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii")
+def _copy_full_size(case: Case, d: dict, media_dir: Path, *, want_video: bool,
+                    want_image: bool) -> tuple[str, str]:
+    """Copy a row's original file into the report's media folder.
+
+    Returns ``(open_href, original_href)``: what clicking the thumbnail opens, and
+    the original file when that differs (a JPEG written for a format a browser
+    cannot show). Either is '' when nothing could be written. A reference-mode
+    row (walked from a disk image, or left inside an extraction zip or tar) has
+    no file at its recorded path, so its bytes are pulled out for the duration of
+    the copy, as LAVA export does.
+    """
+    is_video = d.get("kind") == "video"
+    rec = archive.source_record(case, d["source"]) if d.get("source") else None
+    with contextlib.ExitStack() as stack:
+        local = None
+        if rec is not None:
+            try:
+                local = stack.enter_context(archive.local_copy(case.root, rec, d))
+            except archive.ArchiveUnavailable:
+                local = None
+        src = _view_source(case, d, local)
+        suffix = _copy_suffix(d, src, local) if src.is_file() else ""
+        original = ""
+        if (want_video if is_video else want_image) and src.is_file():
+            name = _media_name(d, suffix)
+            try:
+                shutil.copy2(src, media_dir / name)
+                original = _media_href(media_dir, name)
+            except OSError:
+                original = ""
+        if is_video and want_video and original:
+            return original, ""
+        if not is_video and original and suffix.lower() in _WEB_IMAGE_EXTS:
+            return original, ""
+        if not want_image:
+            return "", original
+        # a format the browser can't open in a tab, or a video's key frame
+        raw = _fullview_jpeg(case, d, max_px=100_000, local=local)
+        if not raw:
+            return "", original
+        name = _media_name(d, ".view.jpg" if original else ".jpg")
+        try:
+            (media_dir / name).write_bytes(raw)
+        except OSError:
+            return "", original
+        return _media_href(media_dir, name), original
 
 
 def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
-               full_images: bool, full_videos: bool, loc_map: str = "") -> str:
+               full_images: bool, full_videos: bool, loc_map: str = "",
+               media_dir: Path | None = None) -> str:
     code = d.get("category") or 0
     catbar = (f"<div class='catbar' style='background:"
               f"{html.escape(categories.color(case.db, code))}'>"
@@ -1070,25 +1161,24 @@ def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
         flagrow = f"<div class='flagrow'>{chips}</div>"
     name = html.escape(_disp_name(d))
     is_video = d.get("kind") == "video"
-    img = blob = ""
+    img = ""
+    original = ""
     if d.get("thumb"):
         src = _img_data_uri(thumb_root / d["thumb"])
         if src:
-            attrs = f" data-name='{name}'"
             cls = "rimg" + (" video" if is_video else "")
-            if is_video and full_videos:
-                vuri = _video_data_uri(_view_source(case, d))
-                if vuri:
-                    attrs += f" data-video='v{d['id']}'"
-                    cls += " openable"
-                    blob = f"<script type='text/plain' id='v{d['id']}'>{vuri}</script>"
-            if "openable" not in cls and full_images:
-                full = _fullview_data_uri(case, d)          # image, or a key frame
-                if full:
-                    attrs += f' data-full="{full}"'
-                    cls += " openable"
             play = "<span class='playicon'>&#9654;</span>" if is_video else ""
-            img = f"<div class='thumbwrap'><img class='{cls}' src='{src}'{attrs}>{play}</div>{blob}"
+            thumb = f"<img class='{cls}' src='{src}' alt='{name}'>{play}"
+            href = ""
+            if media_dir is not None and (full_images or full_videos):
+                href, original = _copy_full_size(case, d, media_dir, want_video=full_videos,
+                                                 want_image=full_images)
+            if href:
+                plays = is_video and not href.endswith(".jpg")
+                tip = "play video in a new tab" if plays else "open full size in a new tab"
+                thumb = (f"<a class='full' href='{html.escape(href, quote=True)}' target='_blank' "
+                         f"rel='noopener' title='{tip}'>{thumb}</a>")
+            img = f"<div class='thumbwrap'>{thumb}</div>"
     parts = []
     for k in keys:
         lbl, fn, mono = _FIELD_DEFS[k]
@@ -1100,11 +1190,15 @@ def _card_html(case: Case, d: dict, keys: list[str], thumb_root: Path,
             parts.append(f"<div class='f{' mono' if mono else ''}'>"
                          f"<span class='k'>{html.escape(lbl)}</span>"
                          f"<span class='v'>{html.escape(str(val))}</span></div>")
+    if original:
+        parts.append(f"<div class='f'><span class='k'>Original file</span><span class='v'>"
+                     f"<a href='{html.escape(original, quote=True)}' target='_blank' "
+                     f"rel='noopener'>open the original</a></span></div>")
     # the locator map sits inside the metadata drop, not under the thumbnail,
-    # so it only renders once the examiner opens that file's details. It reuses
-    # the same click-to-open-full-size wiring as the main thumbnail (openImage
-    # only ever reads data-full, never re-renders anything) - the "full size" is
-    # the same 360x240 render the card crops to 150px tall, opened uncropped.
+    # so it only renders once the examiner opens that file's details. Clicking it
+    # opens the embedded map (openImage only ever reads data-full, never
+    # re-renders anything) - the "full size" is the same 360x240 render the card
+    # crops to 150px tall, opened uncropped.
     locimg = (f"<img class='locmap openable' src='{html.escape(loc_map, quote=True)}' "
               f"data-full='{html.escape(loc_map, quote=True)}' data-name='location of {name}' "
               f"alt='location of {name}' title='drawn on the imported offline basemap'>"
@@ -1134,11 +1228,28 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
                 tz: str | None = None, maps: bool = True,
                 map_flavor: str = "light", map_cap: int = 400,
                 blur: bool = True, by_flag: bool = False,
-                only_flags: list[int] | None = None) -> Path:
+                only_flags: list[int] | None = None,
+                progress=None) -> Path:
+    """Write the HTML report. ``progress(done, total)``, when given, is called as
+    each file's card is written, so the gallery's bottom bar can follow a long export."""
     global _TZ
     _TZ = tz
     dest = Path(dest)
     rows = _rows(case, where)
+    total = len(rows)
+    # Full-size files go in a folder beside the report, named after it, and the
+    # report links to them; only the thumbnails are embedded. The folder is this
+    # report's own output, so an export replaces it rather than leaving files
+    # from a previous export of a different scope behind.
+    media_dir = None
+    if full_images or full_videos:
+        media_dir = dest.parent / f"{dest.stem}_media"
+        if media_dir.is_dir():
+            shutil.rmtree(media_dir)
+        media_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    if progress:
+        progress(0, total)
     keys = [k for k in (fields or DEFAULT_REPORT_FIELDS) if k in _FIELD_DEFS] \
         or DEFAULT_REPORT_FIELDS
     cn = html.escape(str(case.db.get_meta("case_name") or "GLEAPP"))
@@ -1167,6 +1278,7 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
 
     def _kind_grids(items: list[dict]) -> None:
         """One collapsible Images/Videos/Other grid per kind present."""
+        nonlocal written
         for klabel, sub in _by_kind(items):
             body.append(
                 f"<details class='kindsec' open><summary>{klabel} "
@@ -1174,15 +1286,22 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
             for d in sub:
                 body.append(_card_html(case, d, keys, thumb_root,
                                        full_images, full_videos,
-                                       loc_map=loc_maps.get(d["id"], "")))
+                                       loc_map=loc_maps.get(d["id"], ""),
+                                       media_dir=media_dir))
+                written += 1
+                if progress:
+                    # a flag report shows a file once per flag, so cap at the total
+                    progress(min(written, total), total)
             body.append("</div></details>")
 
     def _section(label: str, items: list[dict], *, swatch: str = "", anchor: str = "") -> None:
         sw = (f"<span class='fsw' style='background:"
               f"{html.escape(swatch, quote=True)}'></span>" if swatch else "")
+        tag = "<span class='ftag'>Flag</span>" if swatch else ""
         id_attr = f" id='{anchor}'" if anchor else ""
+        fc = f" style='--fc:{html.escape(swatch, quote=True)}'" if swatch else ""
         body.append(
-            f"<details class='kindsec flagsec'{id_attr} open><summary>{sw}{label} "
+            f"<details class='kindsec flagsec'{id_attr}{fc} open><summary>{tag}{sw}{label} "
             f"<span class='n'>({len(items):,})</span></summary>")
         _kind_grids(items)
         body.append("</details>")
@@ -1318,49 +1437,65 @@ _REPORT_JS = """
   // (local html files share storage per browser).
   wire('btnBlur', 'blur', 'blur', __BLUR_DEFAULT__, false);
   wire('btnDark', 'dark', 'dark', false, true);
-  // click a thumbnail -> open the full-size image, or play the video, in a new tab
+  // A file's thumbnail is a plain link to its full-size copy in the media folder
+  // beside the report. A locator map has no file of its own: clicking it opens
+  // the embedded map in a tab, or, when the browser refuses the tab (a popup
+  // blocker, or a viewer where window.open does nothing), in this viewer over the
+  // page, so a click never appears to do nothing at all.
   function openImage(im){
     var w = window.open('', '_blank');
-    if(!w) return;
+    if(!w) return false;
     w.document.write('<!doctype html><body style="margin:0;background:#111;'+
       'display:flex;align-items:center;justify-content:center;min-height:100vh">'+
       '<img style="max-width:100%;max-height:100vh"></body>');
     w.document.close();
     w.document.title = (im.getAttribute('data-name')||'image').replace(/[<>]/g,'');
     w.document.querySelector('img').src = im.getAttribute('data-full');
+    return true;
   }
-  function openVideo(im){
-    var w = window.open('', '_blank');
-    if(!w) return;
-    var name = (im.getAttribute('data-name') || 'video').replace(/[<>"]/g,'');
-    w.document.write('<!doctype html><title>'+name+'</title>'+
-      '<body style="margin:0;background:#111;color:#cfd3da;font:14px system-ui;'+
-      'display:flex;flex-direction:column;align-items:center;justify-content:center;'+
-      'min-height:100vh;gap:14px;text-align:center;padding:16px">'+
-      '<video controls autoplay style="max-width:100%;max-height:88vh"></video>'+
-      '<div id="msg"></div></body>');
-    w.document.close();
-    var v = w.document.querySelector('video');
-    // decode the embedded data: URI into a Blob (no size limit, allows seeking)
-    fetch(document.getElementById(im.getAttribute('data-video')).textContent)
-      .then(function(r){ return r.blob(); })
-      .then(function(b){
-        var url = URL.createObjectURL(b);
-        v.src = url;
-        v.addEventListener('error', function(){
-          w.document.getElementById('msg').innerHTML =
-            'The browser can\\'t decode this video (iPhone clips are usually '+
-            '<b>HEVC / H.265</b>). On Windows install <b>HEVC Video Extensions</b> '+
-            'from the Microsoft Store, or <a style="color:#7fb0ff" href="'+url+
-            '" download="'+name+'">download the file</a> and open it in a media player.';
-        });
-      });
+  var lb = document.createElement('div');
+  lb.id = 'lb';
+  lb.innerHTML = "<div class='lbbar'><span class='lbname'></span>"+
+    "<button type='button' class='lbtab'>Open in new tab</button>"+
+    "<button type='button' class='lbclose' title='Close (Esc)'>&#10005;</button></div>"+
+    "<div class='lbbody'></div>";
+  document.body.appendChild(lb);
+  var lbBody = lb.querySelector('.lbbody');
+  var lbFrom = null;
+  function closeViewer(){
+    lb.classList.remove('on');
+    document.body.classList.remove('lbopen');
+    lbBody.innerHTML = '';
+    lbFrom = null;
   }
+  function openViewer(im){
+    closeViewer();
+    lbFrom = im;
+    var name = im.getAttribute('data-name') || '';
+    lb.querySelector('.lbname').textContent = name;
+    var i = document.createElement('img');
+    i.alt = name;
+    i.src = im.getAttribute('data-full');
+    lbBody.appendChild(i);
+    lb.classList.add('on');
+    document.body.classList.add('lbopen');
+  }
+  lb.addEventListener('click', function(e){
+    if(e.target === lb || e.target === lbBody) closeViewer();
+  });
+  lb.querySelector('.lbclose').addEventListener('click', closeViewer);
+  lb.querySelector('.lbtab').addEventListener('click', function(){
+    if(lbFrom && openImage(lbFrom)) closeViewer();
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && lb.classList.contains('on')) closeViewer();
+  });
   document.querySelectorAll('.card img.openable').forEach(function(im){
-    var isv = !!im.getAttribute('data-video');
     im.style.cursor = 'zoom-in';
-    im.title = isv ? 'play video in a new tab' : 'open full size in a new tab';
-    im.addEventListener('click', function(){ isv ? openVideo(im) : openImage(im); });
+    im.title = 'open full size in a new tab';
+    im.addEventListener('click', function(){
+      if(!openImage(im)) openViewer(im);
+    });
   });
   // always show every metadata block and image/video group when printing, then restore
   var snap = [];

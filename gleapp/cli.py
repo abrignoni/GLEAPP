@@ -606,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="HTML report: leave the Project VIC record MediaID, series, "
                         "flags, tags and Exif out of the fields under each image")
     s.add_argument("--thumbs-only", action="store_true",
-                   help="HTML report: thumbnails only - no full-size images or videos")
+                   help="HTML report: thumbnails only - no media folder of full-size images or videos")
     s.add_argument("--no-maps", action="store_true",
                    help="HTML and LAVA reports: skip the location maps (drawn from "
                         "the active basemap)")

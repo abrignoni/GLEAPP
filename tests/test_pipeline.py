@@ -14,6 +14,17 @@ from gleapp.ingest import classify, scan
 from gleapp.pipeline import ingest_sources, process
 from gleapp.similar import find_similar
 
+
+def _wait_for_export(cl):
+    """An HTML export runs as a job so the bottom bar can follow it; wait for it."""
+    for _ in range(240):
+        job = cl.get("/api/job").get_json()
+        if not job["running"]:
+            assert job["stage"] == "done", job
+            return job
+        time.sleep(0.25)
+    raise AssertionError(f"export still running: {job}")
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -1424,17 +1435,19 @@ def test_html_report_header_fields_grouping(tmp_path, evidence):
         assert '<html class="blur">' in doc
         assert "html.blur .card img{filter:blur" in doc
         assert "Scope:" not in doc
-        # full-size image embedded + openable; video embedded as a playable blob
-        assert "data-full=" in doc
-        assert f"data-video='v{vfid}'" in doc
-        assert f"<script type='text/plain' id='v{vfid}'>data:video/mp4;base64," in doc
+        # full-size image and video copied into the folder beside the report and
+        # linked from their thumbnails; only the thumbnails are embedded
+        media = tmp_path / "r_media"
+        assert (media / f"{vfid}_clip.mp4").read_bytes() == vid.read_bytes()
+        assert f"href='r_media/{vfid}_clip.mp4' target='_blank'" in doc
+        assert any(f.name.endswith("_one.jpg") for f in media.iterdir())
+        assert "data:video" not in doc and "type='text/plain'" not in doc
 
-        # thumbnails-only report has no full-size / video payload
+        # thumbnails-only report has no full-size copies and no links to any
         p2 = report.export_html(c, tmp_path / "r2.html", "category = 1",
                                 full_images=False, full_videos=False)
         d2 = p2.read_text(encoding="utf-8")
-        assert "data-full=" not in d2 and "data-video=" not in d2
-        assert "type='text/plain'" not in d2
+        assert "<a class='full'" not in d2 and not (tmp_path / "r2_media").exists()
         assert "class='rimg video'" in d2          # still shows the key-frame thumb
 
         # blur is on by default but can be turned off per report at export time
@@ -1460,6 +1473,7 @@ def test_html_report_header_fields_grouping(tmp_path, evidence):
         cl.post("/api/report", json={"format": ["html"], "scope": "all",
                                      "report_header": {"agency": "County SO"},
                                      "fields": ["name", "sha256"], "blur": False})
+        _wait_for_export(cl)
         prefs = cl.get("/api/report/prefs").get_json()
         assert prefs["header"]["agency"] == "County SO"
         assert prefs["fields"] == ["name", "sha256"]
@@ -1706,6 +1720,7 @@ def test_specific_flags_scope_filters_and_restricts_grouping(tmp_path):
     r = cl.post("/api/report", json={"format": ["html"], "scope": "specificflags",
                                      "flags": [ev]}).get_json()
     assert r["ok"]
+    _wait_for_export(cl)
     doc = (Path(r["dir"]) / "report_selection.html").read_text(encoding="utf-8")
 
     assert "one.jpg" in doc and "two.jpg" not in doc and "three.jpg" not in doc

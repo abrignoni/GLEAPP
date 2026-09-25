@@ -280,6 +280,39 @@ def test_local_copy_is_shared_while_in_use_and_removed_after(tmp_path):
         c.close()
 
 
+def test_html_report_links_originals_read_from_the_zip(tmp_path):
+    """A reference-mode row has no file at its recorded path, and the report used to
+    open only that path: every such card lost its full-size view, with nothing said.
+    The report now pulls the bytes out of the source the way LAVA does and copies the
+    original into the media folder beside it, byte for byte."""
+    import hashlib
+    import re
+    from urllib.parse import unquote
+    from gleapp import report
+    z = _build(tmp_path)
+    c, _ = _ingest(tmp_path, z, "case")
+    try:
+        rows = _rows(c)
+        assert not Path(rows[IMG]["path"]).exists()                    # nothing at the path
+        dest = report.export_html(c, tmp_path / "r.html", maps=False)
+        doc = dest.read_text(encoding="utf-8")
+        hrefs = re.findall(r"<a class='full' href='([^']+)'", doc)
+        assert len(hrefs) == 3                                         # two images and the video
+        assert "data:video" not in doc and "data-full=" not in doc     # nothing embedded but thumbs
+        files = {int(Path(unquote(h)).name.split("_", 1)[0]): tmp_path / unquote(h) for h in hrefs}
+        for path, row in rows.items():
+            f = files[row["id"]]
+            assert f.parent == tmp_path / "r_media"
+            assert hashlib.md5(f.read_bytes()).hexdigest() == row["md5"], path
+        assert files[rows[IMG]["id"]].suffix == ".jpg"
+        assert files[rows[NOEXT]["id"]].suffix == ".png"               # named by its content
+        assert files[rows[VID]["id"]].suffix == ".mp4"
+        tmp = c.root / archive.TMP_DIR
+        assert not tmp.exists() or not any(tmp.iterdir())              # temp copies removed after
+    finally:
+        c.close()
+
+
 def test_cache_evicts_the_least_recently_used(tmp_path, monkeypatch):
     cache = tmp_path / "cache"
     cache.mkdir()

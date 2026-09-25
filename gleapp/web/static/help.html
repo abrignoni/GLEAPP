@@ -983,7 +983,7 @@ present - no frames could be decoded</em>; GLEAPP does not establish why.</p>
 where you tick exactly the ones you want, e.g. just CAM + Child Exploitative, or the
 current selection) and one or more <strong>formats</strong>:</p>
 <table>
-  <tr><td>HTML report</td><td>a self-contained page (thumbnails embedded) with your case header, a "Report contents" breakdown, and one card per image showing the fields you chose</td></tr>
+  <tr><td>HTML report</td><td>a page (thumbnails embedded) with your case header, a "Report contents" breakdown, and one card per image showing the fields you chose</td></tr>
   <tr><td>CSV</td><td>full metadata, one row per file</td></tr>
   <tr><td>JSON</td><td>the same data, structured; carries the case header too</td></tr>
   <tr><td>KMZ</td><td>geolocated media for Google Earth / mapping tools: a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location</td></tr>
@@ -1040,20 +1040,26 @@ maps</strong> in the Export dialog, or pass <code>--no-maps</code> to
 <code>gleapp report</code>, to leave them out.</p>
 <p><strong>Media</strong> (dialog checkboxes, on by default, saved with the case):</p>
 <ul>
-  <li><strong>Embed full-size images</strong>: each image goes in downscaled to
-  &le;&thinsp;2000&thinsp;px; <strong>click a thumbnail to open it full size in a
-  new tab</strong>. HEIC/HEIF included.</li>
-  <li><strong>Embed playable videos</strong>: each video file is added to the
-  report; a play triangle marks video cards and <strong>clicking opens the video
-  playing in a new tab</strong>. This is what makes the report large; untick it
-  (or "full-size images") for a lean thumbnails-only report.</li>
+  <li><strong>Include full-size images</strong>: each original image is copied,
+  byte for byte, into a folder beside the report named after it
+  (<code>report.html</code> gets <code>report_media/</code>), and <strong>clicking a
+  thumbnail opens it in a new tab</strong>. A format a browser cannot show (HEIC,
+  TIFF, camera RAW, ...) is copied as it is, with a full-size JPEG of it beside it
+  for the click to open; the card's details link to the original.</li>
+  <li><strong>Include videos</strong>: each original video is copied into the same
+  folder; a play triangle marks video cards and <strong>clicking plays the video
+  in a new tab</strong>. This is what makes the folder large; untick it (or
+  "full-size images") for a lean thumbnails-only report.</li>
   <li><strong>Blur images by default</strong>: sets whether <em>this</em> report
   opens blurred or not, baked into the file at export time. Whoever opens it can
   still flip the <strong>Blur images</strong> switch for their own viewing - that
   never saves back into the file, so the next person to open it sees whatever
   default you picked here.</li>
 </ul>
-<p>The report stays a single self-contained file either way.</p>
+<p>Only the thumbnails are embedded, so the page itself stays small. Keep the
+page and its <code>_media</code> folder together when you copy or hand over a
+report: the links are relative, so they work wherever the two go, and nothing
+else. Exporting again replaces the folder.</p>
 <p>A <strong>Report contents</strong> breakdown near the top gives the file count
 for the report's scope, split by type and by category (with a percentage and a
 color key matching your categories), a thin composition bar, known-hash matches,
