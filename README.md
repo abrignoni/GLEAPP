@@ -123,6 +123,12 @@ version is read from `gleapp/__init__.py`, so it cannot drift from the app. Phas
 macOS also produces `dist/GLEAPP.app`, unsigned; sign it with `codesign` before phase 2.
 A Linux AppImage is not wired up yet.
 
+The Linux build is made on Ubuntu 24.04, so it needs glibc 2.39 or newer and will not
+start on an older distribution; build it there yourself if you need one. CI smoke-tests
+that build headlessly, `--version` and a decode, and never opens a window, so the
+desktop window on Linux is unexercised. It needs one of the toolkits under Desktop app
+above, and `gleapp web` in a browser is the path that is tested.
+
 #### macOS: take OpenCV from conda-forge
 
 The `opencv-python-headless` wheels for Apple Silicon Macs vendor a Homebrew FFmpeg
