@@ -47,7 +47,39 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 
 ---
 
-## Install
+## Download
+
+Builds for Windows, macOS and Linux are on the
+[releases page](https://github.com/abrignoni/GLEAPP/releases/latest). Nothing to install
+for Python, and no toolchain.
+
+| Platform | File |
+|---|---|
+| Windows 10 or 11, 64-bit | `-windows-x64-setup.exe`, or `-windows-x64-portable.zip` to run without installing |
+| macOS, Apple silicon | `-macos-arm64.dmg` |
+| macOS, Intel | `-macos-x64.dmg` |
+| Linux, 64-bit | `-linux-x64.tar.gz`, built on Ubuntu 24.04 so it needs glibc 2.39 or newer |
+
+**The binaries are not signed**, so the first launch warns.
+
+On macOS you get "GLEAPP cannot be opened because the developer cannot be verified".
+Right-click the app, choose Open, then confirm.
+
+On Windows, SmartScreen says "Windows protected your PC".
+Choose More info, then Run anyway.
+
+Signing is not wired up yet. Running from source, below, needs no warning cleared.
+
+Every release carries a `SHA256SUMS.txt`. To check what you downloaded:
+
+```bash
+grep <the file you downloaded> SHA256SUMS.txt | shasum -a 256 -c -
+```
+
+Use `sha256sum` in place of `shasum -a 256` on Linux, or
+`(Get-FileHash -Algorithm SHA256 .\<the file>).Hash` in PowerShell on Windows.
+
+## Install from source
 
 The same steps as the other LEAPPs: clone it, make a venv, install, run.
 
