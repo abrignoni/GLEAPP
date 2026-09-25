@@ -202,9 +202,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Every release has to carry the same few things: which file is for which
+          # platform, that the binaries are unsigned so the first launch warns, and how
+          # to check a download against SHA256SUMS.txt. They live in
+          # .github/release-footer.md so editing them needs no workflow change.
+          #
+          # gh's --generate-notes replaces notes rather than appending to them, so the
+          # changelog is generated through the API and the two are joined here.
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body > notes.md
+          cat .github/release-footer.md >> notes.md
+          test -s notes.md || { echo "::error::composed release notes are empty"; exit 1; }
           gh release create "$GITHUB_REF_NAME" \
             --draft \
             --title "GLEAPP $GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file notes.md \
             assets/*
           echo "Draft release created. Review the assets, then publish it."
