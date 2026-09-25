@@ -99,6 +99,9 @@ jobs:
           "$BIN" --texworker smoke_in.png smoke_out.jpg 32
           [ -s smoke_out.jpg ] || { echo "--texworker produced no output"; exit 1; }
           echo "--texworker -> $(wc -c < smoke_out.jpg) bytes"
+          # The import the two checks above never make. cv2 comes in through
+          # gleapp.desktop, so a bundle can pass both of them and still not start.
+          "$BIN" --selfcheck
           if [ "$RUNNER_OS" = "macOS" ]; then
             APPBIN=dist/GLEAPP.app/Contents/MacOS/GLEAPP
             [ -x "$APPBIN" ] || { echo "no .app bundle produced"; exit 1; }
