@@ -67,14 +67,19 @@ jobs:
       # cannot ship GPL code, because the bundle also holds Apache-1.1 code that the
       # FSF lists as GPL-incompatible, and packaging/gleapp.spec refuses such a build.
       # conda-forge publishes an LGPL FFmpeg, so macOS takes OpenCV from there.
-      - name: macOS, OpenCV from conda-forge
+      # Pillow comes from conda-forge too, and that is not incidental. The PyPI
+      # wheel vendors its own libharfbuzz built without CoreText, conda-forge's
+      # pango needs one with it, and PyInstaller collapses two dylibs of the same
+      # name into one. v2026.5.0 shipped a macOS app that could not import cv2 for
+      # that reason. Taking both from conda-forge leaves one shared harfbuzz.
+      - name: macOS, OpenCV and Pillow from conda-forge
         if: runner.os == 'macOS'
         shell: bash
         run: |
           curl -sL "https://micro.mamba.pm/api/micromamba/osx-$(uname -m | sed s/x86_64/64/)/latest" \
             | tar -xj bin/micromamba
           ./bin/micromamba create -y -p ./build-env -c conda-forge --no-rc \
-            python=3.12 "py-opencv=*=headless*" "ffmpeg=*=lgpl*"
+            python=3.12 "py-opencv=*=headless*" "ffmpeg=*=lgpl*" pillow
           echo "$PWD/build-env/bin" >> "$GITHUB_PATH"
 
       - name: Install build dependencies
