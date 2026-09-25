@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_FILESYSTEMS = [
     "ext2", "ext3", "ext4", "F2FS", "FAT32", "exFAT", "NTFS",
     "HFS+", "HFSX", "APFS", "QNX4", "QNX EFS", "QNX ETFS", "QNX IFS",
+    "SquashFS", "JFFS2", "UBI", "UBIFS", "YAFFS1", "YAFFS2",
 ]
 
 
@@ -51,7 +52,9 @@ def test_every_named_filesystem_has_a_walker_in_the_vendored_reader():
     kinds = {"ext2": "ext2", "ext3": "ext3", "ext4": "ext4", "F2FS": "f2fs",
              "FAT32": "fat32", "exFAT": "exfat", "NTFS": "ntfs", "HFS+": "hfs+", "HFSX": "hfsx",
              "APFS": "apfs", "QNX4": "qnx4", "QNX EFS": "efs",
-             "QNX ETFS": "etfs", "QNX IFS": "QNX IFS boot image"}
+             "QNX ETFS": "etfs", "QNX IFS": "QNX IFS boot image",
+             "SquashFS": "squashfs", "JFFS2": "jffs2", "UBI": "ubi", "UBIFS": "ubifs",
+             "YAFFS1": "yaffs1", "YAFFS2": "yaffs2"}
     assert set(kinds) == set(EXPECTED_FILESYSTEMS)
     blank = io.BytesIO(bytes(1 << 20))
     for shown, kind in kinds.items():

@@ -62,7 +62,8 @@ signals only. Every category decision is the examiner's.</p>
             <ul>
               <li>Filesystems are walked file by file, so each file keeps the name,
               path and dates the filesystem recorded. Supported: ext2/3/4, F2FS,
-              FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS and QNX IFS.
+              FAT32, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS, QNX IFS,
+              SquashFS, JFFS2, UBI, UBIFS, YAFFS1 and YAFFS2.
               Unreadable volumes are named in the Source panel.</li>
               <li>Deleted-media recovery is separate (&sect;16). Tick <em>Recover
               media (filesystem records and carving)</em> to run it during ingest, or
@@ -1199,7 +1200,7 @@ surviving record names.</p>
 </ul>
 
 <h3>Which filesystems can do what</h3>
-<p>The walk reads fourteen kinds, but the other two passes need more of a filesystem than
+<p>The walk reads twenty kinds, but the other two passes need more of a filesystem than
 the walk does:</p>
 <table>
   <tr><th>Filesystem</th><th>Walked</th><th>Deleted records</th><th>Free space, for scoping</th></tr>
@@ -1207,6 +1208,7 @@ the walk does:</p>
   <tr><td>HFS+, HFSX, APFS, F2FS</td><td>yes</td><td>no</td><td>yes</td></tr>
   <tr><td>ext2 / ext3 / ext4</td><td>yes</td><td>no</td><td><strong>no</strong></td></tr>
   <tr><td>QNX4, EFS, ETFS, IFS</td><td>yes</td><td>no</td><td><strong>no</strong></td></tr>
+  <tr><td>SquashFS, JFFS2, UBI, UBIFS, YAFFS1, YAFFS2</td><td>yes</td><td>no</td><td><strong>no</strong></td></tr>
 </table>
 <p>So on a Mac or Linux acquisition nothing comes back with its name, and on a disk holding
 any volume that cannot report its free space the scan falls back to the whole image rather
