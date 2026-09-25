@@ -32,8 +32,8 @@ makes it; an exit code is not evidence. `build/` and `dist/` are git-ignored.
 ## What is and is not wired up
 
 Windows: executable and Inno Setup installer. macOS: `.app` and `.dmg`, unsigned until
-codesign. Linux: the one-folder build runs; no AppImage yet, since an AppImage needs an
-icon and a `.desktop` file and `packaging/` has no icon. Windows on ARM: the installer
+codesign. Linux: the one-folder build runs; no AppImage yet, since an AppImage needs
+a `.desktop` file of its own. Windows on ARM: the installer
 needs an `arm64` architecture variant and a CI leg on an ARM runner; check that runner's
-availability and billing for this repository's visibility before adding it. No icon ships
-on any platform yet.
+availability and billing for this repository's visibility before adding it. Windows and
+macOS ship `packaging/gleapp.ico` and `packaging/gleapp.icns`.

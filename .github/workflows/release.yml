@@ -1,0 +1,203 @@
+name: Release
+
+# Builds the frozen desktop app on each platform and attaches the results to a
+# GitHub Release. Pushing a tag like v0.1.0 is the trigger; the release is created
+# as a DRAFT, so the assets can be checked before anyone can download them.
+#
+# The build steps are the ones test_builds.yml already runs weekly on main, in the
+# same order, including the conda-forge OpenCV on macOS that keeps GPL codecs out of
+# the bundle. Keeping the two in step matters: this workflow only runs when a tag is
+# pushed, so it is the weekly job that keeps the recipe honest between releases.
+# workflow_dispatch builds every platform and uploads the assets without creating a
+# release, which is the way to rehearse a release without publishing one.
+#
+# What this does NOT do: sign or notarise anything. The macOS .dmg and the Windows
+# installer are unsigned, so Gatekeeper and SmartScreen will warn on first launch.
+# Signing belongs between phase 1 and phase 2 of packaging/build.py, which takes a
+# --sign-tool for Inno Setup, and it needs credentials this workflow has no access to.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# One release at a time. A second tag pushed while this is running waits rather than
+# racing it to the same release page.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # macOS only, and the reason is licensing rather than preference. The
+      # opencv-python-headless wheels for macOS vendor a Homebrew FFmpeg built
+      # --enable-gpl, so they carry x264, x265, xvid, rubberband, vidstab and frei0r,
+      # and cv2 hard-links the FFmpeg stack, so those cannot be stripped. GLEAPP
+      # cannot ship GPL code, because the bundle also holds Apache-1.1 code that the
+      # FSF lists as GPL-incompatible, and packaging/gleapp.spec refuses such a build.
+      # conda-forge publishes an LGPL FFmpeg, so macOS takes OpenCV from there.
+      - name: macOS, OpenCV from conda-forge
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          curl -sL "https://micro.mamba.pm/api/micromamba/osx-$(uname -m | sed s/x86_64/64/)/latest" \
+            | tar -xj bin/micromamba
+          ./bin/micromamba create -y -p ./build-env -c conda-forge --no-rc \
+            python=3.12 "py-opencv=*=headless*" "ffmpeg=*=lgpl*"
+          echo "$PWD/build-env/bin" >> "$GITHUB_PATH"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --prefer-binary -e ".[build]"
+          python -c "import cv2; print('cv2', cv2.__version__, cv2.__file__)"
+
+      # The tag names the version the assets will be published under, and
+      # gleapp/__init__.py names the version the app reports. A release where those
+      # disagree ships a binary that tells the examiner one thing while the download
+      # page says another, so the mismatch stops the build here rather than being
+      # found in the report of a case.
+      - name: Resolve the version, and check it against the tag
+        shell: bash
+        run: |
+          VERSION="$(python -c "import sys; sys.path.insert(0, 'packaging'); import build; print(build.read_version())")"
+          echo "gleapp/__init__.py __version__ = $VERSION"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "tag = $GITHUB_REF_NAME"
+            if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match __version__ $VERSION (expected tag v$VERSION)"
+              exit 1
+            fi
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Phase 1, the executable
+        shell: bash
+        run: python packaging/build.py exe
+
+      # The same headless pair test_builds.yml runs. Neither opens a window.
+      # --version is answered by packaging/entrypoint.py before the desktop shell is
+      # imported, and --texworker is the isolated decoder the app re-invokes, so it
+      # exercises Pillow and the texture decoders inside the frozen bundle on a real
+      # file. An asset that fails either one never reaches the release.
+      - name: Smoke test the frozen binary, headless
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN=dist/GLEAPP/GLEAPP.exe; else BIN=dist/GLEAPP/GLEAPP; fi
+          WANT="GLEAPP $VERSION"
+          GOT="$("$BIN" --version)"
+          echo "--version -> '$GOT'"
+          [ "$GOT" = "$WANT" ] || { echo "::error::expected '$WANT'"; exit 1; }
+          python -c 'from PIL import Image; Image.new("RGB", (64, 48), (30, 120, 200)).save("smoke_in.png")'
+          "$BIN" --texworker smoke_in.png smoke_out.jpg 32
+          [ -s smoke_out.jpg ] || { echo "::error::--texworker produced no output"; exit 1; }
+          echo "--texworker -> $(wc -c < smoke_out.jpg) bytes"
+
+      - name: Phase 2, the disk image (macOS only)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: python packaging/build.py installer
+
+      - name: Phase 2, the installer (Windows only)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          choco install innosetup --no-progress -y
+          python packaging/build.py installer
+
+      # Release assets are single files, so the one-folder build is archived. The
+      # names carry the platform and the architecture, because macos-latest is arm64
+      # and a reader cannot tell from "GLEAPP-0.1.0.dmg" whether it runs on their Mac.
+      # tar keeps the executable bit; the Windows zip has no bit to keep.
+      - name: Name the assets
+        shell: bash
+        run: |
+          mkdir -p assets
+          ARCH="$(echo "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')"
+          STEM="GLEAPP-$VERSION-${{ matrix.platform }}-$ARCH"
+          case "$RUNNER_OS" in
+            Windows)
+              powershell -NoProfile -Command "Compress-Archive -Path 'dist/GLEAPP/*' -DestinationPath 'assets/$STEM-portable.zip'"
+              mv "dist/GLEAPP-Setup-$VERSION.exe" "assets/$STEM-setup.exe"
+              ;;
+            macOS)
+              mv "dist/GLEAPP-$VERSION.dmg" "assets/$STEM.dmg"
+              ;;
+            Linux)
+              tar -C dist -czf "assets/$STEM.tar.gz" GLEAPP
+              ;;
+          esac
+          ls -l assets/
+
+      - name: Upload the assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.platform }}
+          path: assets/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Collect every platform's assets
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          pattern: assets-*
+          merge-multiple: true
+
+      # An examiner who downloads a forensic tool should be able to check that what
+      # they got is what was built. The file is generated here, over the assets as
+      # they will be attached, rather than per platform, so one file covers them all.
+      - name: Checksums
+        shell: bash
+        run: |
+          cd assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # A draft, so the assets and the generated notes can be read before the release
+      # is visible. Publishing it is a deliberate click, not a consequence of pushing
+      # a tag. --generate-notes writes the changelog from the merged pull requests.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --title "GLEAPP $GITHUB_REF_NAME" \
+            --generate-notes \
+            assets/*
+          echo "Draft release created. Review the assets, then publish it."
