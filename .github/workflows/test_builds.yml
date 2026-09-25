@@ -3,20 +3,24 @@ name: Test builds
 # Builds the frozen desktop executable on each platform with packaging/build.py and
 # smoke-tests what came out, headlessly: --version must print the package version, and
 # --texworker must decode an image inside the frozen bundle. The Windows leg goes on to
-# build the Inno Setup installer and the macOS leg the .dmg, so phase 2 and the version
+# build the Inno Setup installer and each macOS leg the .dmg, so phase 2 and the version
 # pass-through are exercised somewhere real on both. Artifacts are uploaded for inspection; nothing here is a release.
 #
 # Advisory rather than required, so a paths filter is fine here, and it deliberately
 # leaves gleapp/** out: a logic change inside an existing module almost never breaks the
-# frozen build, and the three legs together bill about 35 minutes per run while the repo
-# is private. Packaging and dependency changes are where frozen-build breaks come from,
+# frozen build, and the four legs together bill about 140 minutes per run while the repo
+# is private; a public repo pays nothing for standard runners. Measured on the run that
+# added the Intel leg: 100 of those minutes are macos-15-intel alone, which took 9
+# minutes of wall clock against Apple silicon's 3 and bills at 10x, so that one leg
+# costs more than the other three together.
+# Packaging and dependency changes are where frozen-build breaks come from,
 # and the weekly schedule covers the rest. Modeled on iLEAPP's test_builds.yml, which
 # is manual only.
 
 on:
   workflow_dispatch:
   # A weekly build of main catches a frozen-build break that ordinary code introduces,
-  # a new import PyInstaller cannot see, without paying three PyInstaller runs on every
+  # a new import PyInstaller cannot see, without paying four PyInstaller runs on every
   # pull request. Monday 06:00 UTC.
   schedule:
     - cron: '0 6 * * 1'
@@ -35,7 +39,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        # macos-15-intel is the Intel Mac leg. macos-latest is Apple silicon, and
+        # release.yml ships both, so both are built here; macos-13 was retired on
+        # 2025-12-04 and GitHub drops x86_64 macOS when macos-15-intel retires in 2027.
+        os: [windows-latest, macos-latest, macos-15-intel, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
