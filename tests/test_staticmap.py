@@ -377,7 +377,9 @@ def test_nothing_covered_leaves_the_note_without_a_map(tmp_path, monkeypatch):
     monkeypatch.setattr(basemaps, "pmtiles_tile", lambda *a, **k: None)
     doc = _report(tmp_path, [WEST, EAST])
     assert "class='overview'" in doc and "class='locmap openable'" not in doc
-    assert "<img" not in _note(doc) and "data:image/png" not in doc
+    # the footer carries the GLEAPP logo as a PNG; only a map image would be a failure
+    body = doc.split("<footer class='gen'>")[0]
+    assert "<img" not in _note(doc) and "data:image/png" not in body
     assert "2 geolocated file(s): 0 drawn" in _note(doc)
     assert "2 outside the basemap" in _note(doc)
     assert "no overview map" in _note(doc).lower()

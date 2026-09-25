@@ -159,9 +159,9 @@ else:
                    strip=False, upx=False, name="GLEAPP")
 
 if sys.platform == "darwin" and not ONEFILE:
-    # A .app around the one-folder build. No icon ships yet, so PyInstaller uses its
-    # default until packaging/ carries a gleapp.icns. PyInstaller strips signatures
-    # while it builds, so codesign runs after this, on the finished bundle.
+    # A .app around the one-folder build, with the logo from packaging/gleapp.icns.
+    # PyInstaller strips signatures while it builds, so codesign runs after this, on
+    # the finished bundle.
     ICNS = ROOT / "packaging" / "gleapp.icns"
     app = BUNDLE(coll, name="GLEAPP.app",
                  icon=str(ICNS) if ICNS.exists() else None,

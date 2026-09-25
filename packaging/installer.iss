@@ -22,6 +22,8 @@ OutputBaseFilename=GLEAPP-Setup-{#AppVer}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=gleapp.ico
+UninstallDisplayIcon={app}\{#AppExe}
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequiredOverridesAllowed=dialog
 #ifdef SignToolName
