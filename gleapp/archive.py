@@ -60,6 +60,7 @@ this codebase does not have.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import hashlib
 import io
@@ -1760,8 +1761,16 @@ def stage_source(case, name: str, *, progress=None) -> int:
     return written
 
 
+# The flash filesystems whose deleted files qnxprobe rebuilds (recover_deleted()),
+# and what their readers raise when a file cannot be read after all.
+_FLASH_DELETED_KINDS = ("yaffs2", "jffs2", "ubi", "ubifs")
+_FLASH_UNREADABLE = (qnxprobe.YaffsUnreadable, qnxprobe.Jffs2Unreadable,
+                     qnxprobe.UbifsUnreadable, qnxprobe.DecompressError)
+
+
 def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
-    """Recover deleted files from an acquisition's NTFS, FAT32 and exFAT volumes.
+    """Recover deleted files from an acquisition's NTFS, FAT32, exFAT, YAFFS2,
+    JFFS2 and UBIFS volumes.
 
     A walk lists what a filesystem still holds; a carve reads bytes no file
     claims; this reads the records of files that were deleted while the record
@@ -1780,6 +1789,19 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     was cleared. NTFS times are real instants (FILETIME is UTC based); FAT and
     exFAT store a wall clock with no zone, carried as text and never turned into
     an instant here.
+
+    YAFFS2, JFFS2 and UBIFS (inside UBI or on its own) never rewrite in place:
+    a deleted file's name, size and content stay on the flash until garbage
+    collection erases the block, and qnxprobe rebuilds them (recover_deleted()).
+    A file some of whose pages were already erased is refused, not read with
+    zeros where its content was. These store Unix time, so the modified time is
+    an instant; they record no created time. The recovered file is named as a
+    walked file on the same volume is, under the folder the flash still names,
+    and a YAFFS object id reused for several files gives each its own copy.
+    Only a YAFFS2 file, and a JFFS2 file on flash with no spare bytes, adds an
+    offset for the carve to skip: UBIFS places its data through the UBI volume
+    and JFFS2 on NAND through the spare-stripped view, so their bytes do not sit
+    at one image offset a carve would start from.
 
     Returns (rows added, the set of image byte offsets recovered), the second so
     a carve run alongside can skip the nameless twin of a file recovered here
@@ -1802,13 +1824,18 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
 
     img = _open_image_file(rec["path"])
     try:
-        for base, size, fskind, _label in _volumes(img):
-            if fskind not in ("ntfs", "fat32", "exfat"):
+        ss = qnxprobe.disk_sector_size(img)
+        for base, size, fskind, label in _volumes(img):
+            flash = fskind in _FLASH_DELETED_KINDS
+            if fskind not in ("ntfs", "fat32", "exfat") and not flash:
                 continue                             # only these record deleted files by name
             walker = qnxprobe.walker_for(fskind, img, base, size)
             if walker is None:
                 continue
-            for e in walker.deleted_files():
+            vol = label or f"lba{base // ss}"        # as a walk names this volume
+            unreadable = _FLASH_UNREADABLE if flash else (qnxprobe.NtfsUnreadable,)
+            copies: collections.Counter = collections.Counter()
+            for e in (walker.recover_deleted() if flash else walker.deleted_files()):
                 if e.is_dir or not e.recoverable or not e.size:
                     continue
                 ext = PurePosixPath(e.name).suffix.lower()
@@ -1826,7 +1853,7 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                         head += chunk
                         if len(head) >= 16:
                             break
-                except qnxprobe.NtfsUnreadable:
+                except unreadable:
                     continue
                 if kind != "other" and is_appledouble(e.name, head):
                     kind = "other"
@@ -1838,12 +1865,26 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                     tally.skipped_size += 1
                     continue
                 # NTFS records deleted files by MFT record number; FAT and exFAT
-                # by the first cluster of the deleted directory entry.
-                ident = e.record if fskind == "ntfs" else e.first_cluster
-                dest = _staged_path(staged_dir, slug, f"{ident}_{e.name}")
+                # by the first cluster of the deleted directory entry. A flash
+                # file is named as a walked one is, under the folder the flash
+                # still names, and keyed by its object id or inode number and a
+                # count, because YAFFS reuses an object id: one id and one name
+                # can belong to several deleted files.
+                if flash:
+                    where = e.parent_path
+                    shown = "/".join(p for p in (vol, where, e.name) if p) \
+                        if where is not None else f"{vol}/{e.name}"
+                    key = (e.kind, e.ident, shown)
+                    copies[key] += 1
+                    member = f"{e.kind}:{base}:{e.ident}:{copies[key]}:{shown}"
+                else:
+                    ident = e.record if fskind == "ntfs" else e.first_cluster
+                    shown = e.name
+                    member = f"{ident}_{e.name}"
+                dest = _staged_path(staged_dir, slug, member)
                 try:
                     _write_stream(_DeletedReader(walker, e), dest)
-                except (qnxprobe.NtfsUnreadable, OSError):
+                except (*unreadable, OSError):
                     with contextlib.suppress(OSError):
                         dest.unlink()
                     tally.failed += 1
@@ -1855,6 +1896,12 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                         with contextlib.suppress(OSError):
                             os.utime(dest, (e.accessed or e.modified, e.modified))
                     mtime, ctime, atime = e.modified or None, e.created or None, e.accessed or None
+                    recorded = None
+                elif flash:
+                    if e.mtime:
+                        with contextlib.suppress(OSError):
+                            os.utime(dest, (e.mtime, e.mtime))
+                    mtime, ctime, atime = e.mtime or None, None, None
                     recorded = None
                 else:
                     mtime = ctime = atime = None
@@ -1868,9 +1915,13 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                         first = next((lcn for lcn, _c in data_attr.runs if lcn is not None), None)
                         if first is not None:
                             recovered_offsets.add(base + first * walker.cluster)
+                elif flash:
+                    at = _flash_first_offset(walker, e)
+                    if at is not None:
+                        recovered_offsets.add(base + at)
                 elif e.first_cluster and e.first_cluster >= 2:
                     recovered_offsets.add(walker._cluster_off(e.first_cluster))  # pylint: disable=protected-access
-                _register(case, src_obj, dest, e.name, e.name, kind, ext, e.size,
+                _register(case, src_obj, dest, shown, shown, kind, ext, e.size,
                           mtime, ctime, None, None,
                           origin="deleted", volume_base=int(base),
                           recorded_times=recorded, atime=atime)
@@ -1889,6 +1940,23 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     if progress:
         progress(n)
     return tally.registered, recovered_offsets
+
+
+def _flash_first_offset(walker, entry) -> int | None:
+    """Where a recovered flash file's first byte sits in its volume, when it sits
+    in one place a carve would start from: a YAFFS2 file's first data page, or
+    the data of a JFFS2 file's uncompressed node at offset 0 on flash with no
+    spare bytes. None otherwise."""
+    # pylint: disable=protected-access
+    plan = entry._plan
+    if entry.kind == "yaffs2":
+        first = plan["chunks"].get(1)
+        return first[0] * walker.page if first else None
+    if entry.kind == "jffs2" and walker.nand is None:
+        for node in reversed(plan):                  # newest version first
+            if node["doff"] == 0 and node["dsize"]:
+                return node["off"] + 68 if node["compr"] == 0 else None
+    return None
 
 
 class _DeletedReader:
