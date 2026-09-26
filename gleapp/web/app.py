@@ -1829,7 +1829,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             j = state["job"]
             try:
                 # First recover deleted files from deleted records (NTFS MFT,
-                # FAT32 and exFAT directory entries), by name and reaching
+                # FAT32 and exFAT directory entries, and the nodes YAFFS2, JFFS2
+                # and UBIFS leave on flash), by name and reaching
                 # resident NTFS files a carve cannot, then carve the free space
                 # by signature for whatever no surviving record names, skipping
                 # the offsets already recovered here.

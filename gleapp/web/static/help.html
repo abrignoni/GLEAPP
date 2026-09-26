@@ -1143,7 +1143,7 @@ in a report:</p>
 <table>
   <tr><th>Origin</th><th>Recovered by</th><th>Name</th><th>Dates</th></tr>
   <tr><td>walked</td><td>reading a live filesystem</td><td>real name and path</td><td>NTFS created, modified and accessed; FAT32 and exFAT as recorded text</td></tr>
-  <tr><td>recovered</td><td>a deleted record that still named the file</td><td><strong>real name</strong></td><td>NTFS created, modified and accessed; FAT32 and exFAT as recorded text</td></tr>
+  <tr><td>recovered</td><td>a deleted record that still named the file</td><td><strong>real name</strong> (and folder, on flash)</td><td>NTFS created, modified and accessed; FAT32 and exFAT as recorded text; YAFFS2, JFFS2 and UBIFS modified</td></tr>
   <tr><td>carved</td><td>a signature scan of raw bytes</td><td>none; filed under its byte offset</td><td>none, blank</td></tr>
 </table>
 <p>The deleted-record pass runs first, so a deleted file comes back with its name rather
@@ -1151,21 +1151,28 @@ than as a nameless carved twin, and the offsets it recovered are handed to the c
 skip.</p>
 
 <h3>Recovering from deleted records</h3>
-<p>For NTFS, FAT32 and exFAT: a deleted file whose record still names it is recovered with
-its <strong>real name</strong>.</p>
+<p>For NTFS, FAT32, exFAT, YAFFS2, JFFS2 and UBIFS: a deleted file whose record still names
+it is recovered with its <strong>real name</strong>.</p>
 <table>
   <tr><th>Filesystem</th><th>Record used</th><th>What comes back</th></tr>
   <tr><td>NTFS</td><td>the MFT entry</td><td>real name <strong>and</strong> the created, modified and accessed times the record holds, as real instants (FILETIME is UTC based). The only way to recover a <em>resident</em> file: one small enough to live inside the record, which a carve of free space can never reach because it never occupied a cluster.</td></tr>
   <tr><td>FAT32</td><td>the deleted directory entry</td><td>real name (the delete overwrites the first character of a short 8.3 name, shown as <code>_</code>; a long name is rebuilt in full). Read on the assumption it lay in one cluster run, since delete zeroes the chain. Its dates are read, but FAT32 stores a wall clock with no zone, so they are carried as recorded text and the instant columns stay blank.</td></tr>
   <tr><td>exFAT</td><td>the deleted directory entry</td><td>real name. A single-run file is read exactly as recorded; a fragmented file is followed along the chain it kept; one whose chain was cleared is refused rather than read on a guess. Dates as FAT32: read, carried as text, no instant.</td></tr>
+  <tr><td>YAFFS2</td><td>the file's headers and pages, which stay on the flash until garbage collection erases their block</td><td>real name and the folder it was in. YAFFS reuses object ids, so an earlier file a reused id held can come back as well, as its own copy. The modified time, as an instant (Unix time); YAFFS stores no created time.</td></tr>
+  <tr><td>JFFS2</td><td>the file's nodes, including those NOR flash marks obsolete</td><td>real name and folder, from the newest directory entry that named it. The modified time, as an instant.</td></tr>
+  <tr><td>UBIFS</td><td>the file's inode, data and directory-entry nodes still in the volume, inside UBI or on its own</td><td>real name and folder. The modified time, as an instant. Only the blocks the volume maps now are read, not older copies UBI may still hold.</td></tr>
 </table>
 <ul>
   <li><strong>Zone-less times are never turned into instants.</strong> They are carried as
     recorded text (&sect;3). A <strong>walked</strong> FAT32 or exFAT file, the ordinary case,
     works the same way.</li>
-  <li><strong>Overwritten bytes are never presented as the file.</strong> On all three
-    filesystems, a file is recovered only while its clusters are still free, and refused once
-    a later file has taken one.</li>
+  <li><strong>Overwritten bytes are never presented as the file.</strong> On NTFS, FAT32 and
+    exFAT, a file is recovered only while its clusters are still free, and refused once a later
+    file has taken one. On flash, a file is recovered only while every page or block its size
+    needs is still there; an erased block and a hole that was never written look alike, so
+    either one refuses the file rather than filling it with zeros.</li>
+  <li><strong>YAFFS1 is not recovered.</strong> It orders the copies of a page only by a 2-bit
+    serial number, which cannot say which copy a deleted file last held.</li>
   <li><strong>Recovered files are always copied into the case</strong>, because a deleted file
     is not one contiguous run the way a carved hit is, and a resident one is not on the disk
     as a run at all.</li>
