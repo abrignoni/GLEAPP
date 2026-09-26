@@ -48,8 +48,8 @@ BUILD_ONLY = {
 }
 
 # Licence texts that live in this repo rather than in a package. The vendored
-# readers and the YuNet model are MIT, the SFace and DINOv2 models are Apache 2.0, Impacket is
-# Apache 1.1, the map code is BSD-3-Clause with some MIT parts and the map glyphs are
+# readers, the YuNet model and the open_clip model are MIT, the SFace and DINOv2
+# models are Apache 2.0, Impacket is Apache 1.1, the map code is BSD-3-Clause with some MIT parts and the map glyphs are
 # OFL 1.1, and each asks for its notice to travel with a binary copy (the Protomaps
 # text also covers the style design, which is CC0 and asks nothing). A vendored file's
 # or a model's label names that file, and tests/test_notices.py relies on it to check
@@ -65,6 +65,9 @@ REPO_NOTICES = [
      "gleapp/models/LICENSE-sface"),
     ("DINOv2-small image model (gleapp/models/dinov2_small.onnx)",
      "gleapp/models/LICENSE-dinov2"),
+    ("open_clip ViT-B-32 image model (gleapp/models/clip_vit_b32_int8.onnx) and its "
+     "label vectors (gleapp/models/clip_labels.json)",
+     "gleapp/models/LICENSE-openclip"),
     ("YuNet face-detection model (gleapp/models/face_detection_yunet_2023mar.onnx)",
      "gleapp/models/LICENSE-yunet"),
     ("MapLibre GL JS (gleapp/web/static/maps/maplibre-gl.js, maplibre-gl.css)",

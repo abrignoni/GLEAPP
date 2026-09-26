@@ -1104,6 +1104,17 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 where.append("(hashset_kind IS NULL OR hashset_kind != 'known-good')")
             if q.get("faces") == "1":
                 where.append("faces > 0")
+            if q.get("label"):
+                # a content label (gleapp/labels.py) at or above the strictness asked for
+                from .. import labels
+                if q["label"] in labels.label_names():
+                    try:
+                        _lmin = float(q.get("label_min", labels.DEFAULT_MIN))
+                    except ValueError:
+                        _lmin = labels.DEFAULT_MIN
+                    got = labels.filter_sql(q["label"], min(0.99, max(0.01, _lmin)))
+                    where.append(got[0])
+                    params += got[1]
             # "has duplicates": a real >=2 exact stack, a visual stack, or a
             # near-dup cluster (vstack_id/cluster_id are only set for groups of >=2)
             _exact_dup = ("stack_id IN (SELECT stack_id FROM files WHERE stack_id "
@@ -1284,6 +1295,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             d["cluster_size"] = case.db.conn.execute(
                 "SELECT COUNT(*) n FROM files WHERE cluster_id=?", (r["cluster_id"],)
             ).fetchone()["n"]
+        from .. import labels
+        d["content_labels"] = labels.labels_for(case, file_id)
         return jsonify(d)
 
     @app.get("/api/similar/<int:file_id>")
@@ -1346,6 +1359,36 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     def content_status():
         from .. import content
         return jsonify(content.status(C()))
+
+    @app.get("/api/labels/status")
+    def labels_status():
+        """The content labels (gleapp/labels.py): how far the case is labelled and how
+        many files each label holds at the strictness asked for."""
+        from .. import labels
+        case = C()
+        try:
+            lmin = min(0.99, max(0.01, float(request.args.get("min", labels.DEFAULT_MIN))))
+        except ValueError:
+            lmin = labels.DEFAULT_MIN
+        st = labels.status(case)
+        n = labels.counts(case, lmin)
+        for lab in st["labels"]:
+            lab["count"] = n.get(lab["key"], 0)
+        return jsonify(dict(st, min=lmin))
+
+    @app.post("/api/labels/run")
+    def labels_run():
+        """Label this case's pictures: the examiner's explicit request, recorded in the
+        case, then carried out by the background indexer like Find similar's indexes."""
+        from .. import labels
+        case = C()
+        if not labels.model_ready():
+            return jsonify({"ok": False, "error": "the label model is missing from this build"}), 400
+        labels.request(case)
+        case.db.audit_log(case.examiner, "labels", "content labelling requested")
+        indexer.stop()
+        indexer.start()
+        return jsonify({"ok": True})
 
     @app.get("/api/simindex/status")
     def simindex_status():

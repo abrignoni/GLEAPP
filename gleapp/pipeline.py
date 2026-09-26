@@ -718,6 +718,11 @@ def process(
         if content.model_ready():
             run_stage("similar_content", "Indexing for Find similar (content)…",
                       lambda: content.build_index(case, progress=progress))
+        # only for a case the examiner asked to label (gleapp/labels.py)
+        from . import labels
+        if labels.model_ready() and labels.requested(case):
+            run_stage("content_labels", "Labelling content (guns, drugs, money)…",
+                      lambda: labels.build_index(case, progress=progress))
 
     # screening ran inline with processing (screen=True) - record it so the UI
     # doesn't keep offering "Run screening" for a collection that's already done

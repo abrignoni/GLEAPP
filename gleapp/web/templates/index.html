@@ -571,6 +571,18 @@
       </div>
     </details>
 
+    <details class="fsec" data-sec="labels">
+      <summary>Content labels <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="flabel" title="Pictures a model suggests show this. A suggestion to look at, never a finding: nothing here sets a category or a flag.">Show
+          <select id="flabel"><option value="">Any file</option></select></label>
+        <label class="flabel" title="How strongly the picture has to look like the label rather than like anything ordinary. Lower finds more and is wrong more often.">Strictness <span class="fval" id="flabelminv">50%</span>
+          <input type="range" id="flabelmin" min="10" max="95" step="5" value="50"></label>
+        <button class="btn sm block" id="btnLabels" style="display:none" title="Describe every picture with a model and suggest which show guns, drugs or money. Runs in the background; the gallery stays usable. Only runs when you ask; files later added to this case are labelled too.">Label pictures</button>
+        <div id="labelInfo" class="fnote"></div>
+      </div>
+    </details>
+
     <details class="fsec" data-sec="dup">
       <summary>Duplicates <span class="fdot"></span></summary>
       <div class="fbody">

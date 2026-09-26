@@ -451,6 +451,14 @@ was. A reattach is recorded in Processing history.
 | **Skin-tone ratio** | **Any**, or 10% / 30% / 50% or more of the frame skin-toned. Needs screening. |
 | **Run face / skin screening** | Runs it now if it hasn't run. |
 
+### Content labels
+
+| Control | What it does |
+|---|---|
+| **Label pictures** | Runs content labelling on this case, after a confirmation. It never runs unless you ask. See section 9. |
+| **Show** | **Any file**, or the pictures a model suggests show **Guns**, **Drugs** or **Money**, with each label's count at the current strictness. Available once the case has been labelled. |
+| **Strictness** | How strongly a picture must look like the label rather than like anything ordinary, 10% to 95% (50% by default). Lower finds more and is wrong more often. |
+
 ### Duplicates
 
 | Control | What it does |
@@ -558,6 +566,32 @@ photos, from every angle), a sticker character in 25 different poses, a team pho
 taken three ways, and 16 renders of one room. Scores differ by subject (the chair
 photos scored 0.70 to 0.85 with each other, the sticker poses 0.88 to 0.91), which is
 why the results are ranked and the cutoff is yours to set.
+
+### Content labels: guns, drugs, money
+
+Content labelling suggests which pictures show **guns**, **drugs** or **money**, so you
+can go to them first. It is optional and **only runs when you ask**: the **Label
+pictures** button in the sidebar's Content labels section, or `gleapp labels` on the
+command line. The request is written to the case and to its processing history, and
+from then on files a later ingest adds to that case are labelled too.
+
+It uses the image half of a CLIP model, open_clip's **ViT-B-32** trained on LAION-2B
+(MIT), which ships with GLEAPP and runs on the computer: nothing goes online. Each label
+is a handful of sentences ("a photo of a handgun", "a photo of a stack of banknotes",
+"a photo of cannabis buds", ...), and a picture's score is how much more it looks like
+those sentences than like a set of ordinary ones ("a photo of a person", "a photo of
+food", ...). The labelling reads the thumbnails, not the evidence, like the content
+index, describes each picture once however many exact copies of it the case holds,
+skips pictures under 128 pixels, and can be stopped and picks up where it left off. It
+runs at about 10 pictures a second per core.
+
+**These are suggestions, never findings.** Nothing is categorized or flagged: filter to a
+label, look, and categorize or flag what you confirm. Measured on 1,000 ImageNet photos,
+one per class: the four photos holding a gun scored 84% to 99.8% for Guns and came
+first with a cannon (81%), the next picture 30%; a mushroom, a syringe, a plastic bag
+and a lighter scored 57% to 84% for Drugs; nothing scored above 3% for Money. That set
+holds no cash and no drugs, so how many of those a label finds has not been measured
+yet; lower the strictness when a label seems to miss things.
 
 ## 10. Face / skin screening
 
@@ -1619,6 +1653,14 @@ Features without Supervision", 2023), Apache-2.0: Meta's `facebook/dinov2-small`
 (Hugging Face revision `ed25f3a3`), converted to ONNX for GLEAPP
 (`gleapp/models/dinov2_small.onnx`). The licence text ships beside it at
 `gleapp/models/LICENSE-dinov2`, as the licence requires.
+
+### Content labels (section 9)
+
+**open_clip ViT-B-32, LAION-2B** (Gabriel Ilharco, Mitchell Wortsman et al., "OpenCLIP",
+2021; weights `vit_b_32-laion2b_e16`), MIT: exported to ONNX with its weights stored as
+int8 by `tools/make_clip_model.py` (`gleapp/models/clip_vit_b32_int8.onnx`), with the
+label sentences and their vectors in `gleapp/models/clip_labels.json`. The licence text
+ships beside it at `gleapp/models/LICENSE-openclip`.
 
 ### Face / skin screening (section 10)
 

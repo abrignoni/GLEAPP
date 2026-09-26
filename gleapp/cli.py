@@ -381,6 +381,32 @@ def cmd_screen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_labels(args: argparse.Namespace) -> int:
+    from . import labels
+
+    case = open_case(args.case, examiner=args.examiner)
+    try:
+        if not labels.model_ready():
+            _p("The label model is missing from this build.")
+            return 1
+        labels.request(case)
+        case.db.audit_log(case.examiner, "labels", "content labelling requested")
+        _p("Labelling pictures (guns, drugs, money)…")
+
+        def progress(done: int, total: int) -> None:
+            print(f"\r  {done}/{total}", end="", flush=True)
+
+        labels.build_index(case, workers=args.workers, progress=progress)
+        print()
+        names = labels.label_names()
+        for key, n in labels.counts(case, args.min).items():
+            _p(f"  {names[key]}: {n:,} at {args.min:.0%} or more")
+        _p("Suggestions only: review them in the gallery's Content labels section.")
+    finally:
+        case.close()
+    return 0
+
+
 def cmd_similar(args: argparse.Namespace) -> int:
     case = open_case(args.case)
     hits = find_similar(case, args.file_id, threshold=args.threshold, limit=args.limit)
@@ -583,6 +609,14 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("screen", help="run face/skin screening on an existing case")
     s.add_argument("--workers", type=int, default=4)
     s.set_defaults(func=cmd_screen)
+
+    s = sub.add_parser("labels", help="suggest which pictures show guns, drugs or money "
+                                      "(runs only when asked; later ingests into the case "
+                                      "are labelled too)")
+    s.add_argument("--workers", type=int, default=4)
+    s.add_argument("--min", type=float, default=0.5,
+                   help="strictness the printed counts use, 0 to 1 (default 0.5)")
+    s.set_defaults(func=cmd_labels)
 
     s = sub.add_parser("similar", help="list files perceptually similar to FILE_ID")
     s.add_argument("file_id", type=int)

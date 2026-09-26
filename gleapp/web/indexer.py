@@ -3,7 +3,8 @@
 Processing used to build the copy and content indexes as its last stages, which added
 8 to 20 minutes to an ingest (measured on four real cases). Here they are built after
 processing instead, one thread per open case, at lower parallelism so the gallery stays
-responsive: likely examiner material first, the system's and applications' own artwork
+responsive, followed by the content labels (gleapp/labels.py) once the examiner has asked
+for them, which share the same order and the same pauses: likely examiner material first, the system's and applications' own artwork
 last. Find similar searches whatever is indexed so far. The indexer pauses while any
 job runs (an ingest, screening, a re-scan) and stops before the case closes; both
 builders write in chunks and pick up where they left off, so nothing is lost.
@@ -75,10 +76,11 @@ class BackgroundIndexer:
                 or self.state["job"]["running"] or self._searches > 0)
 
     def _run(self, case) -> None:
-        from .. import content, simindex
+        from .. import content, labels, simindex
         workers = max(2, (os.cpu_count() or 4) // 2)
         progress = lambda d, t: self.status.update(done=d, total=t)
-        finished = {"copies": False, "content": False}   # a pass that ran to its end
+        fresh = {"copies": False, "content": False, "labels": False}
+        finished = dict(fresh)                           # a pass that ran to its end
         try:
             while not self._stop.is_set() and self.state.get("case") is case:
                 if self.state["job"]["running"]:
@@ -103,17 +105,25 @@ class BackgroundIndexer:
                                         stop=lambda: self._should_yield(case))
                     finished["content"] = not self._should_yield(case)
                     continue
+                lt = labels.status(case)
+                if (lt["model"] and lt["requested"] and lt["indexed"] < lt["indexable"]
+                        and not finished["labels"]):
+                    self.status.update(stage="labels", done=0, total=lt["indexable"] - lt["indexed"])
+                    labels.build_index(case, workers=workers, progress=progress,
+                                       stop=lambda: self._should_yield(case))
+                    finished["labels"] = not self._should_yield(case)
+                    continue
                 # up to date (an unreadable thumbnail is not retried until new files
                 # arrive): idle, and look again for files a later job adds
                 self.status.update(stage="idle", done=0, total=0)
-                before = (st["indexable"], ct["indexable"])
+                before = (st["indexable"], ct["indexable"], lt["indexable"])
                 for _ in range(int(IDLE_POLL / BUSY_POLL)):
                     if self._stop.is_set() or self.state.get("case") is not case:
                         return
                     time.sleep(BUSY_POLL)
-                st, ct = simindex.status(case), content.status(case)
-                if (st["indexable"], ct["indexable"]) != before:
-                    finished = {"copies": False, "content": False}
+                st, ct, lt = simindex.status(case), content.status(case), labels.status(case)
+                if (st["indexable"], ct["indexable"], lt["indexable"]) != before:
+                    finished = dict(fresh)
         except sqlite3.ProgrammingError:
             pass                  # the case was closed under it (not through the app): stop
         # pylint: disable-next=broad-exception-caught

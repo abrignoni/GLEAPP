@@ -53,6 +53,7 @@ LICENCES = {
     "gleapp/vendor/LICENSE-impacket": {"Apache-1.1"},
     "gleapp/models/LICENSE-sface": {"Apache-2.0"},
     "gleapp/models/LICENSE-dinov2": {"Apache-2.0"},
+    "gleapp/models/LICENSE-openclip": {"MIT"},
     "gleapp/models/LICENSE-yunet": {"MIT"},
     # MapLibre and the mapbox-gl-js and d3-color code in it, plus glfx.js under MIT
     "gleapp/web/static/maps/LICENSE-maplibre-gl.txt": {"BSD-3-Clause", "MIT"},

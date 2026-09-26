@@ -14,8 +14,8 @@ description = "GLEAPP - Graphics · Logs · Examination · Automated Processing 
 readme = "README.md"
 requires-python = ">=3.10"
 # The licence of the whole wheel, what it bundles included: GLEAPP, the vendored
-# readers and the YuNet model are MIT, Impacket's ESE code Apache 1.1, the SFace and
-# DINOv2 models Apache 2.0, the map code BSD-3-Clause with some MIT parts, the map style design CC0
+# readers, the YuNet model and the open_clip model are MIT, Impacket's ESE code
+# Apache 1.1, the SFace and DINOv2 models Apache 2.0, the map code BSD-3-Clause with some MIT parts, the map style design CC0
 # and the map glyphs OFL 1.1. tests/test_licence_metadata.py ties both fields to the
 # licence texts themselves.
 license = "MIT AND Apache-1.1 AND Apache-2.0 AND BSD-3-Clause AND OFL-1.1 AND CC0-1.0"

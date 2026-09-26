@@ -231,6 +231,13 @@ UPSTREAM_MODEL_LICENCES["LICENSE-dinov2"] = (
     "Version 2.0, January 2004")
 
 
+# open_clip's licence, which covers the weights it publishes: the LICENSE file of
+# github.com/mlfoundations/open_clip, copied byte for byte at commit 8e9b7f4c3fc7.
+UPSTREAM_MODEL_LICENCES["LICENSE-openclip"] = (
+    1229, "4a5b4f13ea4792a8211a69f32d2b460b6d520e57cd23c6301e707c76a6e97a55",
+    "Gabriel Ilharco, Mitchell Wortsman")
+
+
 @pytest.mark.parametrize("name", sorted(UPSTREAM_MODEL_LICENCES))
 def test_the_model_licences_are_opencv_zoos_text_unchanged(name):
     """Kept verbatim: an edited licence is not the licence."""

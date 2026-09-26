@@ -217,6 +217,10 @@ function filterParams() {
   if ($("#finarch").checked) p.set("in_archive", "1");
   if ($("#fdup").value) p.set("hasdup", $("#fdup").value);
   if ($("#ffaces").checked) p.set("faces", "1");
+  if ($("#flabel").value) {
+    p.set("label", $("#flabel").value);
+    p.set("label_min", (+$("#flabelmin").value / 100).toFixed(2));
+  }
   if ($("#fgps").checked) p.set("has_gps", "1");
   if ($("#fhit").checked) p.set("hashset", "1");
   if ($("#fhashset").value) p.set("hashset_name", $("#fhashset").value);
@@ -1492,6 +1496,8 @@ async function showMeta(id) {
     ["Recorded (as stored, no zone)", fmtRecorded(f)],
     ["Camera", f.camera || ""],
     ["Faces", f.faces || 0], ["Skin ratio", f.skin_ratio ?? ""],
+    ["Content labels (suggested)", (f.content_labels || []).filter(l => l.score >= 0.1)
+      .map(l => `${l.name} ${Math.round(100 * l.score)}%`).join(", ")],
     ["Matched in", matchedInText(f)],
     ["Exact copies", f.stack && f.stack.length > 1 ? `${f.stack.length}` : "none"],
     ["Visually similar", f.vstack && f.vstack.length > 1 ? `${f.vstack.length} files` : "none"],
@@ -2143,7 +2149,7 @@ document.addEventListener("keydown", e => {
 /* ---------- filter wiring ---------- */
 // #fsort has its own handler (it maps to state.sortCol/Dir), so it's not here
 ["#fq", "#fkind", "#fcat", "#fflag", "#fsrc", "#forigin", "#finarch", "#fdup", "#ffaces", "#fgps",
- "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse"].forEach(s => {
+ "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#flabel", "#flabelmin"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
@@ -2153,11 +2159,14 @@ $("#fskin").addEventListener("input", () => {
   const v = +$("#fskin").value;
   $("#fskinv").textContent = v > 0 ? `${v}% or more` : "Any";
 });
+$("#flabelmin").addEventListener("input", () => { $("#flabelminv").textContent = $("#flabelmin").value + "%"; });
+$("#flabelmin").addEventListener("change", () => refreshLabels());
 
 /* ---------- collapsible feature sections ---------- */
 const SEC_ACTIVE = {
   hash:   () => !!$("#fhashset").value || $("#fhit").checked || $("#fhidegood").checked,
   screen: () => $("#ffaces").checked || +$("#fskin").value > 0,
+  labels: () => !!$("#flabel").value,
   dup:    () => !!$("#fdup").value,
   err:    () => $("#ferr").checked,
   loc:    () => $("#fgps").checked,
@@ -2203,6 +2212,9 @@ const FILTER_DEFS = [
   { active: () => $("#ffaces").checked,
     label: () => "Has faces",
     clear: () => { $("#ffaces").checked = false; } },
+  { active: () => !!$("#flabel").value,
+    label: () => `Content label: ${esc($("#flabel").selectedOptions[0].dataset.name || "")}, ${$("#flabelmin").value}% or more`,
+    clear: () => { $("#flabel").value = ""; } },
   { active: () => +$("#fskin").value > 0,
     label: () => `Skin-tone ratio: ${$("#fskin").value}% or more`,
     clear: () => { $("#fskin").value = "0"; $("#fskinv").textContent = "Any"; } },
@@ -2851,17 +2863,49 @@ function trackJob(infoSel, barSel, label, done) {
 }
 $("#simMin").addEventListener("input", () => { $("#simMinV").textContent = $("#simMin").value + "%"; });
 $("#simMin").addEventListener("change", () => { if (state.similarOf && similarOfId != null) showSimilar(similarOfId); });
+/* Content labels (gleapp/labels.py): the options carry each label's count at the
+   strictness set, and the note says how far the case is labelled. Returns the status,
+   so the index poll below can show labelling on the shared progress bar. */
+async function refreshLabels() {
+  let lt;
+  try { lt = await api("/api/labels/status?min=" + (+$("#flabelmin").value / 100).toFixed(2)); }
+  catch (e) { return null; }
+  if (!lt || lt.error) return null;
+  const sel = $("#flabel"), cur = sel.value;
+  sel.innerHTML = '<option value="">Any file</option>' + lt.labels.map(l =>
+    `<option value="${esc(l.key)}" data-name="${esc(l.name)}">${esc(l.name)} (${l.count.toLocaleString()})</option>`).join("");
+  sel.value = cur;
+  const pct = lt.indexable ? Math.floor(100 * lt.indexed / lt.indexable) : 100;
+  sel.disabled = !lt.requested;
+  $("#btnLabels").style.display = lt.model && !lt.requested ? "" : "none";
+  $("#labelInfo").textContent = !lt.model ? "The label model is missing from this build."
+    : !lt.requested ? "Not run on this case. Labelling is optional and only runs when you ask."
+    : !lt.indexable ? "No pictures to label yet."
+    : lt.indexed < lt.indexable ? `Labelled ${pct}% of pictures so far; counts grow as it runs.`
+    : "Suggestions only: look before you categorize.";
+  return lt;
+}
+$("#btnLabels").onclick = async () => {
+  if (!confirm("Label this case's pictures?\n\nA model suggests which pictures show guns, drugs or money. " +
+               "It runs in the background (about 10 pictures a second per core) and files added to " +
+               "this case later are labelled too. Suggestions only: nothing is categorized or flagged.")) return;
+  const r = await api("/api/labels/run", { method: "POST" });
+  if (r && r.ok === false) { alert(r.error || "Could not start labelling."); return; }
+  refreshSimIndexInfo();
+};
 /* Find similar's indexes build in the background after processing (gleapp/web/
    indexer.py); this section shows how far they are and polls while they run. */
 let _simPoll = null, _simBarShown = false;
 state.simIndexing = null;
 async function refreshSimIndexInfo() {
-  let st, ct;
-  try { [st, ct] = await Promise.all([api("/api/simindex/status"), api("/api/content/status")]); }
+  let st, ct, lt;
+  try { [st, ct, lt] = await Promise.all([api("/api/simindex/status"), api("/api/content/status"),
+                                          refreshLabels()]); }
   catch (e) { return; }
   if (!st || st.error || !ct || ct.error) return;
   const bg = st.background || {};
   const todo = Math.max(0, st.indexable - st.indexed), ctodo = ct.model ? Math.max(0, ct.indexable - ct.indexed) : 0;
+  const ltodo = lt && lt.model ? Math.max(0, lt.indexable - lt.indexed) : 0;
   const pct = (a, b) => b ? Math.floor(100 * a / b) + "%" : "100%";
   const working = bg.running && bg.stage && bg.stage !== "idle";
   // one short status line; the details live in the button's tooltip and the help
@@ -2872,18 +2916,20 @@ async function refreshSimIndexInfo() {
     : st.indexed || ct.indexed ? `Partly indexed (matches ${pct(st.indexed, st.indexable)}, content ${pct(ct.indexed, ct.indexable)}).`
     : "Not indexed yet.";
   state.simIndexing = (todo || ctodo) ? { copies: pct(st.indexed, st.indexable), content: pct(ct.indexed, ct.indexable) } : null;
-  $("#btnSimIndex").style.display = !bg.running && (todo || ctodo) ? "" : "none";
+  $("#btnSimIndex").style.display = !bg.running && (todo || ctodo || ltodo) ? "" : "none";
   // the shared progress bar at the bottom of the pane, like every other background task;
   // left alone while a job runs (the indexer is paused then, and the job owns the bar)
   const bar = $("#taskProg");
-  if (working && !bg.paused && (todo || ctodo)) {
-    const copiesStage = bg.stage === "copies";
-    const done = copiesStage ? st.indexed : ct.indexed, total = copiesStage ? st.indexable : ct.indexable;
+  if (working && !bg.paused && (todo || ctodo || ltodo)) {
+    const copiesStage = bg.stage === "copies", labelStage = bg.stage === "labels";
+    const src = copiesStage ? st : labelStage ? lt : ct;
+    const done = src.indexed, total = src.indexable;
     const p = total ? Math.floor(100 * done / total) : 0;
     bar.classList.remove("err", "indeterminate");
     bar.style.display = "block";
     bar.querySelector("i").style.width = p + "%";
-    bar.querySelector(".jbtxt").textContent = `Find similar: indexing ${copiesStage ? "matches" : "content"}`;
+    bar.querySelector(".jbtxt").textContent = labelStage ? "Content labels: labelling pictures"
+      : `Find similar: indexing ${copiesStage ? "matches" : "content"}`;
     bar.querySelector(".jbpct").textContent = `${p}% · ${done.toLocaleString()}/${total.toLocaleString()}`;
     _simBarShown = true;
   } else if (_simBarShown && !bg.paused) {
@@ -2894,7 +2940,7 @@ async function refreshSimIndexInfo() {
   }
   clearTimeout(_simPoll);
   // quickly while indexing or paused, slowly otherwise, to notice files a later job adds
-  if (bg.running) _simPoll = setTimeout(refreshSimIndexInfo, (todo || ctodo || bg.paused) ? 1500 : 10000);
+  if (bg.running) _simPoll = setTimeout(refreshSimIndexInfo, (todo || ctodo || ltodo || bg.paused) ? 1500 : 10000);
 }
 $("#btnSimIndex").onclick = async () => {
   const r = await api("/api/simindex/build", { method: "POST" });
