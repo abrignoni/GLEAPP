@@ -575,6 +575,9 @@ The **Show** options:
   Recorded (as stored). A file dated outside the range on every one of them is
   hidden. Either end can be left empty. It applies in the gallery and the list
   alike, unlike the list's per-column date filters, which apply only in the list.
+- **Include files with no dates**: also shows every file that has none of those
+  five dates (a 0 or an empty value counts as none, as the columns show it
+  blank). With no range set, it shows only those files.
 - The filesystem times are instants, so the days are read in the display
   **Timezone**, as their columns show them. The EXIF capture time and the
   as-stored readings of a FAT or exFAT volume carry no zone, so they are

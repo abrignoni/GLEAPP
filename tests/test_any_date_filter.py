@@ -44,6 +44,8 @@ def client(tmp_path, monkeypatch):
         "ingested_only": {"ingested_at": _utc(2025, 6, 3)},
         "no_dates": {},
         "bad_json": {"recorded_times": "not json"},
+        # blank values are no date, as their columns show them
+        "blanks": {"mtime": 0, "created_dt": "", "recorded_times": json.dumps({})},
     }
     for name, fields in rows.items():
         ids[name] = db.upsert_file(f"/x/{name}.jpg", kind="image", **fields)
@@ -95,3 +97,24 @@ def test_no_range_or_a_malformed_day_filters_nothing(client):
     every = set(ids)
     assert _names(cl, ids) == every
     assert _names(cl, ids, any_date_from="June 1") == every
+
+
+UNDATED = {"ingested_only", "no_dates", "bad_json", "blanks"}
+
+
+def test_include_files_with_no_dates_adds_them_to_the_range(client):
+    cl, ids = client
+    got = _names(cl, ids, any_date_from="2025-06-01", any_date_to="2025-06-05",
+                 any_date_from_ts=_utc(2025, 6, 1), any_date_to_ts=_utc(2025, 6, 6),
+                 any_date_none="1")
+    assert got == INSIDE | UNDATED
+
+
+def test_with_no_range_it_shows_only_the_files_with_no_dates(client):
+    cl, ids = client
+    assert _names(cl, ids, any_date_none="1") == UNDATED
+
+
+def test_a_blank_value_is_no_date_under_a_range_open_at_the_start(client):
+    cl, ids = client
+    assert "blanks" not in _names(cl, ids, any_date_to="2025-06-05")
