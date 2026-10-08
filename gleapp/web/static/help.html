@@ -782,6 +782,13 @@ an <strong>Add a set</strong> form. Accepts a SQLite <code>.db</code>, such as a
 release, an NSRL <code>_delta.sql</code> merged onto the previous full <code>.db</code>,
 Project&nbsp;VIC JSON, CAID JSON, or a hash list. (The command line
 <code>gleapp hashset --global ...</code> does the same, from a source install.)</p>
+<p>Each set shows its number of hashes once its import has finished. Until then it shows
+<strong>importing&hellip;</strong>. A set whose import stopped part-way, because GLEAPP was
+closed or the import ended with an error, shows <strong>incomplete &mdash; add it
+again</strong>: it may hold only part of the file, and cases are still checked against what it
+holds. Add the same file again under the same name to replace it. (Another GLEAPP window
+importing a set also makes it read incomplete in this one until that import finishes.)
+<code>gleapp hashset --list</code> says the same.</p>
 <p>A file with no hash to import is refused here too, before anything is written, so a set
 already stored under that name stays as it was. The dialog says why before the import starts
 and stays open, except for a SQLite database, which is checked as it is imported. A SQL script

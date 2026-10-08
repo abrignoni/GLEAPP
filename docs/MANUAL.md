@@ -771,6 +771,14 @@ an **✕** to remove it; every case then stops matching against it) and an **Add
 a set** form below. The command line (`gleapp hashset --global ...`, from a
 source install) does the same thing.
 
+Each set shows its number of hashes once its import has finished. Until then it
+shows **importing...**. A set whose import stopped part-way, because GLEAPP was
+closed or the import ended with an error, shows **incomplete — add it again**:
+it may hold only part of the file, and cases are still checked against what it
+holds. Add the same file again under the same name to replace it. (Another
+GLEAPP window importing a set also makes it read incomplete in this one until
+that import finishes.) `gleapp hashset --list` says the same.
+
 ### Project VIC hash sets
 
 A Project VIC hash set, such as the one a national VICS portal distributes, is a

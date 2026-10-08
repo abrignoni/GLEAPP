@@ -67,6 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_hse_algo_value ON hashset_entries(algo, value);
 
 _lock = threading.RLock()
 _conn: sqlite3.Connection | None = None
+# the sets this process is importing right now (see sets() "status")
+_importing: set[int] = set()
 
 
 def store_path() -> Path:
@@ -189,13 +191,30 @@ def algo_counts(hashset_id: int) -> dict[str, int]:
 
 
 def sets() -> list[dict]:
+    """The stored sets, newest first. ``status`` says whether ``count`` is the
+    set's total: "complete", "importing" (this process is importing it) or
+    "incomplete" (its import never finished, so it may hold only part of the
+    file, and ``count`` is None or 0 while the entries it holds are matched)."""
     # the photodna count is a range over the (hashset_id, algo) key prefix, so
-    # it costs nothing on a set that holds none, which is every NSRL-style one
-    return [dict(r) for r in _ro_query(
-        "SELECT hs.id, hs.name, hs.source, hs.kind, hs.count, hs.imported_at, hs.vic, "
-        "  (SELECT COUNT(*) FROM hashset_entries e WHERE e.hashset_id = hs.id "
-        "     AND e.algo = ?) AS photodna "
-        "FROM hashsets hs ORDER BY hs.imported_at DESC", (PHOTODNA_ALGO,))]
+    # it costs nothing on a set that holds none, which is every NSRL-style one.
+    # count is written only once an import finishes (_finalize): NULL until then,
+    # or 0 (the column's default) for a set an earlier version left unfinished;
+    # the EXISTS probe is one key lookup
+    out = []
+    for r in _ro_query(
+            "SELECT hs.id, hs.name, hs.source, hs.kind, hs.count, hs.imported_at, hs.vic, "
+            "  (SELECT COUNT(*) FROM hashset_entries e WHERE e.hashset_id = hs.id "
+            "     AND e.algo = ?) AS photodna, "
+            "  (hs.count IS NULL OR (hs.count = 0 AND EXISTS ("
+            "     SELECT 1 FROM hashset_entries e WHERE e.hashset_id = hs.id))) "
+            "     AS unfinished "
+            "FROM hashsets hs ORDER BY hs.imported_at DESC", (PHOTODNA_ALGO,)):
+        d = dict(r)
+        unfinished = d.pop("unfinished")
+        d["status"] = ("importing" if d["id"] in _importing
+                       else "incomplete" if unfinished else "complete")
+        out.append(d)
+    return out
 
 
 def summary() -> dict:
@@ -233,11 +252,13 @@ def _norm(algo: str, value: object) -> str | None:
 def _create_set(name: str, source: str, kind: str, vic: bool = False) -> int:
     with _lock:
         conn = connect()
+        # count stays NULL until _finalize writes it, so a set whose import
+        # stops part-way never reads as complete
         conn.execute(
-            "INSERT INTO hashsets(name, source, kind, imported_at, vic) "
-            "VALUES(?,?,?,?,?) "
+            "INSERT INTO hashsets(name, source, kind, count, imported_at, vic) "
+            "VALUES(?,?,?,NULL,?,?) "
             "ON CONFLICT(name) DO UPDATE SET source = excluded.source, "
-            "kind = excluded.kind, imported_at = excluded.imported_at, "
+            "kind = excluded.kind, count = NULL, imported_at = excluded.imported_at, "
             "vic = excluded.vic",
             (name, source, kind, time.time(), 1 if vic else 0),
         )
@@ -246,6 +267,7 @@ def _create_set(name: str, source: str, kind: str, vic: bool = False) -> int:
         conn.execute("DELETE FROM hashset_entries WHERE hashset_id = ?", (hs_id,))
         vicdetails.delete_for(conn, hs_id)
         conn.commit()
+        _importing.add(hs_id)
     return hs_id
 
 
@@ -258,6 +280,7 @@ def _finalize(hs_id: int) -> int:
             (hs_id, hs_id),
         )
         conn.commit()
+        _importing.discard(hs_id)
         return int(conn.execute(
             "SELECT count FROM hashsets WHERE id = ?", (hs_id,)).fetchone()[0])
 
@@ -351,6 +374,8 @@ def _bulk_end() -> None:
                 c.execute(pragma)
             except sqlite3.OperationalError:
                 pass
+        # the entries are committed and indexed by now: a failed checkpoint or
+        # ANALYZE must not stop the import from recording its count
         try:
             _retry(lambda: c.execute("PRAGMA wal_checkpoint(TRUNCATE)"),
                    tries=10, wait=10)
@@ -358,9 +383,6 @@ def _bulk_end() -> None:
             c.commit()
         except sqlite3.Error:
             pass
-        c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        c.execute("ANALYZE")
-        c.commit()
 
 
 def import_sqlite(src_path: str | Path, *, name: str, kind: str = "known-good",
@@ -376,6 +398,7 @@ def import_sqlite(src_path: str | Path, *, name: str, kind: str = "known-good",
     """
     src_path = Path(src_path)
     src = sqlite3.connect(f"file:{src_path.as_posix()}?mode=ro", uri=True)
+    hs_id = None
     # big page cache, but let the ORDER BY spill to a disk temp file (the sort
     # of ~10^8 hashes is multi-GB - MEMORY temp_store would risk an OOM)
     src.execute("PRAGMA cache_size = -1048576")
@@ -430,6 +453,9 @@ def import_sqlite(src_path: str | Path, *, name: str, kind: str = "known-good",
         return hs_id, real
     finally:
         src.close()
+        # once _finalize ran this does nothing; stopped part-way, the set
+        # stays and sets() reports it incomplete
+        _importing.discard(hs_id)
 
 
 def _import_entries(name: str, source: str, kind: str, entries,
@@ -506,6 +532,7 @@ def _import_entries(name: str, source: str, kind: str, entries,
         # a set behind that reads as complete. Nothing of it has reached
         # hashset_entries yet, but the set row has, so remove it; the error says
         # why. If the removal itself fails, the original error is still raised.
+        _importing.discard(hs_id)
         try:
             delete_set(hs_id)
         except sqlite3.Error:
