@@ -252,6 +252,12 @@ function filterParams() {
   if ($("#fdup").value) p.set("hasdup", $("#fdup").value);
   if ($("#ffaces").checked) p.set("faces", "1");
   if ($("#fgps").checked) p.set("has_gps", "1");
+  // Dates: a file any of whose dates is in the range. The filesystem times are
+  // instants, so the bounds are worked out here in the display time zone, the
+  // end as the start of the day after the last (see _any_date_clause)
+  const dFrom = $("#fdfrom").value, dTo = $("#fdto").value;
+  if (dFrom) { p.set("any_date_from", dFrom); p.set("any_date_from_ts", zonedDayEpoch(dFrom, false)); }
+  if (dTo) { p.set("any_date_to", dTo); p.set("any_date_to_ts", zonedDayEpoch(dTo, true) + 1); }
   if ($("#fhit").checked) p.set("hashset", "1");
   if ($("#fhashset").value) p.set("hashset_name", $("#fhashset").value);
   if ($("#fhidegood").checked) p.set("hidegood", "1");
@@ -2296,7 +2302,7 @@ document.addEventListener("keydown", e => {
 /* ---------- filter wiring ---------- */
 // #fsort has its own handler (it maps to state.sortCol/Dir), so it's not here
 ["#fq", "#fkind", "#fcat", "#fflag", "#fsrc", "#forigin", "#finarch", "#findoc", "#fdup", "#ffaces", "#fgps",
- "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse"].forEach(s => {
+ "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fdfrom", "#fdto"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
@@ -2313,6 +2319,7 @@ const SEC_ACTIVE = {
   screen: () => $("#ffaces").checked || +$("#fskin").value > 0,
   dup:    () => !!$("#fdup").value,
   err:    () => $("#ferr").checked,
+  date:   () => !!($("#fdfrom").value || $("#fdto").value),
   loc:    () => $("#fgps").checked,
   carve:  () => !!$("#forigin").value,
   arch:   () => $("#finarch").checked || $("#findoc").checked,
@@ -2362,6 +2369,12 @@ const FILTER_DEFS = [
   { active: () => $("#ferr").checked,
     label: () => "Processing error / no preview",
     clear: () => { $("#ferr").checked = false; } },
+  { active: () => !!($("#fdfrom").value || $("#fdto").value),
+    label: () => {
+      const a = $("#fdfrom").value, b = $("#fdto").value;
+      return `Any date: ${a && b ? `${a} – ${b}` : a ? `from ${a}` : `until ${b}`}`;
+    },
+    clear: () => { $("#fdfrom").value = ""; $("#fdto").value = ""; } },
   { active: () => $("#fgps").checked,
     label: () => "Has GPS",
     clear: () => { $("#fgps").checked = false; } },
@@ -2590,6 +2603,7 @@ $("#btnClearFilters").onclick = () => {
   $("#findoc").checked = false;
   $("#fdup").value = "";
   $("#fhashset").value = "";
+  $("#fdfrom").value = ""; $("#fdto").value = "";
   ["#ffaces", "#fgps", "#fhit", "#fhidegood", "#ferr"].forEach(s => $(s).checked = false);
   $("#fcollapse").checked = true;
   $("#fskin").value = "0"; $("#fskinv").textContent = "Any";

@@ -11,6 +11,8 @@ The app can start with **no case open**: ``/api/context`` then reports
 
 from __future__ import annotations
 
+import calendar
+import datetime
 import json
 import mimetypes
 import os
@@ -106,6 +108,66 @@ def _col_filter_clause(col: str, op: str, val):
 
 def _like_escape(s: str) -> str:
     return str(s).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _day(raw) -> datetime.date | None:
+    try:
+        return datetime.date.fromisoformat(str(raw or ""))
+    except ValueError:
+        return None
+
+
+def _any_date_clause(q) -> tuple[str, list] | None:
+    """One (sql, params) pair for the sidebar's Dates filter, or None.
+
+    A file matches when any of its dates falls in the range, both days
+    included (``any_date_from``, ``any_date_to``, YYYY-MM-DD; either may be
+    left out). The filesystem times are instants, compared with the bounds the
+    page worked out in the display time zone: ``any_date_from_ts`` is the
+    first day's start and ``any_date_to_ts`` the start of the day after the
+    last, read in UTC when they are not given. The capture time and the
+    readings a FAT or exFAT volume stores carry no zone, so they are compared
+    on the date as written, which is what their columns show."""
+    first, last = _day(q.get("any_date_from")), _day(q.get("any_date_to"))
+    if first is None and last is None:
+        return None
+
+    def instant(name: str, day: datetime.date) -> float:
+        try:
+            return float(q[name])
+        except (KeyError, TypeError, ValueError):
+            return float(calendar.timegm(day.timetuple()))
+
+    lo = instant("any_date_from_ts", first) if first else None
+    hi = (instant("any_date_to_ts", last + datetime.timedelta(days=1))
+          if last else None)
+    days = (first.isoformat() if first else None, last.isoformat() if last else None)
+
+    def within(expr: str, bounds: tuple, below: str) -> tuple[str, list]:
+        parts, args = [], []
+        if bounds[0] is not None:
+            parts.append(f"{expr} >= ?")
+            args.append(bounds[0])
+        if bounds[1] is not None:
+            parts.append(f"{expr} {below} ?")
+            args.append(bounds[1])
+        return " AND ".join(parts), args
+
+    conds, params = [], []
+    for col in ("ctime", "mtime", "atime"):
+        sql, args = within(col, (lo, hi), "<")
+        conds.append(f"({sql})")
+        params += args
+    sql, args = within("substr(created_dt, 1, 10)", days, "<=")
+    conds.append(f"({sql})")
+    params += args
+    # recorded_times is a JSON object of readings; CASE, so a value that is not
+    # JSON never reaches json_each, which would fail the whole query
+    sql, args = within("substr(j.value, 1, 10)", days, "<=")
+    conds.append("(CASE WHEN json_valid(recorded_times) THEN EXISTS ("
+                 f"SELECT 1 FROM json_each(recorded_times) j WHERE {sql}) ELSE 0 END)")
+    params += args
+    return "(" + " OR ".join(conds) + ")", params
 
 
 def _notices_candidates() -> list[Path]:
@@ -1310,6 +1372,10 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 params.append(float(q["min_skin"]))
             if q.get("has_gps") == "1":
                 where.append("gps_lat IS NOT NULL")
+            got = _any_date_clause(q)
+            if got:
+                where.append(got[0])
+                params += got[1]
             if q.get("error") == "1":
                 where.append("error IS NOT NULL")
             elif q.get("error") == "0":
