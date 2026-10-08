@@ -3174,6 +3174,19 @@ function pdnaBadge(n) {
   n = +n || 0;
   return n ? ` <span class="muted" title="${esc(PDNA_WHY)}">· ${n.toLocaleString()} PhotoDNA, not matched</span>` : "";
 }
+/* A shared-store set's total is recorded only when its import finishes, so a set
+   still being imported, or one whose import stopped part-way, has none to show
+   (hashstore.sets() "status"). Say which, rather than a 0 beside stored hashes. */
+const REF_INCOMPLETE_WHY = "This set's import did not finish: GLEAPP was closed or the "
+  + "import stopped with an error, or another GLEAPP window is still importing it. It may "
+  + "hold only part of the file, and cases are still checked against what it holds. "
+  + "Add the file again under the same name to replace it.";
+function refSetCount(s) {
+  if (s.status === "importing") return `<span class="muted">importing…</span>`;
+  if (s.status === "incomplete")
+    return `<span style="color:var(--warn)" title="${esc(REF_INCOMPLETE_WHY)}">incomplete — add it again</span>`;
+  return `<span class="muted">${(s.count || 0).toLocaleString()}</span>`;
+}
 
 function renderCaseSets(sets) {
   sets = sets || [];
@@ -3293,7 +3306,7 @@ function renderRefStore(sets, total) {
     ? sets.map(s =>
         `<div class="cs" data-id="${s.id}">` +
         `<span style="flex:1" title="${esc(s.source || "")}">${esc(s.name)}${s.vic ? ' <span class="vicchip">VIC</span>' : ""}</span>` +
-        `<span class="muted">${(s.count || 0).toLocaleString()}</span>` +
+        refSetCount(s) +
         pdnaBadge(s.photodna) +
         `<span class="x" title="Remove from the shared store">✕</span></div>`).join("")
     : `<span class="muted">Nothing imported yet.</span>`;
@@ -3357,6 +3370,9 @@ function openRefDlg() {
   refWasJson = false;
   syncRefDlg();
   $("#refDlg").style.display = "block";
+  // the list as it is now: a set being imported shows as such, not as its last state
+  api("/api/hashsets").then(s => { if (s && s.sets) renderRefStore(s.sets, s.entries || 0); })
+    .catch(() => {});
 }
 $("#refInfo").onclick = openRefDlg;
 $("#btnRefStore").onclick = openRefDlg;
@@ -3395,9 +3411,10 @@ $("#refGo").onclick = async () => {
   toast(`Importing ${r.name} — this runs in the background`);
   watchLauncherJob();                  // opened from the launcher: its bar follows it
   trackJob("#rehashInfo", "#taskProg", "Importing reference data", async (ok, j) => {
+    // a failed import can leave its set behind, which the list shows as incomplete
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
     if (!ok) return;
     toast(j.message || "Reference data imported");
-    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
     // this dialog is also reachable pre-case, from the launcher — nothing to reload then
     if ($("#launcher").style.display !== "block") load();
   });
@@ -3412,7 +3429,7 @@ async function renderVicSets() {
     ? sets.map(x =>
         `<div class="cs" data-id="${x.id}">` +
         `<span style="flex:1" title="${esc(x.source || "")}">${esc(x.name)} <span class="vicchip">VIC</span></span>` +
-        `<span class="muted">${(x.count || 0).toLocaleString()}</span>` +
+        refSetCount(x) +
         pdnaBadge(x.photodna) +
         `<span class="x" title="Remove from the shared store">✕</span></div>`).join("")
     : `<span class="muted">No Project VIC hash set imported yet.</span>`;
@@ -3472,9 +3489,10 @@ $("#vicGo").onclick = async () => {
   toast(`Importing ${r.name} — this runs in the background`);
   watchLauncherJob();                  // opened from the launcher: its bar follows it
   trackJob("#rehashInfo", "#taskProg", "Importing Project VIC hash set", async (ok, j) => {
+    // a failed import can leave its set behind, which the list shows as incomplete
+    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
     if (!ok) return;
     toast(j.message || "Project VIC hash set imported");
-    try { updateKnownHash((await api("/api/context")).known_hash); } catch (e) {}
     if ($("#launcher").style.display !== "block") load();
   });
 };

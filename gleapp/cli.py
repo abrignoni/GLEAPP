@@ -303,7 +303,10 @@ def cmd_hashset(args: argparse.Namespace) -> int:
         _p(f"Global hash store: {s['entries']:,} entries across {len(s['sets'])} set(s)")
         for hs in s["sets"]:
             pdna = int(hs.get("photodna") or 0)
-            _p(f"  [{hs['id']}] {hs['name']}  {hs['count']:,}  ({hs['kind']})"
+            count = (f"{hs['count']:,}" if hs.get("status") == "complete" else
+                     "incomplete: the import did not finish (or is still running "
+                     "elsewhere); import the file again under this name")
+            _p(f"  [{hs['id']}] {hs['name']}  {count}  ({hs['kind']})"
                + (f"  [{pdna:,} PhotoDNA, not matched]" if pdna else ""))
         return 0
 
