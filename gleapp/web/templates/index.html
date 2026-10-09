@@ -42,6 +42,7 @@
   aside.filters label{display:block;margin:3px 0}
   aside.filters select,aside.filters input[type=text]{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:5px}
   aside.filters input[type=range]{width:100%}
+  aside.filters input[type=date]{display:block;width:100%;margin-top:3px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:4px 5px;color-scheme:dark}
   aside.filters .fbar{font-size:11px;color:var(--muted);padding-bottom:9px;border-bottom:1px solid var(--line)}
   aside.filters .fbarhead{display:flex;justify-content:space-between;align-items:center}
   aside.filters .fbar #fbarN b{color:var(--fg)}
@@ -662,6 +663,18 @@
         <label class="fck"><input type="checkbox" id="ferr"> Processing error / no preview</label>
         <button class="btn sm block" id="btnRetryErr" style="display:none">Retry failed files</button>
         <div id="retryInfo" class="fnote"></div>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="date">
+      <summary title="A file is shown when any of its dates falls in the range, both days included: captured (EXIF), filesystem created, written or accessed, or recorded as stored. Filesystem times are read in the display time zone; the EXIF and as-stored dates have no zone and are read as the device wrote them. Ingested is not one of them.">Dates <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="flabel">From
+          <input type="date" id="fdfrom"></label>
+        <label class="flabel">To
+          <input type="date" id="fdto"></label>
+        <label class="fck" title="Also shows every file that has none of these dates. With no range set, shows only those files."><input type="checkbox" id="fdnone"> Include files with no dates</label>
+        <div class="fnote" title="A file is shown when any of its dates falls in the range, both days included: captured (EXIF), filesystem created, written or accessed, or recorded as stored. Filesystem times are read in the display time zone; the EXIF and as-stored dates have no zone and are read as the device wrote them. Ingested is not one of them.">Matches any of a file's dates: captured (EXIF), filesystem created, written or accessed, or recorded as stored.</div>
       </div>
     </details>
 
