@@ -1666,8 +1666,7 @@ that.</p>
 <h2 id="privacy">18. Data &amp; privacy</h2>
 <p>GLEAPP runs entirely on your machine and makes no network requests of its own; even the
 maps are drawn from a basemap file you import (section&nbsp;19), never from a tile server.
-The one exception is the optional <code>gleapp maps extract --build URL</code>, which runs the
-<code>pmtiles</code> tool, and that tool reads Protomaps' server. The
+The
 evidence you ingest is only ever read; all output is written inside the case folder and the
 per-user config / hash store under <code>%APPDATA%</code> and
 <code>%LOCALAPPDATA%</code>. Examiner actions (categorize, snapshot, import,
@@ -1757,8 +1756,7 @@ with a bounding box, west, south, east, north in decimal degrees, for example
 metro area is tens of megabytes and a small country under a hundred, at street-level
 detail. A raster <strong>.mbtiles</strong> made with QGIS or MapTiler Desktop also
 works, for a map you already have; vector MBTiles are not accepted. The same actions
-exist on the command line as <code>gleapp maps list | import | remove | use |
-extract</code>.</p>
+exist on the command line as <code>gleapp maps list | import | remove | use</code>.</p>
 <p>The Protomaps builds are OpenStreetMap data under the ODbL, and the map shows the
 "&copy; OpenStreetMap contributors" credit that license asks for, as plain
 text rather than a link, because a link would be the one outbound address on the page.</p>

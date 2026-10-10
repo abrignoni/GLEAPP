@@ -507,14 +507,14 @@ def cmd_source(args: argparse.Namespace) -> int:
 
 
 def cmd_maps(args: argparse.Namespace) -> int:
-    """Offline basemaps: list, import, remove, choose the active one, or cut a region."""
+    """Offline basemaps: list, import, remove, or choose the active one."""
     from . import basemaps
 
     if args.action == "list":
         rows = basemaps.list_basemaps()
         if not rows:
             _p("No basemaps imported. 'gleapp maps import FILE' takes a .pmtiles or a "
-               "raster .mbtiles; 'gleapp maps extract' cuts a region of the Protomaps build.")
+               "raster .mbtiles; the README's Maps section says how to get one.")
         for b in rows:
             mark = "*" if b["active"] else " "
             gone = "" if b["present"] else "  (file missing)"
@@ -538,41 +538,18 @@ def cmd_maps(args: argparse.Namespace) -> int:
            f"sha256 {rec['sha256']}")
         _p(f"  active basemap: {basemaps.get_active()}")
         return 0
-    if args.action in ("remove", "use"):
-        target = args.path or args.name
-        if not target:
-            raise ValueError(f"'maps {args.action}' needs the basemap's name (see 'maps list')")
-        if args.action == "remove":
-            if not basemaps.remove_basemap(target):
-                raise ValueError(f"no basemap named {target!r}")
-            _p(f"Removed {target}.")
-        else:
-            basemaps.set_active(target)
-            _p(f"Active basemap: {target}")
-        return 0
-    # extract: a region of the Protomaps planet build, through the pmtiles tool
-    import shutil
-    import subprocess
-    if not args.bbox or not args.out:
-        raise ValueError("'maps extract' needs --bbox=W,S,E,N and --out FILE.pmtiles")
-    build = args.build or "https://build.protomaps.com/YYYYMMDD.pmtiles"
-    cmd = ["pmtiles", "extract", build, args.out, f"--bbox={args.bbox}"]
-    if args.maxzoom is not None:
-        cmd.append(f"--maxzoom={args.maxzoom}")
-    tool = shutil.which("pmtiles")
-    if tool is None or not args.build:
-        _p("Run this with the pmtiles tool (https://github.com/protomaps/go-pmtiles/releases),"
-           " replacing YYYYMMDD with a recent build date:" if not args.build
-           else "The pmtiles tool is not on PATH; download it from "
-                "https://github.com/protomaps/go-pmtiles/releases and run:")
-        _p("  " + " ".join(cmd))
-        _p("Then: gleapp maps import " + args.out)
-        return 0 if tool or not args.build else 2
-    _p("  " + " ".join(cmd))
-    rc = subprocess.run(cmd, check=False).returncode
-    if rc == 0:
-        _p(f"Wrote {args.out}. Import it with: gleapp maps import {args.out}")
-    return rc
+    # remove or use
+    target = args.path or args.name
+    if not target:
+        raise ValueError(f"'maps {args.action}' needs the basemap's name (see 'maps list')")
+    if args.action == "remove":
+        if not basemaps.remove_basemap(target):
+            raise ValueError(f"no basemap named {target!r}")
+        _p(f"Removed {target}.")
+    else:
+        basemaps.set_active(target)
+        _p(f"Active basemap: {target}")
+    return 0
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
@@ -815,17 +792,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("maps",
                        help="offline basemaps for the gallery map: list, import a .pmtiles or "
-                            "raster .mbtiles, remove, choose the active one, or cut a region "
-                            "of the Protomaps build")
-    s.add_argument("action", choices=["list", "import", "remove", "use", "extract"])
+                            "raster .mbtiles, remove, or choose the active one")
+    s.add_argument("action", choices=["list", "import", "remove", "use"])
     s.add_argument("path", nargs="?", help="import: the basemap file; remove/use: its name")
     s.add_argument("--name", help="import: the name to file it under (default: the file name)")
-    s.add_argument("--bbox", help="extract: W,S,E,N in decimal degrees, written --bbox=W,S,E,N "
-                                  "(a western longitude starts with a minus sign)")
-    s.add_argument("--out", help="extract: the .pmtiles file to write")
-    s.add_argument("--maxzoom", type=int, help="extract: highest zoom to keep (default: all, 15)")
-    s.add_argument("--build", help="extract: the planet build URL, e.g. "
-                                   "https://build.protomaps.com/YYYYMMDD.pmtiles")
     s.set_defaults(func=cmd_maps)
 
     s = sub.add_parser("stats", help="print case statistics")

@@ -206,9 +206,10 @@ def test_cli_lists_imports_and_removes(capsys):
     assert "Imported cli (pmtiles, zoom 0-1)" in out
     assert cli_main(["maps", "list"]) == 0
     assert "* cli: pmtiles" in capsys.readouterr().out
-    # a bounding box west of Greenwich starts with a minus sign, which argparse reads
-    # as an option unless the value is attached with '='; the help says so
-    assert cli_main(["maps", "extract", "--bbox=-77.12,38.79,-76.90,38.99", "--out", "dc.pmtiles"]) == 0
-    assert "pmtiles extract https://build.protomaps.com/YYYYMMDD.pmtiles dc.pmtiles --bbox=-77.12,38.79,-76.90,38.99" in capsys.readouterr().out
+    # GLEAPP has no command that reaches another system: cutting a region is the job of
+    # GLEAPP Map Downloader or the pmtiles tool, so 'extract' is not an action
+    with pytest.raises(SystemExit):
+        cli_main(["maps", "extract", "--bbox=-77.12,38.79,-76.90,38.99", "--out", "dc.pmtiles"])
+    assert "invalid choice: 'extract'" in capsys.readouterr().err
     assert cli_main(["maps", "remove", "cli"]) == 0
     assert cli_main(["maps", "remove", "cli"]) == 2                    # ValueError -> exit 2
