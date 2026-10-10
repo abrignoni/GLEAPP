@@ -6,7 +6,7 @@
 #ifndef AppVer
   #error Pass the version in with /DAppVer=<version>. packaging\build.py reads it from gleapp\__init__.py and does this for you.
 #endif
-#define AppPublisher "charpy4n6"
+#define AppPublisher "charpy4n6, Alexis Brignoni"
 #define AppExe "GLEAPP.exe"
 
 [Setup]
