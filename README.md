@@ -719,6 +719,7 @@ Developer ID, and notarised by Apple.
 ### Team roles
 
 - Committers and reviewers: [@abrignoni](https://github.com/abrignoni),
+  [@charpy4n6](https://github.com/charpy4n6),
   [@JamesHabben](https://github.com/JamesHabben),
   [@Johann-PLW](https://github.com/Johann-PLW), [@stark4n6](https://github.com/stark4n6)
 - Approvers: [@abrignoni](https://github.com/abrignoni),
@@ -731,6 +732,12 @@ are merged. Every release signing request is approved by an approver.
 
 This program will not transfer any information to other networked systems unless
 specifically requested by the user or the person installing or operating it.
+
+GLEAPP reads and reviews files on the machine it runs on. Its interface is a local server,
+bound to `127.0.0.1` unless you give `--host` another address, and it does not fetch map
+data on its own. One command uses the network, and only when you run it:
+`gleapp maps extract` calls Protomaps' `pmtiles` tool, which reads the area you ask for
+from Protomaps' server. See [Maps](#maps-offline-basemaps).
 
 The same policy covers the other LEAPPs:
 [leapps.org/releases#code-signing-policy](https://leapps.org/releases#code-signing-policy).
