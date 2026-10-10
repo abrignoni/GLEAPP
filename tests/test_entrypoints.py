@@ -231,15 +231,24 @@ def test_smoke_requires_webview2_on_windows_only():
     On other platforms the renderer is whatever pywebview picked."""
     from gleapp.desktop import _Smoke
 
-    def verdict(renderer, platform):
-        smoke = _Smoke(types.SimpleNamespace(renderer=renderer), platform=platform)
+    private = {"smartscreen": False, "crash_reports": "local"}
+
+    def verdict(renderer, platform, privacy=None):
+        smoke = _Smoke(types.SimpleNamespace(renderer=renderer), platform=platform,
+                       privacy=privacy)
         window = _FakeWindow()
         smoke.run(window)
         assert window.destroyed == 1
         return smoke.ok
 
-    assert verdict("edgechromium", "win32") is True
-    assert verdict("mshtml", "win32") is False
+    assert verdict("edgechromium", "win32", private) is True
+    assert verdict("mshtml", "win32", private) is False
+    # WebView2 with SmartScreen still on, or on an environment that sends crash
+    # reports, is a window that opens and a smoke test that fails
+    assert verdict("edgechromium", "win32") is False
+    assert verdict("edgechromium", "win32", {**private, "smartscreen": True}) is False
+    assert verdict("edgechromium", "win32", {**private, "smartscreen": None}) is False
+    assert verdict("edgechromium", "win32", {**private, "crash_reports": "default"}) is False
     assert verdict("wkwebview", "darwin") is True
     assert verdict("gtkwebkit2", "linux") is True
 
