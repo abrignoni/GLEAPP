@@ -912,6 +912,57 @@ inside the module's lock, or on a read-only connection of its own (`_ro_query`),
 were left as they are. A new shared connection that reads outside a lock needs the same
 setting.
 
+## The long query in the shared connection test waits for a read
+
+`tests/sharedreads.py` runs one long query after another on the case connection beside
+four readers, and `tests/test_shared_connection_reads.py` gives the run 300 s. Until
+2026-10-10 the long query ran back to back, and on the Linux runners the readers were
+kept off the connection. The `[db]` case ran out its 300 s twice that day on the 3.10
+`runtime-contract` job (runs 38055729255 and 38059692312). It was not a deadlock and
+the code under `gleapp/` was not at fault.
+
+Measured 2026-10-10 on `ubuntu-24.04` runners (4 CPUs, SQLite 3.45.1):
+
+- In the last 40 runs of that workflow, 31 jobs per Python version ran the test (33
+  on 3.10, with its two reruns). The `[db]` case took a median of 20 to 43 s depending
+  on the version, and passing runs took up to 294 s on 3.11, 235 s on 3.14, 207 s on
+  3.12, 183 s on 3.10 and 165 s on 3.13.
+- The child run on its own 839 times on Python 3.10.22 took 10 to 107 s. The run time
+  followed the number of long queries that ran before the readers finished (7.16 ms
+  each, r = 0.95), and that number was 0.77 to 9.0 per read. On macOS arm64 (Python
+  3.10.20, 600 runs) it was under 0.9 per read and a run took 1.1 to 8.5 s.
+- The whole suite run 161 times on 3.10.22 timed out 3 times, each on the first pass
+  of a fresh job. In all three, gdb at 150 s and at 280 s (12 captures) showed the
+  same thing: the long-query thread running in `sqlite3VdbeExec`, and every reader
+  still going waiting in `pthread_mutex_lock` inside a SQLite call, most often
+  `sqlite3_column_type` from `_pysqlite_fetch_one_row`, otherwise `sqlite3_finalize`,
+  `sqlite3_reset`, `sqlite3_prepare_v2` or `sqlite3_step`. Between two captures 5 s
+  apart one thread used 5.3 to 6.6 s of processor time and no other more than 0.03 s,
+  and the readers' loop counters, read with py-spy, had moved. `top` in the one
+  capture read for it showed the machine 73% idle.
+- It is not particular to 3.10: the old harness run on its own on Python 3.12.15 timed
+  out 2 times in 17.
+
+The reading of those stacks is that the thread running the long query lets go of the
+connection's mutex and takes it again before a waiting reader does. That is a reading,
+not something measured below the stacks. Not explained: why a job's first pass was the
+one that timed out (3 of 16 first passes, 0 of 145 later ones), and why 3.10 was the
+slowest version.
+
+A reader now sets an event after every read and the long query waits for it, so the
+long query runs once per read at most. Measured on the same runners (run 38080662573):
+202 passes of the whole suite on 3.10.22 in 32 fresh jobs, none timed out, the `[db]`
+case 2.4 to 9.2 s and at most 0.66 long queries per read; 50 more passes on 3.11
+through 3.14, 3.6 to 6.4 s.
+
+**A change to that harness has to be shown to still fail on the code before the
+statement cache was turned off**, or it can pass by no longer exercising the defect.
+That is done by running the child with `gleapp.db._SHARED_CONNECTION = {}` set before
+the case is opened. With the event in place and the cache back on, every run had wrong
+answers: on Linux 160 to 428 of 1,600 on Python 3.12.15 (10 runs) and 169 to 444 on
+3.14.8 (20 runs), and on macOS 164 to 304 on 3.12.1 (10 runs). Do not let the long
+query run back to back again, and do not raise the timeout to cover for it.
+
 ## The context's counts are kept until a row is written
 
 Measured 2026-10-01 at 22672c4 on a synthetic case of 150,000 rows in one folder source

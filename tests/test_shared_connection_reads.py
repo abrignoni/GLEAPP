@@ -31,8 +31,9 @@ THREADS = 4
 # ten and one in four wrong at these counts (the measurements are in
 # .claude/rules/gleapp-cross-platform.md), so a run does not pass by luck.
 ROUNDS = {"db": 400, "http": 150}
-# The run takes a few seconds; the timeout is only reached if threads are left
-# waiting on each other.
+# The long query runs once per read at most (see ``read_done`` in
+# sharedreads.py), so the timeout is only reached if threads are left waiting
+# on each other.
 TIMEOUT = 300
 
 
