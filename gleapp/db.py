@@ -1138,7 +1138,7 @@ class CaseDB:
             "WHERE id=?",
             (hashset_id, hashset_id),
         )
-        self.conn.commit()
+        self.commit()
         return n
 
     def match_hash(self, algo: str, value: str) -> sqlite3.Row | None:

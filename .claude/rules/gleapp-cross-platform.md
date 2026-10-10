@@ -963,6 +963,46 @@ answers: on Linux 160 to 428 of 1,600 on Python 3.12.15 (10 runs) and 169 to 444
 3.14.8 (20 runs), and on macOS 164 to 304 on 3.12.1 (10 runs). Do not let the long
 query run back to back again, and do not raise the timeout to cover for it.
 
+## Every commit on the case connection takes the case lock
+
+Every thread shares a case's one connection, and `Connection.commit()` is not one step.
+On Python 3.10 it asks SQLite whether a transaction is open, lets go of the interpreter
+lock to prepare `COMMIT`, takes it back, and lets go again to step it
+(https://github.com/python/cpython/blob/acb4dc12b6df8615af7b43120ef601e04072f7d2/Modules/_sqlite/connection.c#L466-L476,
+3.10.22). A commit from a second thread that lands in between ends the transaction, and
+the first raises `sqlite3.OperationalError: cannot commit - no transaction is active`
+although its rows are stored. From 3.11 the prepare and the step share one release,
+which narrows the window and does not close it.
+
+It showed on 2026-10-10 as one failure of
+`test_a_source_added_while_the_indexer_works_is_indexed_too` in 202 passes of the suite
+on Python 3.10.22 (run 38080662573). The test's stand-in for an ingest called
+`case.db.conn.commit()` on the indexer thread while the test's own loop asked
+`simindex.status`, which commits under the lock. The indexer ended on the error, and the
+test waited out its 60 s and reported an empty list.
+
+Measured the same day. The test as it was, alone: 0 failures in 3,200 runs on
+ubuntu-24.04 with Python 3.10.22 (run 38088595626) and 0 in 2,000 on macOS arm64 with
+3.10.20. With one more thread asking `simindex.status` back to back from the moment the
+indexer starts: 4 failures in 160 on 3.10.22, 2 in 80 on 3.12.15 and 1 in 80 on 3.14.8,
+each with that traceback and no indexer thread left 10 s into the wait; with the test's
+commit inside the lock, 0 in 320. Plain `sqlite3` with no GLEAPP code, one thread
+committing outside a lock and one inside: 9 of the 30,000 commits made outside raised on
+3.10.22, none with both inside.
+
+`CaseDB.add_hashset_entries` committed on the case connection outside the lock, at the
+end of a hash list import. On Python 3.10.20, beside a thread calling `CaseDB.commit()`,
+11 of 6,000 imports raised with every row stored; with that commit through
+`CaseDB.commit()`, 0 of 6,000. `tests/test_hashset_commit_takes_the_lock.py` holds it.
+The import's other statements still run outside the lock. In three runs with the other
+thread committing back to back, that thread's commit raised `database schema has
+changed` in each (the thread ended on the first); that was left as it is.
+
+Commit with `case.db.commit()`, or inside `with case.db.lock`. In a test too: a raw
+`conn.commit()` is safe only while no other thread uses the case. The indexer test now
+stops waiting when the indexer ends and asserts that it recorded no error: with an
+indexer made to raise, it failed on that assertion in 0.33 s.
+
 ## The context's counts are kept until a row is written
 
 Measured 2026-10-01 at 22672c4 on a synthetic case of 150,000 rows in one folder source

@@ -276,7 +276,10 @@ def test_a_source_added_while_the_indexer_works_is_indexed_too(tmp_path, monkeyp
         if not added:                  # a second source lands while this pass runs
             for n in range(3):
                 _add(case, f"t{n}", _scene(500 + n))
-            case.db.conn.commit()
+            # under the case lock, as an ingest commits: the loop below asks for the
+            # status meanwhile, which commits too, and a commit outside the lock raised
+            # "cannot commit - no transaction is active" when the two met
+            case.db.commit()
             added.append(True)
         return real_build(case, **kw)
     monkeypatch.setattr(content, "build_index", build_after_an_ingest)
@@ -284,9 +287,10 @@ def test_a_source_added_while_the_indexer_works_is_indexed_too(tmp_path, monkeyp
     try:
         ix.start()
         for _ in range(600):
-            if simindex.status(c)["indexed"] == 6:
-                break
+            if simindex.status(c)["indexed"] == 6 or not ix.status["running"]:
+                break                  # an indexer that ended will not index the rest
             time.sleep(0.1)
+        assert ix.status["error"] is None
         assert added and simindex.status(c)["indexed"] == 6
     finally:
         ix.stop()
