@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Written out rather than imported, so a change to the code's list fails here
 # instead of quietly rewriting what the screen promises.
 EXPECTED_FILESYSTEMS = [
-    "ext2", "ext3", "ext4", "F2FS", "FAT32", "exFAT", "NTFS",
+    "ext2", "ext3", "ext4", "F2FS", "FAT32", "FAT16", "FAT12", "exFAT", "NTFS",
     "HFS+", "HFSX", "APFS", "QNX4", "QNX EFS", "QNX ETFS", "QNX IFS",
     "SquashFS", "JFFS2", "UBI", "UBIFS", "YAFFS1", "YAFFS2",
 ]
@@ -50,7 +50,8 @@ def test_every_named_filesystem_has_a_walker_in_the_vendored_reader():
     parse: None here means the screen names something GLEAPP cannot do.
     """
     kinds = {"ext2": "ext2", "ext3": "ext3", "ext4": "ext4", "F2FS": "f2fs",
-             "FAT32": "fat32", "exFAT": "exfat", "NTFS": "ntfs", "HFS+": "hfs+", "HFSX": "hfsx",
+             "FAT32": "fat32", "FAT16": "fat16", "FAT12": "fat12",
+             "exFAT": "exfat", "NTFS": "ntfs", "HFS+": "hfs+", "HFSX": "hfsx",
              "APFS": "apfs", "QNX4": "qnx4", "QNX EFS": "efs",
              "QNX ETFS": "etfs", "QNX IFS": "QNX IFS boot image",
              "SquashFS": "squashfs", "JFFS2": "jffs2", "UBI": "ubi", "UBIFS": "ubifs",
