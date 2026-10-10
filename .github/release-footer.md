@@ -42,3 +42,8 @@ The build is made on Ubuntu 24.04, so it needs glibc 2.39 or newer and will not 
 an older distribution. The native desktop window needs a GTK or Qt webview toolkit that
 pip does not install, and CI does not exercise it, so `gleapp web` in a browser is the
 tested path there.
+
+## Code signing policy
+
+The [code signing policy](https://github.com/abrignoni/GLEAPP#code-signing-policy) covers
+Windows signing, team roles and privacy.
