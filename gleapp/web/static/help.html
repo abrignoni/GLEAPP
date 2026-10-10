@@ -1666,7 +1666,11 @@ that.</p>
 <h2 id="privacy">18. Data &amp; privacy</h2>
 <p>GLEAPP runs entirely on your machine and makes no network requests of its own; even the
 maps are drawn from a basemap file you import (section&nbsp;19), never from a tile server.
-The
+On Windows the desktop window is drawn by Microsoft's WebView2 Runtime: GLEAPP turns off
+its SmartScreen checks and keeps its crash reports on the machine, and the runtime still
+collects the diagnostic data Windows collects for it, which the Windows
+<strong>Diagnostic data</strong> setting governs in part and an application cannot turn
+off. <code>gleapp web</code> in your own browser does not use WebView2. The
 evidence you ingest is only ever read; all output is written inside the case folder and the
 per-user config / hash store under <code>%APPDATA%</code> and
 <code>%LOCALAPPDATA%</code>. Examiner actions (categorize, snapshot, import,

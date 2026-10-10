@@ -1683,7 +1683,12 @@ partition on a dual-boot disk is enough to do that.
 
 GLEAPP runs entirely on your machine and makes no network requests of its own;
 even the maps are drawn from a basemap file you import (§19), never from a tile
-server. Ingested
+server. On Windows the desktop window is drawn by Microsoft's WebView2 Runtime:
+GLEAPP turns off its SmartScreen checks and keeps its crash reports on the
+machine, and the runtime still collects the diagnostic data Windows collects
+for it, which the Windows **Diagnostic data** setting governs in part and an
+application cannot turn off. `gleapp web` in your own browser does not use
+WebView2. Ingested
 evidence is only ever read; all output is written inside the case folder and
 the per-user config / hash store under `%APPDATA%` and `%LOCALAPPDATA%`.
 Examiner actions (categorize, snapshot, import, re-match, VIC import,

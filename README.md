@@ -735,6 +735,15 @@ bound to `127.0.0.1` unless you give `--host` another address. It has no command
 uses the network and it does not fetch map data: a basemap is a file you import. See
 [Maps](#maps-offline-basemaps).
 
+On Windows the desktop window is drawn by Microsoft's WebView2 Runtime, a Windows
+component that GLEAPP does not ship. GLEAPP turns off its SmartScreen checks and keeps its
+crash reports on the machine. The runtime still collects diagnostic data as a Windows
+component, which an application cannot turn off; the Windows **Diagnostic data** setting
+governs the optional part. See Microsoft's
+[Data and privacy in WebView2](https://learn.microsoft.com/microsoft-edge/webview2/concepts/data-privacy)
+and [privacy statement](https://privacy.microsoft.com/privacystatement). `gleapp web`
+shows the same interface in your own browser and does not use WebView2.
+
 The same policy covers the other LEAPPs:
 [leapps.org/releases#code-signing-policy](https://leapps.org/releases#code-signing-policy).
 

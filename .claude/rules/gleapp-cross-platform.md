@@ -122,6 +122,38 @@ source artwork; upscaling the 1x brings the blur back. It is a build-time
 dependency only, in the `[build]` extra under a darwin marker. `packaging/gleapp.icns` and
 `packaging/gleapp.ico` carry the logo and the spec picks them up automatically.
 
+## The Windows window: SmartScreen off, crash reports kept on the machine
+
+On Windows the window is Microsoft's WebView2 Runtime, and Microsoft's "Data and privacy
+in WebView2" lists what it sends: SmartScreen checks (a page's address; a download's hash
+and name), a minidump of a WebView2 process that crashes, and diagnostic data collected as
+a Windows component. An application can turn off the first two and pywebview sets
+neither (no mention of either switch in its `edgechromium.py`, 6.2.1 and master
+e0c008c). `gleapp/_webview2_privacy.py` does, and `desktop.main()` installs it before the
+window is made:
+
+- `CoreWebView2Settings.IsReputationCheckingRequired = False`, set from a wrapper around
+  pywebview's `on_webview_ready`, because that handler is what starts the first navigation.
+- `CoreWebView2EnvironmentOptions.IsCustomCrashReportingEnabled = True`. That is an option
+  of the environment, and `CoreWebView2CreationProperties`, which pywebview uses, has no
+  such property. So `edgechromium.WebView2` is replaced with a Python subclass whose
+  `EnsureCoreWebView2Async(None)` creates the environment and hands it over, with the
+  folder, browser arguments and private mode pywebview asked for (the same Python-subclass
+  pattern as pywebview's own `BrowserForm(WinForms.Form)`).
+
+Checked 2026-10-10 on the `windows-smoke` job (windows-2025, Python 3.12.10, pywebview
+6.2.1, pythonnet 3.2.1): the real window loaded and printed `smartscreen=False
+crash_reports='local'`, the first being the property read back after it was set. The
+desktop smoke test fails on Windows unless both hold, so a pywebview release that changes
+`EdgeChrome` or `on_webview_ready` under the patch fails CI and does not ship quietly.
+If the environment cannot be created the control falls back to creating its own, so the
+window still opens, with a logged warning and `crash_reports='default'`.
+
+Not measured: no traffic was captured, so what the runtime sends with these settings is
+Microsoft's documentation, not an observation. Not reachable: the diagnostic data, which
+Microsoft's page says an application has no control over; the README's privacy policy
+says so. `gleapp web` in a browser does not use WebView2.
+
 ## Headless smoke tests of the frozen binary
 
 `desktop.main()` does not handle `--version`; `packaging/entrypoint.py` answers it before
