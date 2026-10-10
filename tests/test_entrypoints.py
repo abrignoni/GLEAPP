@@ -181,6 +181,12 @@ def test_smoke_mode_opens_the_window_loads_the_launcher_and_closes_it(tmp_path, 
     """GLEAPP_DESKTOP_SMOKE runs the whole entry and exits 0 once the launcher loaded."""
     _stub_webview(tmp_path, monkeypatch)
     monkeypatch.setenv("GLEAPP_DESKTOP_SMOKE", "1")
+    # The stub has no WebView2 backend to patch, so stand in for what the patch
+    # records once the real control is ready; Windows requires it of the smoke.
+    from gleapp import _webview2_privacy
+    monkeypatch.setattr(_webview2_privacy, "install", lambda: True)
+    monkeypatch.setitem(_webview2_privacy.state, "smartscreen", False)
+    monkeypatch.setitem(_webview2_privacy.state, "crash_reports", "local")
     from gleapp.desktop import main as desktop_main
 
     assert desktop_main([]) == 0
