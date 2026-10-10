@@ -71,7 +71,7 @@ your user settings, not in any case.
         wait for it.
       - Filesystems are walked file by file, so each file keeps the name, path
         and dates the filesystem recorded. Supported: ext2/3/4, F2FS, FAT32,
-        exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS, QNX IFS,
+        FAT16, FAT12, exFAT, NTFS, HFS+, HFSX, APFS, QNX4, QNX EFS, QNX ETFS, QNX IFS,
         SquashFS, JFFS2, UBI, UBIFS, YAFFS1 and YAFFS2.
         Unreadable volumes are named in the Source panel.
       - Deleted-media recovery is separate (§16). Tick *Recover media
@@ -1602,12 +1602,13 @@ recovering files no surviving record names.
 
 ### Which filesystems can do what
 
-The walk reads twenty kinds, but the other two passes need more of a
+The walk reads twenty-two kinds, but the other two passes need more of a
 filesystem than the walk does:
 
 | Filesystem | Walked | Deleted records | Free space, for scoping |
 |---|---|---|---|
 | NTFS, FAT32, exFAT | yes | **yes** | yes |
+| FAT16, FAT12 | yes | no | yes |
 | HFS+, HFSX, APFS, F2FS | yes | no | yes |
 | ext2 / ext3 / ext4 | yes | no | **no** |
 | QNX4, EFS, ETFS, IFS | yes | no | **no** |
