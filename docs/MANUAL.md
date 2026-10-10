@@ -1683,8 +1683,7 @@ partition on a dual-boot disk is enough to do that.
 
 GLEAPP runs entirely on your machine and makes no network requests of its own;
 even the maps are drawn from a basemap file you import (§19), never from a tile
-server. The one exception is the optional `gleapp maps extract --build URL`,
-which runs the `pmtiles` tool, and that tool reads Protomaps' server. Ingested
+server. Ingested
 evidence is only ever read; all output is written inside the case folder and
 the per-user config / hash store under `%APPDATA%` and `%LOCALAPPDATA%`.
 Examiner actions (categorize, snapshot, import, re-match, VIC import,
@@ -1797,9 +1796,7 @@ Two formats are accepted:
   the tiles inside the box, at every zoom level from 0 to 15. The box above comes
   out at about 28 MB, and all of Puerto Rico
   (`--bbox=-67.30,17.85,-65.20,18.55`) at about 70 MB. Add `--maxzoom=13` for a smaller file when street-level detail is
-  not needed. `gleapp maps extract --bbox=W,S,E,N --out area.pmtiles --build
-  URL` runs the same command when the tool is on your PATH; without `--build`
-  it prints the command for you to run and changes nothing.
+  not needed.
 - **`.mbtiles`** (raster): a fallback for a map you already have, made with
   QGIS, MapTiler Desktop or a GIS shop's own tooling. Vector MBTiles are not
   accepted, since they would need a second style, second fonts and second
@@ -1830,7 +1827,6 @@ every case, and none of the `maps` commands need `-c`.
 | `gleapp maps import FILE` | copy it in and hash it; `--name NAME` files it under your own name |
 | `gleapp maps use NAME` | make that one active |
 | `gleapp maps remove NAME` | delete GLEAPP's copy; your original file is untouched |
-| `gleapp maps extract` | cut a region, or print the command that would |
 
 ### Using the map in the gallery
 
