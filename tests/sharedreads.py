@@ -56,6 +56,15 @@ def main(argv: list[str]) -> int:
     case = app.config["STATE"]["case"]
     ids = [r["id"] for r in case.db.conn.execute("SELECT id FROM files ORDER BY id").fetchall()]
     stop = threading.Event()
+    # Set by a reader after every read. The long query waits for it before it
+    # runs again, so it takes the connection once per read at most. Run back to
+    # back it kept the readers off the connection on Linux, where a thread that
+    # lets go of a mutex can take it again before one that was waiting for it:
+    # a reader sat through up to 9 long queries for one read on a CI runner
+    # (under 1 on macOS), and three runs in 161 were still going at 300 s with
+    # every reader waiting for the connection and still advancing.
+    read_done = threading.Event()
+    read_done.set()
     count_lock = threading.Lock()
     counts = {"ok": 0, "wrong": 0, "none": 0, "error": 0, "slow": 0}
     errors: set[str] = set()
@@ -65,10 +74,16 @@ def main(argv: list[str]) -> int:
             counts[what] += 1
             if error:
                 errors.add(error)
+        if what != "slow":
+            read_done.set()
 
     def slow() -> None:
         # stands for a job, the indexer or a large count holding the connection
         while not stop.is_set():
+            # the timeout only keeps this loop looking at ``stop``
+            if not read_done.wait(0.1):
+                continue
+            read_done.clear()
             try:
                 case.db.conn.execute(SLOW_SQL, (SLOW_STEPS,)).fetchone()
             except Exception:                       # pylint: disable=broad-exception-caught
