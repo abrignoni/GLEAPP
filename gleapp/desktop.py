@@ -42,23 +42,31 @@ class _Smoke:
     ``ok`` is True only if the page loaded within the timeout and carried GLEAPP's
     title, and, on Windows, if the renderer is WebView2 (``edgechromium``): without
     the WebView2 runtime pywebview falls back to the legacy MSHTML control, where the
-    static title still loads and the interface does not.
+    static title still loads and the interface does not. With WebView2 it is also
+    True only if SmartScreen was read back off and the window runs on an environment
+    that keeps crash reports on the machine (``privacy`` is ``_webview2_privacy.state``).
     """
 
     def __init__(self, webview_module, *, platform: str = sys.platform,
-                 timeout: float = 60.0) -> None:
+                 timeout: float = 60.0, privacy: dict | None = None) -> None:
         self._webview = webview_module
         self._platform = platform
         self._timeout = timeout
+        self._privacy = privacy or {}
         self.ok = False
 
     def run(self, window) -> None:
         loaded = window.events.loaded.wait(self._timeout)
         title = window.evaluate_js("document.title") if loaded else None
         renderer = getattr(self._webview, "renderer", None)
+        smartscreen = self._privacy.get("smartscreen")
+        crash_reports = self._privacy.get("crash_reports")
         self.ok = bool(loaded) and "GLEAPP" in str(title) and (
-            self._platform != "win32" or renderer == "edgechromium")
+            self._platform != "win32" or (
+                renderer == "edgechromium" and smartscreen is False
+                and crash_reports == "local"))
         print(f"desktop smoke: loaded={loaded} title={title!r} renderer={renderer!r} "
+              f"smartscreen={smartscreen!r} crash_reports={crash_reports!r} "
               f"ok={self.ok}", flush=True)
         window.destroy()
 
@@ -211,7 +219,12 @@ def main(argv: list[str] | None = None) -> int:
         _close_case(app)
         server.stop()
 
-    smoke = _Smoke(webview) if os.environ.get(SMOKE_ENV) else None
+    # Windows: SmartScreen off and crash reports kept here, before the window exists.
+    from . import _webview2_privacy
+    _webview2_privacy.install()
+
+    smoke = (_Smoke(webview, privacy=_webview2_privacy.state)
+             if os.environ.get(SMOKE_ENV) else None)
 
     try:
         window = webview.create_window(

@@ -181,6 +181,12 @@ def test_smoke_mode_opens_the_window_loads_the_launcher_and_closes_it(tmp_path, 
     """GLEAPP_DESKTOP_SMOKE runs the whole entry and exits 0 once the launcher loaded."""
     _stub_webview(tmp_path, monkeypatch)
     monkeypatch.setenv("GLEAPP_DESKTOP_SMOKE", "1")
+    # The stub has no WebView2 backend to patch, so stand in for what the patch
+    # records once the real control is ready; Windows requires it of the smoke.
+    from gleapp import _webview2_privacy
+    monkeypatch.setattr(_webview2_privacy, "install", lambda: True)
+    monkeypatch.setitem(_webview2_privacy.state, "smartscreen", False)
+    monkeypatch.setitem(_webview2_privacy.state, "crash_reports", "local")
     from gleapp.desktop import main as desktop_main
 
     assert desktop_main([]) == 0
@@ -231,15 +237,24 @@ def test_smoke_requires_webview2_on_windows_only():
     On other platforms the renderer is whatever pywebview picked."""
     from gleapp.desktop import _Smoke
 
-    def verdict(renderer, platform):
-        smoke = _Smoke(types.SimpleNamespace(renderer=renderer), platform=platform)
+    private = {"smartscreen": False, "crash_reports": "local"}
+
+    def verdict(renderer, platform, privacy=None):
+        smoke = _Smoke(types.SimpleNamespace(renderer=renderer), platform=platform,
+                       privacy=privacy)
         window = _FakeWindow()
         smoke.run(window)
         assert window.destroyed == 1
         return smoke.ok
 
-    assert verdict("edgechromium", "win32") is True
-    assert verdict("mshtml", "win32") is False
+    assert verdict("edgechromium", "win32", private) is True
+    assert verdict("mshtml", "win32", private) is False
+    # WebView2 with SmartScreen still on, or on an environment that sends crash
+    # reports, is a window that opens and a smoke test that fails
+    assert verdict("edgechromium", "win32") is False
+    assert verdict("edgechromium", "win32", {**private, "smartscreen": True}) is False
+    assert verdict("edgechromium", "win32", {**private, "smartscreen": None}) is False
+    assert verdict("edgechromium", "win32", {**private, "crash_reports": "default"}) is False
     assert verdict("wkwebview", "darwin") is True
     assert verdict("gtkwebkit2", "linux") is True
 
