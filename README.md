@@ -719,6 +719,7 @@ Developer ID, and notarised by Apple.
 ### Team roles
 
 - Committers and reviewers: [@abrignoni](https://github.com/abrignoni),
+  [@charpy4n6](https://github.com/charpy4n6),
   [@JamesHabben](https://github.com/JamesHabben),
   [@Johann-PLW](https://github.com/Johann-PLW), [@stark4n6](https://github.com/stark4n6)
 - Approvers: [@abrignoni](https://github.com/abrignoni),
