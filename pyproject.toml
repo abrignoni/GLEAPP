@@ -28,7 +28,7 @@ license-files = [
     "gleapp/web/static/maps/LICENSE-*",
     "gleapp/web/static/maps/fonts/OFL.txt",
 ]
-authors = [{ name = "charpy4n6" }]
+authors = [{ name = "charpy4n6" }, { name = "Alexis Brignoni" }]
 dependencies = [
     "Pillow>=10.2",
     "pi-heif>=1.4",
