@@ -1067,6 +1067,10 @@ def source_record(case, name: str) -> dict | None:
     said = _meta_list(case, f"{key}:volume_notes")
     if said:
         out["volume_notes"] = said
+    # the acquisition's chunks the walk read with zeros in place of missing data
+    padded = _meta_list(case, f"{key}:padded_chunks")
+    if padded:
+        out["padded_chunks"] = padded
     try:
         found = json.loads(case.db.get_meta(f"{key}:discovery") or "null")
     except ValueError:
@@ -1439,7 +1443,61 @@ def _open_base(path: str):
                                                       encrypted=True))
     else:
         img = _RawImage(path)
+    _note_acquisition(img, path)
     return img
+
+
+# The acquisitions opened while an ingest walks an image, kept per thread only while
+# _ingest_image_walk asks for them (_watching_acquisitions), so it can say which of
+# their chunks it read with zeros in place of data that is not there.
+_ACQUIRED = threading.local()
+
+
+def _note_acquisition(img, path) -> None:
+    """Keep ``img`` for the walk in progress on this thread, with its file name, when
+    it is an ewfprobe image that records padded units (0.14.0 or later)."""
+    kept = getattr(_ACQUIRED, "images", None)
+    if kept is not None and getattr(type(img), "padded_chunks", None) is not None:
+        kept.append((Path(path).name, img))
+
+
+@contextlib.contextmanager
+def _watching_acquisitions():
+    """Collect the acquisitions _open_base opens on this thread inside the block."""
+    before = getattr(_ACQUIRED, "images", None)
+    _ACQUIRED.images = []
+    try:
+        yield _ACQUIRED.images
+    finally:
+        _ACQUIRED.images = before
+
+
+def padded_lines(acquired) -> list[str]:
+    """One line per acquisition in ``acquired`` [(file name, ewfprobe image)] whose
+    chunks (E01, SMART, Ex01), grains (VMDK) or clusters (QCOW) read so far held less
+    data than the bytes they cover, so the reader read zeros in place of the rest
+    (ewfprobe's ``padded_chunks``): how many, the zeros, and the first few by where
+    they sit on the disk. Only the units the walk read are known."""
+    out = []
+    for name, img in acquired:
+        units = img.padded_chunks
+        if not units:
+            continue
+        unit = units[0]["unit"]
+        zeros = sum(u["zeros"] for u in units)
+        cut = sum(1 for u in units if u["cut"])
+        one = len(units) == 1
+        first = "; ".join(
+            f"{u['unit']} {u['index']:,}" + (f" of {u['file']}" if "file" in u else "")
+            + f" at byte {u['offset']:,}: {u['decoded']:,} of {u['length']:,} bytes"
+            + (", stream cut" if u["cut"] else "") for u in units[:5])
+        more = f"; and {len(units) - 5:,} more" if len(units) > 5 else ""
+        out.append(f"{name}: {len(units):,} {unit}{'' if one else 's'} read during the "
+                   f"ingest held less data than the bytes {'it covers' if one else 'they cover'}"
+                   f" ({cut:,} with a compressed stream cut before its end), so the reader "
+                   f"read {zeros:,} zero bytes in place of data that is not there, and a file "
+                   f"read from them can hold those zeros ({first}{more})")
+    return out
 
 
 def _layer(img, path, *, bitlocker: bool = True, apfs: bool = True,
@@ -2932,8 +2990,20 @@ def _not_walked(img, base: int, size, luks_tried=None, bitlocker_tried=None) -> 
 _SAYING_KINDS = ("xfs", "btrfs", "refs")
 
 
+# The filesystems whose walkers record damage and no note: since qnxprobe 1.74, an
+# APFS or HFS+ file carrying a compression attribute without being flagged
+# compressed, which is read as stored. Only the damage is said for these, so a volume
+# that has none is recorded as it always was.
+_DAMAGE_KINDS = ("apfs", "hfs+", "hfsx")
+
+
 def _walker_says(walker, fskind: str) -> str:
-    """The reader's own note and damage on a volume of a kind in ``_SAYING_KINDS``."""
+    """The reader's own note and damage on a volume of a kind in ``_SAYING_KINDS``,
+    and its damage alone on one in ``_DAMAGE_KINDS``."""
+    if fskind in _DAMAGE_KINDS:
+        count, lines = qnxprobe.damage_lines(walker)
+        return (f"{count:,} damaged record{'' if count == 1 else 's'}: " + "; ".join(lines)
+                if count else "")
     if fskind not in _SAYING_KINDS:
         return ""
     note = getattr(walker, "note", None) or ""
@@ -3000,7 +3070,8 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     bitlocker_tried = _tried(_BITLOCKER_TRIED, image_path if ref is None else ref)
     apfs_tried = _tried(_APFS_TRIED, image_path if ref is None else ref)
 
-    img = _open_image_file(image_path if ref is None else ref)
+    with _watching_acquisitions() as acquired:
+        img = _open_image_file(image_path if ref is None else ref)
     try:
         media_size = img.media_size
         segments = len(img.paths)
@@ -3222,6 +3293,9 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                 if progress:
                     progress(n)
     finally:
+        # what the walk read with zeros in place of missing data, before the
+        # image is let go
+        padded = padded_lines(acquired)
         if ref is None:
             _drop_image(str(image_path))
         else:
@@ -3229,6 +3303,8 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
             img.close()
     case.db.commit()
     key = _meta_key(src.name)
+    if padded:
+        case.db.set_meta(f"{key}:padded_chunks", json.dumps(padded))
     if ref is not None:
         _record_set(case, src, ref, set_members, getattr(img, "raid_lines", []),
                     img.layout_record(), img.copy_notes)

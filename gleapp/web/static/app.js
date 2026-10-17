@@ -4822,6 +4822,16 @@ function renderSourcePanel(list) {
                         + ` ${_snapBytes(v.size || 0)} past the end of the image)`).join("; ")
           + `</div>`;
       }
+      // Chunks of the acquisition the walk read with zeros where their stored data
+      // ran out (ewfprobe's padded_chunks): a file read from them can hold zeros.
+      const padded = s.padded_chunks || [];
+      if (padded.length) {
+        vols += `<div style="font-size:11px;margin-top:2px;color:var(--danger)"`
+          + ` title="The acquisition stores less data for these chunks than the bytes`
+          + ` they cover, so the reader read zeros in place of the rest. Only the chunks`
+          + ` the walk read are known.">read with zeros: `
+          + padded.map(esc).join("; ") + `</div>`;
+      }
       // The member images of a RAID set, every one, each with its own state and
       // whether it was found beside the image picked, then what the reader
       // assembled from them, in its own words.

@@ -436,6 +436,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     for s in sources:
         for line in _raid_lines(case, s):
             _p(line)
+        for line in _padded_lines(case, s):
+            _p(f"warning: {line}")
     _p(f"Registered {n} files.")
     if not args.no_process:
         _run_process(case, args)
@@ -453,6 +455,16 @@ def _raid_lines(case, src) -> list[str]:
     from . import archive
     rec = archive.source_record(case, src.name) or {}
     return [str(line) for line in rec.get("raid") or []] if rec.get("members") else []
+
+
+def _padded_lines(case, src) -> list[str]:
+    """What the case records of the acquisition chunks the walk read with zeros where
+    their stored data ran out (see archive.padded_lines). Empty for any other source."""
+    if src.kind != "archive":
+        return []
+    from . import archive
+    rec = archive.source_record(case, src.name) or {}
+    return [str(line) for line in rec.get("padded_chunks") or []]
 
 
 def _run_process(case, args) -> None:

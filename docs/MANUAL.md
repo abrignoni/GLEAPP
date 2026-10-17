@@ -1546,8 +1546,8 @@ already give you.
   `hdiutil segment` split into `.dmgpart` files, point at the `.dmg` and keep the
   `.dmgpart` files beside it; a missing one is refused and named. For a sparse bundle,
   point at the `.sparsebundle` folder: on a Mac the file dialog lists it as one item,
-  and on Windows or Linux use the folder button. An LZFSE-compressed `.dmg` needs
-  `pyliblzfse`, which GLEAPP's requirements install.
+  and on Windows or Linux use the folder button. An LZFSE-compressed `.dmg` is read
+  by the vendored ewfprobe's own decoder (since 0.14.0), with nothing to install.
 - **AFM and AFF4**: point at the `.afm`, with its raw files beside it, or at the
   `.aff4` (for a striped AFF4, at any of its files).
 - **Virtual machine disk**: point at the `.vhd`, `.vhdx`, `.vmdk` or `.qcow2`. A

@@ -45,12 +45,19 @@ def _header2():
     return zlib.compress(("﻿" + text).encode("utf-16-le"))
 
 
-def _pack_chunks(chunks, compress):
-    """The chunk data blob plus one table entry per chunk, offsets relative."""
+def _pack_chunks(chunks, compress, cut=()):
+    """The chunk data blob plus one table entry per chunk, offsets relative. A chunk
+    numbered in ``cut`` is stored compressed whatever that gains, and only the first
+    half of its stream is kept, so its data runs out before its end marker."""
     blob = bytearray()
     entries = []
-    for chunk in chunks:
+    for number, chunk in enumerate(chunks):
         rel = len(blob)
+        if number in cut:
+            packed = zlib.compress(chunk, 6)
+            entries.append(rel | 0x80000000)
+            blob += packed[:len(packed) // 2]
+            continue
         if compress:
             packed = zlib.compress(chunk, 6)
             if len(packed) < len(chunk):
@@ -75,8 +82,9 @@ def sector_padded(data, sector_size=512):
 
 
 def write_ewf(folder, stem, data, *, chunk_size=4096, sector_size=512,
-              compress=True, chunks_per_segment=None):
-    """Write ``data`` as an EWF-E01 set and return the segment paths in order."""
+              compress=True, chunks_per_segment=None, cut=()):
+    """Write ``data`` as an EWF-E01 set and return the segment paths in order. Each
+    chunk numbered in ``cut`` (counted over the whole disk) is cut short."""
     data = sector_padded(data, sector_size)
     chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)] or [b""]
     per_segment = chunks_per_segment or len(chunks)
@@ -96,7 +104,8 @@ def write_ewf(folder, stem, data, *, chunk_size=4096, sector_size=512,
                 _section(out, "header", zlib.compress(b"1\nmain\nc\n\n"))
                 _section(out, "volume",
                          _volume(len(chunks), sectors_per_chunk, sector_size, sector_count))
-            blob, entries = _pack_chunks(group, compress)
+            first = index * per_segment
+            blob, entries = _pack_chunks(group, compress, {n - first for n in cut})
             base = out.tell() + ewfprobe.SECTION_SIZE
             _section(out, "sectors", blob)
             _section(out, "table", _table_payload(entries, base))
