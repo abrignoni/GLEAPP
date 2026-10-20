@@ -39,6 +39,11 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--edbworker":
         from gleapp._edbworker import main as edb_main
         sys.exit(edb_main(sys.argv[2:]))
+    # The build excludes c2pa, so this answers "not installed" for every file;
+    # dispatched all the same, so a frozen build never opens a window for it.
+    if len(sys.argv) > 1 and sys.argv[1] == "--c2paworker":
+        from gleapp._c2paworker import main as c2pa_main
+        sys.exit(c2pa_main(sys.argv[2:]))
     # --version answers without a window, so a frozen build can be smoke-tested
     # headless and it matches `python gleapp.py --version`. desktop.main() does not
     # handle it.

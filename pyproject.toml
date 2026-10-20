@@ -15,16 +15,17 @@ readme = "README.md"
 requires-python = ">=3.10"
 # The licence of the whole wheel, what it bundles included: GLEAPP, the vendored
 # readers and the YuNet model are MIT, Impacket's ESE code Apache 1.1, the SFace and
-# DINOv2 models Apache 2.0, the map code BSD-3-Clause with some MIT parts, the map style design CC0
-# and the map glyphs OFL 1.1. tests/test_licence_metadata.py ties both fields to the
-# licence texts themselves.
-license = "MIT AND Apache-1.1 AND Apache-2.0 AND BSD-3-Clause AND OFL-1.1 AND CC0-1.0"
+# DINOv2 models Apache 2.0, the map code BSD-3-Clause with some MIT parts, the map style design CC0,
+# the map glyphs OFL 1.1 and the C2PA trust lists CC BY 4.0. tests/test_licence_metadata.py
+# ties both fields to the licence texts themselves.
+license = "MIT AND Apache-1.1 AND Apache-2.0 AND BSD-3-Clause AND OFL-1.1 AND CC0-1.0 AND CC-BY-4.0"
 # Every licence text the wheel ships. Naming them also keeps setuptools' default
 # patterns from taking the NOTICES.txt that tools/make_notices.py writes at the repo root.
 license-files = [
     "LICENSE",
     "gleapp/vendor/LICENSE-*",
     "gleapp/models/LICENSE-*",
+    "gleapp/trust/LICENSE-*",
     "gleapp/web/static/maps/LICENSE-*",
     "gleapp/web/static/maps/fonts/OFL.txt",
 ]
@@ -57,6 +58,15 @@ dependencies = [
 # (.claude/rules/gleapp-cross-platform.md).
 dev = ["pytest>=8.0", "piexif>=1.1", "pillow-heif>=1.2.1"]
 desktop = ["pywebview>=5.0"]
+# Reads and validates C2PA Content Credentials (gleapp/provenance.py). An extra, not a
+# requirement: its native library is built from c2pa-rs, and upstream publishes no
+# lockfile or third-party notice for it, so no build carries it (packaging/gleapp.spec
+# excludes it). Without it a file holding credentials is "Not checked: the c2pa library
+# is not installed".
+# Below 0.39: c2pa-rs 0.92 removes the trust settings 0.91 deprecated. Wheels for every
+# platform GLEAPP ships, but its dependency cryptography has none for Intel macOS or
+# Windows on ARM in 50.0.2 (.claude/rules/gleapp-cross-platform.md).
+provenance = ["c2pa-python>=0.38,<0.39"]
 build = ["pywebview>=5.0", "pyinstaller==6.22.2", "dmgbuild==1.6.7; sys_platform == 'darwin'"]
 
 [project.scripts]
@@ -73,6 +83,7 @@ gleapp = [
     "web/templates/**/*",
     "web/static/**/*",
     "models/**/*",
+    "trust/*",
     "vendor/LICENSE-*",
     "vendor/vendored.json",
 ]

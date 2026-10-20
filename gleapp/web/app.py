@@ -28,12 +28,12 @@ from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from werkzeug.exceptions import HTTPException
 
 from .. import (appconfig, archive, backup, basemaps, categories, docmedia, exocache, flags,
-               lava, relink, report, savedset)
+               lava, provenance, relink, report, savedset)
 from ..case import image_set_source, open_case, parse_source_spec
 from ..db import FILE_PATH_SQL, ORIGINS, TOOL_ACTOR
 from ..facematch import find_matching_faces
 from ..ingest import DOCUMENT_EXTS, is_exoplayer_cache_name
-from ..pipeline import ingest_sources, process
+from ..pipeline import PROVENANCE_ROWS, RETRY_ROWS, ingest_sources, process
 from ..similar import find_similar
 
 AUTO_BACKUP_POLL = 60.0   # seconds between the snapshot loop's checks
@@ -46,7 +46,9 @@ FIELDS = (
     "hashset_hit, hashset_cat, hashset_kind, hashset_sources, hashset_mask, "
     "stack_id, vstack_id, cluster_id, thumb, error, "
     "media_id, orig_name, orig_path, mime, vic_flags, alt_paths, recorded_times, origin, "
-    "cache_info"
+    "cache_info, c2pa_state, c2pa_dst_class, c2pa_signer"
+    # c2pa_info, the whole provenance record, comes with /api/file/<id> only: it can
+    # be kilobytes, and a page of the list is up to 5,000 rows
 )
 
 # columns the details list-view may sort and filter on (must all be in FIELDS)
@@ -57,6 +59,7 @@ LIST_COLS = {
     "gps_lon", "faces", "skin_ratio", "category", "triage", "notes",
     "hashset_hit", "hashset_kind", "hashset_cat", "stack_id", "vstack_id",
     "cluster_id", "media_id", "error", "reviewed", "recorded_times", "origin",
+    "c2pa_state", "c2pa_dst_class", "c2pa_signer",
 }
 
 
@@ -339,6 +342,25 @@ def _unlock_sources(sources, data: dict) -> list[dict]:
     return locked
 
 
+def ai_marks(case, files: list[dict]) -> None:
+    """Set ``c2pa_ai`` on each file of a page: what it declares about generative AI
+    (``provenance.ai_declaration``), or None. A page carries no c2pa_info, so the
+    records are read here, and only the ones whose text names an AI term
+    (``provenance.AI_TERMS``); a record that names none cannot declare one."""
+    found: dict[int, dict | None] = {}
+    ids = [f["id"] for f in files if f.get("id") is not None]
+    like = " OR ".join("c2pa_info LIKE ?" for _ in provenance.AI_TERMS)
+    terms = tuple(f"%{t}%" for t in provenance.AI_TERMS)
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        for r in case.db.conn.execute(
+                f"SELECT id, c2pa_info FROM files WHERE id IN ({','.join('?' * len(chunk))}) "
+                f"AND ({like})", (*chunk, *terms)):
+            found[r["id"]] = provenance.ai_declaration(provenance.load(r["c2pa_info"]))
+    for f in files:
+        f["c2pa_ai"] = found.get(f.get("id"))
+
+
 def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
     app = Flask(__name__, static_folder="static", template_folder="templates")
     state: dict = {
@@ -415,6 +437,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         d["flags"] = [dict(r) for r in case.db.flags_for(d["id"])]
         # a file joined from an app's ExoPlayer cache, described for the details pane
         d["cache_desc"] = exocache.describe(d)
+        # the whole provenance record; the details pane is sent it worded (c2pa_rows)
+        d.pop("c2pa_info", None)
         d["has_keyframes"] = bool(
             case.db.conn.execute(
                 "SELECT 1 FROM keyframes WHERE file_id=? LIMIT 1", (d["id"],)
@@ -779,6 +803,33 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 j.update(running=False, stage="done", message="Screening done",
                          stats={"screened": n})
             except Exception as exc:  # noqa: BLE001
+                j.update(running=False, stage="error",
+                         error=f"{type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_job, daemon=True).start()
+        return jsonify({"ok": True})
+
+    @app.post("/api/provenance")
+    def run_provenance():
+        """Read Content Credentials for every picture and video not read yet, and the
+        not-checked ones again."""
+        if state["case"] is None:
+            abort(409, description="no case open")
+        if state["job"]["running"]:
+            abort(409, description="a job is already running")
+        case = state["case"]
+        state["job"] = {"running": True, "stage": "process", "done": 0,
+                        "total": 0, "message": "Reading Content Credentials…",
+                        "stats": None, "error": None}
+
+        def _job() -> None:
+            j = state["job"]
+            try:
+                from ..pipeline import provenance_pass
+                counts = provenance_pass(case, progress=lambda d, t: j.update(done=d, total=t))
+                j.update(running=False, stage="done",
+                         message="Content Credentials read", stats=counts)
+            except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
                 j.update(running=False, stage="error",
                          error=f"{type(exc).__name__}: {exc}")
 
@@ -1427,6 +1478,18 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             # filter silently returns the whole case. "deleted" was missing.
             if q.get("origin") in ORIGINS:
                 eq("origin", q["origin"])
+            # Content Credentials as the file declares them; an unknown value is
+            # ignored, as for origin. "any" is a manifest the reader got to read.
+            c2pa_q = q.get("c2pa")
+            if c2pa_q in provenance.STATES:
+                eq("c2pa_state", c2pa_q)
+            elif c2pa_q == "any":
+                where.append("c2pa_state IN ('malformed', 'invalid', 'valid_untrusted', "
+                             "'trusted')")
+            elif c2pa_q == "unread":
+                where.append(f"c2pa_state IS NULL AND {PROVENANCE_ROWS}")
+            if q.get("c2pa_dst") in provenance.DST_CLASSES:
+                eq("c2pa_dst_class", q["c2pa_dst"])
             if q.get("in_archive") == "1":
                 where.append(_pulled_from_sql(_archive_sql))
             if q.get("in_document") == "1":
@@ -1499,6 +1562,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                         f"COALESCE(NULLIF(orig_path, ''), {_rp})",
                         "alt_paths",            # the other storage views a file sat under
                         "cache_info",           # an app cache's key, often the URL it came from
+                        "c2pa_signer",          # who signed its Content Credentials
                         "camera", "notes", "mime", "source", "created_dt",
                         "reviewed_by", "hashset_hit", "error",
                         "md5", "sha1", "sha256", "phash")
@@ -1619,6 +1683,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             d["stack_count"] = stack_n.get(r["stack_id"], 1)
             d["vstack_count"] = vstack_n.get(r["vstack_id"], 0)
             out.append(d)
+        ai_marks(case, out)
         # server time for this request, shown by the gallery's timing readout
         return jsonify({"total": total, "offset": offset, "files": out,
                         "server_ms": round((time.perf_counter() - started) * 1000)})
@@ -1651,6 +1716,9 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             d["container"] = _container_info(case, r)
         if r["kind"] == "archive":
             d["members"] = _member_counts(case, r)
+        if r["kind"] in ("image", "video"):
+            d["c2pa_rows"] = provenance.describe(provenance.load(r["c2pa_info"]))
+            d["c2pa_caveat"] = provenance.CAVEAT
         return jsonify(d)
 
     @app.get("/api/similar/<int:file_id>")
@@ -1701,6 +1769,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             code = h.get("category")
             h["category_label"] = categories.label(case.db, code)
             h["category_color"] = categories.color(case.db, code)
+        ai_marks(case, hits)
         return jsonify({"file_id": file_id, "count": len(hits), "files": hits, "engine": engine,
                         "more": bool(quick and engine == "index"),
                         "unindexed": max(0, st["indexable"] - st["indexed"]),
@@ -1752,6 +1821,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             code = h.get("category")
             h["category_label"] = categories.label(case.db, code)
             h["category_color"] = categories.color(case.db, code)
+        ai_marks(case, hits)
         return jsonify({"face_id": face_id, "count": len(hits), "files": hits})
 
     # ---- categories -----------------------------------------
@@ -2065,7 +2135,24 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "FROM files WHERE container_id IS NOT NULL GROUP BY container_id) k "
             "ON k.container_id = files.id WHERE files.kind = 'archive' LIMIT -1)").fetchone()
         a_items, d_items = cont["a_items"], cont["d_items"]
+        # Content Credentials: each state, the pictures and videos not read, and the not
+        # checked a second read can change. Statements of their own, answered from the
+        # c2pa_state index: as sums in the pass above they read every row for them, 85 ms
+        # more on 150,000 rows, against 27 ms here with 21,000 of them not read.
+        states = dict.fromkeys(provenance.STATES, 0)
+        for r in case.db.conn.execute(
+                "SELECT c2pa_state, COUNT(*) n FROM files WHERE c2pa_state IS NOT NULL "
+                "GROUP BY c2pa_state"):
+            if r["c2pa_state"] in states:
+                states[r["c2pa_state"]] = r["n"]
+        c2pa = {"states": states,
+                "unread": case.db.conn.execute(
+                    f"SELECT COUNT(*) FROM files WHERE c2pa_state IS NULL AND {PROVENANCE_ROWS}"
+                ).fetchone()[0],
+                "retry": case.db.conn.execute(
+                    f"SELECT COUNT(*) FROM files WHERE {RETRY_ROWS}").fetchone()[0]}
         return {
+            "c2pa": c2pa,
             "srcs": srcs, "clusters": clusters, "scr": scr, "n_err": n_err,
             "n_retry": n_retry, "arch": arch,
             "cont": dict(cont), "a_items": a_items, "d_items": d_items,
@@ -2146,6 +2233,13 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 "with_faces": scr["wf"] or 0,
                 "with_skin": scr["ws"] or 0,
                 "screenable": scr["n"] or 0,
+            },
+            # Read from metadata; nothing here is a classification.
+            "provenance": {
+                **counts["c2pa"],
+                # whether this install can validate a signature; checked on every
+                # call since a library in the working directory can come and go
+                "library": provenance.library_available()[1] is None,
             },
         }
 

@@ -39,6 +39,7 @@ MARKERS = {
                      "software without specific prior written permission"),
     "CC0-1.0": "Creative Commons 0 (CC0)",
     "OFL-1.1": "SIL Open Font License, Version 1.1",
+    "CC-BY-4.0": "Creative Commons Attribution 4.0 International Public License",
 }
 
 # Every licence text in the tree and what it grants. A new licence file fails the
@@ -62,6 +63,8 @@ LICENCES = {
     "gleapp/web/static/maps/LICENSE-protomaps-basemaps.txt": {"BSD-3-Clause", "CC0-1.0",
                                                               "MIT"},
     "gleapp/web/static/maps/fonts/OFL.txt": {"OFL-1.1"},
+    # c2pa-org/conformance-public's licence, which covers the trust lists it publishes
+    "gleapp/trust/LICENSE-c2pa-trust-lists": {"CC-BY-4.0"},
 }
 
 # Licences a text grants to files GLEAPP does not ship. Impacket's LICENSE has

@@ -15,10 +15,10 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import vicdetails
+from . import provenance, vicdetails
 from .vendor import exoprobe
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # Bits of files.hashset_mask: which kinds of source matched a file. A file that
 # matched two places carries both bits, so a filter can ask for either or both.
@@ -187,10 +187,24 @@ CREATE TABLE IF NOT EXISTS files (
                                           -- Python when the row is written, see exo_cache_flag();
                                           -- NULL only on a row a build without the column wrote,
                                           -- and opening the case fills those.
-    expanded      INTEGER                 -- on a container that an expansion pass opened and got
+    expanded      INTEGER,                -- on a container that an expansion pass opened and got
                                           -- nothing from: what that pass was (bits, see
                                           -- gleapp/nested.py), so a later pass that could add
                                           -- nothing either leaves it alone. NULL otherwise.
+    -- Content Credentials (C2PA) and the IPTC digital source type, as the file declares
+    -- them; see gleapp/provenance.py. Metadata, never a classification. NULL in all four
+    -- means not read yet (a case processed before schema 19, or a file left to the
+    -- reader by a run that stopped); the pass `gleapp provenance` reads those.
+    c2pa_state     TEXT,                  -- absent | malformed | invalid | valid_untrusted
+                                          -- | trusted | not_checked
+    c2pa_dst_class TEXT,                  -- the class of the source type the active manifest
+                                          -- declares (provenance.DST_CLASSES), even when the
+                                          -- manifest is not valid; 'none' when it declares none,
+                                          -- NULL when no manifest was read
+    c2pa_signer    TEXT,                  -- 'common name (organization)' of the claim signer,
+                                          -- NULL unless the claim signature verified
+    c2pa_info      TEXT                   -- JSON: the whole record, codes, ingredients, the
+                                          -- unsigned XMP declaration and the trust lists used
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_md5      ON files(md5);
@@ -464,6 +478,8 @@ class CaseDB:
             ("hashset_sources", "TEXT"), ("hashset_mask", "INTEGER"),
             ("grp_head", "INTEGER NOT NULL DEFAULT 1"), ("cache_info", "TEXT"),
             ("exo_cache", "INTEGER"), ("expanded", "INTEGER"),
+            ("c2pa_state", "TEXT"), ("c2pa_dst_class", "TEXT"), ("c2pa_signer", "TEXT"),
+            ("c2pa_info", "TEXT"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")
@@ -474,6 +490,9 @@ class CaseDB:
         # case open; each was a pass over the table without them
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_files_source ON files(source)")
+        # the Content Credentials filters read it
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_c2pa_state ON files(c2pa_state)")
         # What was extracted from each container, found and counted from the index
         # alone: the sidebar counts those rows per container by kind, and with only
         # container_id indexed that read every extracted row (399 ms of a 615 ms
@@ -492,6 +511,7 @@ class CaseDB:
             "CREATE INDEX IF NOT EXISTS idx_files_exo_unset ON files(id) "
             "WHERE exo_cache IS NULL")
         self.fill_exo_cache()
+        self.refresh_dst_classes()
         cat_cols = {r["name"] for r in self.conn.execute(
             "PRAGMA table_info(categories)")}
         if "locked" not in cat_cols:
@@ -590,6 +610,37 @@ class CaseDB:
                     [(exo_cache_flag(r["name"], None, None), r["id"]) for r in rows])
                 self.conn.commit()
         return len(rows)
+
+    def refresh_dst_classes(self) -> int:
+        """Work ``c2pa_dst_class`` out again from the URI each record keeps, once
+        for each ``provenance.DST_VOCABULARY``, and return how many rows changed.
+        ``c2pa_info`` holds no class and is never rewritten. A row an older build
+        writes into the case after this has run is not seen until the vocabulary
+        changes."""
+        want = str(provenance.DST_VOCABULARY)
+        with self.lock:
+            if self.get_meta("c2pa_dst_vocabulary") == want:
+                return 0
+            # a record that declares nothing is "none" under any vocabulary; the
+            # pattern only spares reading those, and a record written another way
+            # is read in full
+            rows = self.conn.execute(
+                "SELECT id, c2pa_dst_class, c2pa_info FROM files "
+                "WHERE c2pa_info IS NOT NULL "
+                "AND c2pa_info NOT LIKE '%\"active_dst\": null%'").fetchall()
+            changed = []
+            for r in rows:
+                rec = provenance.load(r["c2pa_info"])
+                if rec is None:
+                    continue
+                cls = provenance.dst_class(rec)
+                if cls != r["c2pa_dst_class"]:
+                    changed.append((cls, r["id"]))
+            if changed:
+                self.conn.executemany(
+                    "UPDATE files SET c2pa_dst_class = ? WHERE id = ?", changed)
+            self.set_meta("c2pa_dst_vocabulary", want)
+        return len(changed)
 
     def _refresh_exo_cache(self, file_id: int) -> None:
         """Set one row's ``exo_cache`` again after a write to a name it is read from."""

@@ -1,0 +1,270 @@
+{
+"@context": "https://www.iptc.org/std/IKOS/IKOS.jsonld", 
+"uri": "http://cv.iptc.org/newscodes/digitalsourcetype/", 
+"type": "http://www.w3.org/2004/02/skos/core#ConceptScheme", 
+"prefSchemeAlias": "digsrctype", 
+"authority": "http://www.iptc.org", 
+"copyrightHolder": "IPTC, International Press Telecommunications Council - https://iptc.org", 
+"licenceLink": "http://creativecommons.org/licenses/by/4.0/", 
+"dateReleased": "2024-10-23T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Digital Source Type"},
+"definition" : {
+"en-GB" : "Indicates from which source a digital image was created."},
+"note" : {
+},
+"hasTopConcept" : [
+"http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture", "http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture", "http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm", "http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm", "http://cv.iptc.org/newscodes/digitalsourcetype/print", "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits", "http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits", "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced", "http://cv.iptc.org/newscodes/digitalsourcetype/softwareImage", "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt", "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation", "http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia", "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia", "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia", "http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture", "http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording", "http://cv.iptc.org/newscodes/digitalsourcetype/composite", "http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture", "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic", "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia"
+],
+"conceptSet" : [
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture", 
+"qcode" : "digsrctype:digitalCapture", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Digital capture sampled from real life"},
+"definition" : {
+"en-GB" : "The media was captured from a real-life source using a digital camera or digital recording device"},
+"created" : "2008-01-01T01:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/computationalCapture", 
+"qcode" : "digsrctype:computationalCapture", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Multi-frame computational capture sampled from real life"},
+"definition" : {
+"en-GB" : "The media is the result of capturing multiple frames from a real-life source using a digital camera or digital recording device, then automatically merging them into a single frame using digital signal processing techniques and/or non-generative AI. Includes High Dynamic Range (HDR) processing common in smartphone camera apps."},
+"created" : "2024-09-17T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/negativeFilm", 
+"qcode" : "digsrctype:negativeFilm", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-26T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Digitised from a transparent negative"},
+"definition" : {
+"en-GB" : "The media was digitised from a negative on film or other transparent medium"},
+"created" : "2008-01-01T01:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/positiveFilm", 
+"qcode" : "digsrctype:positiveFilm", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-26T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Digitised from a transparent positive"},
+"definition" : {
+"en-GB" : "The media was digitised from a positive on a transparency or other transparent medium"},
+"created" : "2008-01-01T01:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/print", 
+"qcode" : "digsrctype:print", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Digitised from a non-transparent medium"},
+"definition" : {
+"en-GB" : "The media was digitised from a non-transparent medium such as a photographic print"},
+"created" : "2008-01-01T01:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits", 
+"qcode" : "digsrctype:minorHumanEdits", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"retired" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Original media with minor human edits"},
+"definition" : {
+"en-GB" : "Minor augmentation or correction by a human, such as a digitally-retouched photo used in a magazine"},
+"note" : {
+"en-GB" : "Retired. Use *humanEdits* instead."},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/humanEdits", 
+"qcode" : "digsrctype:humanEdits", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Human-edited media"},
+"definition" : {
+"en-GB" : "Augmentation, correction or enhancement by one or more humans using non-generative tools"},
+"created" : "2024-09-17T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia", 
+"qcode" : "digsrctype:compositeWithTrainedAlgorithmicMedia", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Edited using Generative AI"},
+"definition" : {
+"en-GB" : "Augmentation, correction or enhancement using a Generative AI model, such as with inpainting or outpainting operations"},
+"created" : "2023-07-26T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced", 
+"qcode" : "digsrctype:algorithmicallyEnhanced", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-10-23T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Algorithmically-altered media"},
+"definition" : {
+"en-GB" : "Modification or correction by algorithm without changing the main content of the media, initiated or configured by a human, such as sharpening or applying noise reduction"},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/softwareImage", 
+"qcode" : "digsrctype:softwareImage", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2022-06-14T12:00:00+00:00", 
+"retired" : "2022-06-14T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Created by software"},
+"definition" : {
+"en-GB" : "The digital image was created by computer software"},
+"note" : {
+"en-GB" : "Retired in June 2022. Use more specific terms instead."},
+"created" : "2008-01-01T01:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt", 
+"qcode" : "digsrctype:digitalArt", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2022-06-14T12:00:00+00:00", 
+"retired" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Digital art"},
+"definition" : {
+"en-GB" : "Media created by a human using digital tools"},
+"note" : {
+"en-GB" : "Retired. Use *digitalCreation* instead."},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/digitalCreation", 
+"qcode" : "digsrctype:digitalCreation", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Digital creation"},
+"definition" : {
+"en-GB" : "Media created by a human using non-generative tools"},
+"created" : "2024-09-17T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/dataDrivenMedia", 
+"qcode" : "digsrctype:dataDrivenMedia", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2022-06-14T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Data-driven media"},
+"definition" : {
+"en-GB" : "Digital media representation of data via human programming or creativity"},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia", 
+"qcode" : "digsrctype:trainedAlgorithmicMedia", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-10-23T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Created using Generative AI"},
+"definition" : {
+"en-GB" : "Digital media created algorithmically using an Artificial Intelligence model trained on captured content"},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia", 
+"qcode" : "digsrctype:algorithmicMedia", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2022-06-14T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Pure algorithmic media"},
+"definition" : {
+"en-GB" : "Media created purely by an algorithm not based on any sampled training data, e.g. an image created by software using a mathematical formula"},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/screenCapture", 
+"qcode" : "digsrctype:screenCapture", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Screen capture"},
+"definition" : {
+"en-GB" : "A capture of the contents of the screen of a computer or mobile device"},
+"created" : "2024-09-17T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/virtualRecording", 
+"qcode" : "digsrctype:virtualRecording", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Virtual event recording"},
+"definition" : {
+"en-GB" : "Live recording of virtual event based on Generative AI and/or captured elements"},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/composite", 
+"qcode" : "digsrctype:composite", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2024-09-17T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Composite of elements"},
+"definition" : {
+"en-GB" : "Mix or composite of several elements, any of which may or may not be generative AI"},
+"created" : "2024-09-17T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/compositeCapture", 
+"qcode" : "digsrctype:compositeCapture", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2022-06-14T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Composite of captured elements"},
+"definition" : {
+"en-GB" : "Mix or composite of several elements that are all captures of real life"},
+"created" : "2022-06-14T12:00:00+00:00"
+},
+{
+"uri" : "http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic", 
+"qcode" : "digsrctype:compositeSynthetic", 
+ "type": ["http://www.w3.org/2004/02/skos/core#Concept"],
+"inScheme" : [ "http://cv.iptc.org/newscodes/digitalsourcetype/" ], 
+"modified" : "2022-06-14T12:00:00+00:00", 
+"prefLabel" : {
+"en-GB" : "Composite including generative AI elements"},
+"definition" : {
+"en-GB" : "Mix or composite of several elements, at least one of which is Generative AI"},
+"created" : "2022-06-14T12:00:00+00:00"
+}]
+
+}

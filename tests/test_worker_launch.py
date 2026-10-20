@@ -20,9 +20,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from gleapp import imaging, media, winsearch
+from gleapp import imaging, media, provenance, winsearch
 
-WORKERS = ("vidworker", "texworker", "edbworker")
+WORKERS = ("vidworker", "texworker", "edbworker", "c2paworker")
 
 
 def _clip(path):
@@ -84,7 +84,20 @@ def _edb_ran(tmp_path, monkeypatch) -> bool:
     return runs[0].returncode == 3
 
 
-RAN = {"vidworker": _video_ran, "texworker": _texture_ran, "edbworker": _edb_ran}
+def _c2pa_ran(tmp_path, _monkeypatch) -> bool:
+    """Ask the reader process about a JPEG with no credentials. It answers for the
+    file whether or not the optional library is installed ("absent", or "unavailable"
+    without it); a child that could not start answers nothing, which
+    ``_run_reader`` records as the file stopping the reader."""
+    p = tmp_path / "plain.jpg"
+    Image.new("RGB", (8, 8)).save(p, "JPEG")
+    out = provenance._run_reader(  # pylint: disable=protected-access
+        [{"path": str(p), "mime": "image/jpeg"}], provenance.reader_settings(None), timeout=120)
+    return out[str(p)]["kind"] in ("absent", "unavailable")
+
+
+RAN = {"vidworker": _video_ran, "texworker": _texture_ran, "edbworker": _edb_ran,
+       "c2paworker": _c2pa_ran}
 
 
 def _decoy(root: Path, name: str) -> Path:

@@ -796,6 +796,35 @@ def cmd_screen(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_provenance(args: argparse.Namespace) -> int:
+    from . import provenance
+    from .pipeline import provenance_pass
+
+    # the lists GLEAPP carries, with what is given here for this run
+    trust = provenance.trust_lists(
+        c2pa_list=args.c2pa_trust_list, c2pa_tsa_list=args.c2pa_tsa_trust_list,
+        signer_anchors=args.trust_anchors, tsa_anchors=args.tsa_anchors)
+    case = open_case(args.case, examiner=args.examiner)
+    _p("Reading Content Credentials (metadata only, nothing is fetched)…")
+
+    def progress(done: int, total: int) -> None:
+        print(f"\r  {done}/{total}", end="", flush=True)
+
+    try:
+        counts = provenance_pass(case, retry=not args.no_retry, force=args.force,
+                                 trust=trust, progress=progress)
+    finally:
+        case.close()
+    print()
+    _p(f"{counts['read']} file(s) read: " + (", ".join(
+        f"{state}: {n}" for state, n in counts["states"].items()) or "nothing to read"))
+    if counts["unavailable"]:
+        _p(f"{counts['unavailable']} file(s) not read: their source is not available.")
+    for anchor in trust.anchors:
+        _p(f"  trust list: {anchor.label} (SHA-256 {anchor.sha256})")
+    return 0
+
+
 def cmd_similar(args: argparse.Namespace) -> int:
     case = open_case(args.case)
     hits = find_similar(case, args.file_id, threshold=args.threshold, limit=args.limit)
@@ -1034,6 +1063,25 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("screen", help="run face/skin screening on an existing case")
     s.add_argument("--workers", type=int, default=4)
     s.set_defaults(func=cmd_screen)
+
+    s = sub.add_parser(
+        "provenance",
+        help="read Content Credentials (C2PA) and the IPTC source type of every picture "
+             "and video not read yet: what each file declares, who signed it and whether "
+             "the signature validates. Records metadata; classifies nothing.")
+    s.add_argument("--force", action="store_true",
+                   help="read every picture and video again")
+    s.add_argument("--no-retry", action="store_true",
+                   help="leave files recorded as not checked alone")
+    s.add_argument("--c2pa-trust-list", metavar="PEM",
+                   help="a newer copy of the C2PA Trust List, in place of the bundled one")
+    s.add_argument("--c2pa-tsa-trust-list", metavar="PEM",
+                   help="a newer copy of the C2PA TSA Trust List, in place of the bundled one")
+    s.add_argument("--trust-anchors", metavar="PEM",
+                   help="signer anchors of your own, added to the C2PA Trust List")
+    s.add_argument("--tsa-anchors", metavar="PEM",
+                   help="time-stamping anchors of your own, added to the C2PA TSA Trust List")
+    s.set_defaults(func=cmd_provenance)
 
     s = sub.add_parser("similar", help="list files perceptually similar to FILE_ID")
     s.add_argument("file_id", type=int)

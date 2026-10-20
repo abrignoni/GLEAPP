@@ -31,7 +31,8 @@ signals only. Every category decision is the examiner's.</p>
   <a href="#keys">17. Keyboard shortcuts</a><br>
   <a href="#privacy">18. Data &amp; privacy</a><br>
   <a href="#maps">19. Maps (offline basemaps)</a><br>
-  <a href="#credits">20. Credits &amp; acknowledgments</a>
+  <a href="#c2pa">20. Content Credentials (C2PA)</a><br>
+  <a href="#credits">21. Credits &amp; acknowledgments</a>
 </div>
 
 <h2 id="start">1. Getting started</h2>
@@ -398,6 +399,7 @@ number key, context menu, details pane) applies to the whole selection.</p>
   <tr><td><strong>Matches</strong></td><td>Matched in (which hash sources flagged it), Exact copies, Visually similar, Similar-group, Error</td></tr>
   <tr><td><strong>Location</strong></td><td>GPS, with a <strong>Copy</strong> button</td></tr>
   <tr><td><strong>Hashes</strong></td><td>MD5, SHA-1, SHA-256, pHash</td></tr>
+  <tr><td><strong>Content Credentials</strong></td><td>For a picture or video, a section of its own: the state, signer, declared source type, ingredients, validation codes and the trust lists used, with the paragraph every surface prints. Open when the file has credentials. See <a href="#c2pa">§20</a>.</td></tr>
 </table>
 
 <h3>Hex view</h3>
@@ -605,6 +607,14 @@ Processing history.</p>
   <tr><td><strong>Has faces</strong></td><td><code>faces &gt; 0</code> from YuNet. Needs screening to have run.</td></tr>
   <tr><td><strong>Skin-tone ratio</strong></td><td><strong>Any</strong>, or 10&nbsp;% / 30&nbsp;% / 50&nbsp;% or more of the frame skin-toned. Needs screening.</td></tr>
   <tr><td><strong>Run face / skin screening</strong></td><td>Runs it now if it hasn't run.</td></tr>
+</table>
+
+<h3>Content Credentials</h3>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><strong>State</strong></td><td>Has Content Credentials (malformed, invalid, or valid with the signer on a trust list or not), one state, or <strong>Not read yet</strong>. See <a href="#c2pa">§20</a>.</td></tr>
+  <tr><td><strong>Declared source type</strong></td><td>The class of the source type the file's manifest declares, valid or not. An XMP declaration outside any manifest is not counted here.</td></tr>
+  <tr><td><strong>Read Content Credentials</strong></td><td>Reads the pictures and videos not read yet, on a case processed before this existed, and, with the c2pa library installed, the ones not checked for a reason a second read can change (not a format the reader does not support, nor a remote manifest).</td></tr>
 </table>
 
 <h3>Duplicates</h3>
@@ -1786,7 +1796,188 @@ exist on the command line as <code>gleapp maps list | import | remove | use</cod
 "&copy; OpenStreetMap contributors" credit that license asks for, as plain
 text rather than a link, because a link would be the one outbound address on the page.</p>
 
-<h2 id="credits">20. Credits &amp; acknowledgments</h2>
+<h2 id="c2pa">20. Content Credentials (C2PA) and source type</h2>
+<p>GLEAPP reads a picture's or video's <strong>Content Credentials</strong> (a C2PA
+manifest store) and any <strong>IPTC digital source type</strong> it carries, and
+records them as metadata: what the file declares about how it was made, who signed
+that declaration, and whether the signature validates. It is not a classifier. It
+never says whether content is synthetic, it gives no score, and nothing here sets or
+changes a category.</p>
+<p><em>Content Credentials record what the signer declared. A valid signature shows the
+credentials were not changed after signing; who signed is established only when the
+signer's certificate is on a trust list GLEAPP holds (Valid, signer on a trust list). An AI
+source type is a declaration, not a finding. Absence of credentials does not indicate
+authenticity: many platforms and tools remove them.</em></p>
+<p>That paragraph is printed wherever these fields are explained: the details pane, the
+HTML report when its Content Credentials field is chosen, the JSON export and the notes
+of the LAVA Media Files artifact.</p>
+
+<h3>States</h3>
+<p>Each picture and video gets one state (C2PA 2.2, §14.3, <em>Validation states</em>):</p>
+<table>
+  <tr><th>State</th><th>Meaning</th></tr>
+  <tr><td><strong>No Content Credentials</strong></td><td>No manifest store. Either GLEAPP walked the file's container from its start to its end (a JPEG up to its image data, a PNG, a GIF to its trailer, a WebP or an AVI to the size its RIFF header gives, a TIFF's first IFD, the top level of an ISOBMFF file such as HEIC, AVIF, MP4 or MOV) and found neither a store nor a reference to one, or the c2pa reader found none. A container the walk cannot finish, a stray byte or a cut-off file, goes to the reader. The details say which.</td></tr>
+  <tr><td><strong>Malformed</strong></td><td>A store that is not well formed: the reader could not parse it, or reported a well-formedness failure.</td></tr>
+  <tr><td><strong>Invalid</strong></td><td>Well formed, but validation failed. One such failure is a hard binding that does not match the content the manifest was signed for: for example, the content changed after signing, or the manifest belongs to other content. Another is a signer's certificate that has expired: without a time-stamp the certificate is checked against the time of reading, so when that is the only failure the state says so in words.</td></tr>
+  <tr><td><strong>Valid, signer not on a trust list</strong> (<code>valid_untrusted</code>)</td><td>The signature validates and the content matches it, but the signer's certificate does not chain to any trust list GLEAPP holds. Who signed is not established.</td></tr>
+  <tr><td><strong>Valid, signer on a trust list</strong> (<code>trusted</code>)</td><td>Valid, and the signer's certificate chains to a trust list GLEAPP holds. The record names which list. It says who signed, not that the content is true.</td></tr>
+  <tr><td><strong>Not checked</strong></td><td>Not validated, and the record says why: the c2pa library is not installed, the manifest lives at a remote address (never fetched), the reader does not support the format or could not read the file, or the reader stopped on the file.</td></tr>
+</table>
+<p>A file processed by a GLEAPP without this reading has no state yet
+(<strong>Not read yet</strong>). The validator's own status codes (C2PA 2.2, §15.2.2)
+are kept with each record. The signer is named only when the claim signature verifies;
+otherwise the details show the certificate the manifest carries, which does not show who
+signed (a certificate is public), and the <em>C2PA signer</em> column stays empty. A
+time-stamp is shown with the validator's own <code>timeStamp</code> codes beside it. Each
+record is dated and names the GLEAPP and c2pa versions that read it, because a result can
+change with time: a certificate that was valid can expire.</p>
+
+<h3>Declared source type</h3>
+<p>The digital source type the active manifest's <code>c2pa.created</code> action
+declares, or the first action that declares one (C2PA 2.2, §18.14.4.5, using the IPTC
+Digital Source Type vocabulary), grouped:</p>
+<table>
+  <tr><th>Class</th><th>Terms</th></tr>
+  <tr><td>Generative AI</td><td><code>trainedAlgorithmicMedia</code>, <code>trainedAlgorithmicData</code></td></tr>
+  <tr><td>Edited using Generative AI</td><td><code>compositeWithTrainedAlgorithmicMedia</code></td></tr>
+  <tr><td>Composite including generative AI elements</td><td><code>compositeSynthetic</code></td></tr>
+  <tr><td>Algorithmic</td><td><code>algorithmicMedia</code></td></tr>
+  <tr><td>Algorithmically-altered media</td><td><code>algorithmicallyEnhanced</code></td></tr>
+  <tr><td>Capture</td><td><code>digitalCapture</code>, <code>computationalCapture</code>, <code>negativeFilm</code>, <code>positiveFilm</code>, <code>print</code></td></tr>
+  <tr><td>Composite of captured elements</td><td><code>compositeCapture</code></td></tr>
+  <tr><td>Composite of elements</td><td><code>composite</code></td></tr>
+  <tr><td>Screen capture</td><td><code>screenCapture</code></td></tr>
+  <tr><td>Virtual event recording</td><td><code>virtualRecording</code></td></tr>
+  <tr><td>Human edits</td><td><code>humanEdits</code>, <code>minorHumanEdits</code> (retired by IPTC)</td></tr>
+  <tr><td>Other</td><td>any other term, <code>digitalArt</code> and <code>softwareImage</code> (both retired by IPTC) among them</td></tr>
+  <tr><td>No source type in the manifest</td><td>a manifest was read and declares none (a file whose manifest was not read has no class)</td></tr>
+</table>
+<p>A class whose name says AI holds only terms whose IPTC definition includes generative
+AI. <em>Virtual event recording</em> is, in IPTC's words, a live recording of a virtual event
+&ldquo;based on Generative AI and/or captured elements&rdquo;: it may hold no AI at all, so
+it is a class of its own. <em>Edited using Generative AI</em>
+(<code>compositeWithTrainedAlgorithmicMedia</code>) is IPTC's label for an edit made with a
+generative model, such as inpainting or outpainting; IPTC does not call it a composite,
+whatever its identifier says, so it is a class apart from <em>Composite including
+generative AI elements</em> (<code>compositeSynthetic</code>).</p>
+<p><em>Human edits</em> holds only <code>humanEdits</code> and <code>minorHumanEdits</code>.
+The other terms each have a class of their own under IPTC's label, because none of them is
+a human's edit: <em>Composite of elements</em>, whose elements may or may not be generative
+AI (so it is neither an AI class nor an edit); <em>Composite of captured elements</em>,
+every element captured from real life; and <em>Algorithmically-altered media</em>
+(<code>algorithmicallyEnhanced</code>), changed by an algorithm, initiated or configured by
+a human, without changing its main content, such as sharpening or noise reduction.</p>
+<p>A term IPTC has retired is still read and keeps its class, since a file can still
+declare it; wherever GLEAPP shows the term, it adds <em>retired by IPTC</em>.</p>
+<p>A term counts only as a whole URI of IPTC's or C2PA's vocabulary, so a composite is
+never read as fully generated, and a URI that merely contains IPTC's address is
+<em>Other</em> and shown whole. Another action can declare a source type of its own, an
+edit made with generative AI say: <em>Declared actions</em> lists each with its source
+type, and the gallery's mark looks at every one. The declaration of a manifest that is
+not valid is still recorded, marked <strong>not backed by credentials that
+validate</strong> (C2PA 2.2, §15.3). Ingredients (the files an edit was made from) are
+listed with their own declaration, signer, state and failures. An ingredient carries the
+validation its own signing tool recorded, against that tool's trust lists; GLEAPP shows
+the reader's result now instead, so an ingredient is on a trust list only if it is on one
+GLEAPP holds. A store that fails only in an ingredient is <strong>Invalid</strong>, and the
+state says an ingredient does not validate. A source type found only in <strong>XMP</strong>, outside any manifest, is recorded
+separately as an <strong>unsigned declaration</strong> and never folded into the state
+or the declared class.</p>
+<p>Each record keeps the source type URI exactly as declared, and the class is worked out
+from it by the GLEAPP reading the case. A case read before a term was moved to another
+class shows, filters and exports the class this version gives it; the record itself is
+never rewritten.</p>
+
+<h3>Declared actions</h3>
+<p><strong>Declared actions</strong> lists every action the active manifest declares
+(C2PA 2.2, §18.14), in order, each with the source type and the software agent it names:
+a name and version, or the text an older manifest carries. They are transcribed as written
+and never classified, so an action GLEAPP has no word for, such as a vendor's own
+<code>com.example.provided</code>, is shown as it stands. The actions of a manifest that
+is not valid are marked <strong>not backed by credentials that validate</strong>. A manifest that
+declares none says <strong>none declared</strong>. They show in the details pane, the HTML report's Content Credentials field and LAVA's
+Content Credentials Detail.</p>
+
+<h3>What a state does not mean</h3>
+<p>An edit made with AI can leave no AI declaration in the file's metadata: no C2PA
+manifest and no XMP digital source type. No Content Credentials, or a manifest that
+declares no AI source type, says nothing about whether AI was used.</p>
+
+<h3>Trust lists</h3>
+<p>GLEAPP carries the <strong>C2PA Trust List</strong> and the <strong>C2PA TSA Trust
+List</strong> as published in <code>c2pa-org/conformance-public</code>, unmodified.
+C2PA 2.2, §14.4.1 and §14.4.2, say a validator's anchors include these lists and that
+the user should be able to add to them, so anchors of your own are <strong>added</strong>
+to C2PA's, never put in their place, and only a newer copy of a C2PA list can stand in
+for the copy GLEAPP carries. Give them for a run of <code>gleapp provenance</code> with
+<code>--trust-anchors</code>, <code>--tsa-anchors</code>, <code>--c2pa-trust-list</code>
+and <code>--c2pa-tsa-trust-list</code>; processing and the gallery's button read with the
+lists GLEAPP carries. A list that cannot be read stops the reading
+with that reason; GLEAPP never falls back to another list silently. Each record lists
+the trust lists it was read with, by label and SHA-256, and for a signer on a trust list
+names the one it chained to. When the claim signature does not verify, that row says the
+certificate does not show who signed; when the manifest does not validate otherwise, that
+the list vouches for nothing in it: a manifest signed by a listed signer and carried over
+to other content still chains to the list. A signer that chains only to the TSA list is
+recorded as
+valid with the signer not on a trust list.</p>
+
+<h3>Offline, read-only, and the optional library</h3>
+<p>Nothing is fetched: remote-manifest and OCSP fetching are off, no network host is
+allowed, and CAWG identity assertions are not decoded. A manifest kept only at a remote
+address is <strong>Not checked</strong>, with the address recorded. The evidence is only
+read. Validation needs <strong>c2pa-python</strong>, an optional extra
+(<code>pip install -e ".[provenance]"</code>) that the release builds do not carry; in
+them a file holding credentials is <em>Not checked: the c2pa library is not
+installed</em>, while
+absence is still recorded from GLEAPP's own reading. A format the c2pa reader does not
+read at all (BMP, Matroska and WebM, WMV, FLV, MPEG, MPEG transport stream, JPEG 2000,
+KTX) is recognised from its bytes and is <em>Not checked: the c2pa reader does not
+support this format</em>, with the library or without it. The native library runs in a
+child process, a batch at a time, so a fault in it costs one file and never the run.</p>
+
+<h3>Reading them, and where they show</h3>
+<ul>
+  <li><strong>Processing</strong> reads every new picture and video. <strong>Older
+    cases</strong> are not read on their own: use <strong>Read Content
+    Credentials</strong> in the sidebar's <em>Content Credentials</em> section, or
+    <code>gleapp -c CASE provenance</code> (<code>--force</code> reads everything
+    again).</li>
+  <li><strong>Sidebar filters</strong>: <em>State</em> and <em>Declared source type</em>.</li>
+  <li><strong>Gallery mark</strong>: a tile whose file declares a class named AI
+    (<em>Generative AI</em>, <em>Edited using Generative AI</em>, <em>Composite including
+    generative AI elements</em>) carries <strong>AI declared</strong>,
+    on any action of its own manifest, solid when credentials that validate back the
+    declaration and dashed when they do not or the declaration is only in XMP; a file
+    whose own manifest declares none but
+    an ingredient does carries <strong>AI in ingredient</strong>. Hover it for what is
+    declared, by what and in which state. It is a declaration, not a finding, and it
+    changes no category. A file with no mark may still have been made with AI: see
+    <em>What a state does not mean</em> above.</li>
+  <li><strong>List view</strong> columns <em>Content Credentials</em>, <em>Declared source
+    type</em>, <em>C2PA signer</em> and <em>AI declaration</em>, the mark in words (off by
+    default).</li>
+  <li><strong>Details pane</strong>: a <em>Content Credentials</em> section with the
+    state, the signer, what is declared, the trust list, the failures, the ingredients and
+    when and with what it was read, and the paragraph above. The CSV and JSON exports
+    carry the whole record.</li>
+  <li><strong>Search</strong> covers the signer.</li>
+  <li><strong>Exports</strong>: CSV <code>c2pa_state</code>, <code>c2pa_dst_class</code>,
+    <code>c2pa_signer</code>, <code>c2pa_xmp_dst</code>, <code>c2pa_info</code>; JSON
+    carries the record as an object and <code>c2pa_caveat</code>; the HTML report
+    offers a <em>Content Credentials</em> field; LAVA's Media Files gains four
+    columns.</li>
+</ul>
+
+<h3>References</h3>
+<ul>
+  <li>C2PA Technical Specification 2.2: §14.3, §14.4, §15.2.2, §15.3, §18.14.4.5.</li>
+  <li>IPTC Digital Source Type NewsCodes vocabulary,
+    https://cv.iptc.org/newscodes/digitalsourcetype/, the release of 2024-10-23 (labels
+    and definitions; the suite holds GLEAPP's classes to a copy of it).</li>
+</ul>
+
+<h2 id="credits">21. Credits &amp; acknowledgments</h2>
 <p>GLEAPP stands on a lot of other people's work.</p>
 <p>The table below names each component. The full licence texts travel inside the
 build, because that is what most of these licences ask for:
@@ -1915,6 +2106,30 @@ MIT license).</p>
     imports it; it does not include it.</li>
   <li><strong>CAID</strong>: CAID-style CSV hash-list handling follows the UK
     Home Office Child Abuse Image Database export layout.</li>
+</ul>
+
+<h3>Content Credentials (section 20)</h3>
+<p>CC&nbsp;BY&nbsp;4.0 below is the
+<a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0
+International licence</a>; its full text ships with the trust lists.</p>
+<ul>
+  <li><strong>C2PA Trust List</strong> and <strong>C2PA TSA Trust List</strong>: published
+    by the Coalition for Content Provenance and Authenticity in
+    <a href="https://github.com/c2pa-org/conformance-public"><code>c2pa-org/conformance-public</code></a>,
+    CC&nbsp;BY&nbsp;4.0. GLEAPP carries them unmodified, with the licence text.</li>
+  <li><strong><a href="https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html">C2PA
+    Technical Specification 2.2</a></strong> and the <strong>C2PA Asset Rubrics</strong> (in
+    <code>c2pa-org/conformance-public</code>): Coalition for Content Provenance and
+    Authenticity, CC&nbsp;BY&nbsp;4.0. GLEAPP uses the specification's status codes and
+    digital source type identifiers, and the rubrics' list of the codes that make a
+    manifest not well-formed.</li>
+  <li><strong><a href="https://cv.iptc.org/newscodes/digitalsourcetype/">IPTC Digital Source
+    Type NewsCodes</a></strong>: &copy; IPTC, International Press Telecommunications
+    Council, CC&nbsp;BY&nbsp;4.0. GLEAPP uses the vocabulary's identifiers and labels, and
+    quotes its definitions where a class needs one.</li>
+  <li><strong>c2pa-python</strong>: Adobe and contributors (MIT OR Apache-2.0), with the
+    c2pa-rs library inside it. An optional extra that validates signatures; GLEAPP's
+    release builds do not include it.</li>
 </ul>
 
 <h3>Inspiration</h3>

@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .db import category_code, is_uncategorized
-from . import archive, basemaps, categories, exocache, flags, imaging, staticmap, timeutil, vicdetails  # noqa: F401  (imaging: registers HEIF decoder)
+from . import archive, basemaps, categories, exocache, flags, imaging, provenance, staticmap, timeutil, vicdetails  # noqa: F401  (imaging: registers HEIF decoder)
 from .case import Case
 
 # overview map size - shared so the clickable overlay in _overview_html always
@@ -35,6 +35,10 @@ _CSV_FIELDS = [
     "stack_id", "vstack_id", "cluster_id", "notes",
     "media_id", "orig_name", "orig_path", "mime", "origin", "recorded_times", "cache_info",
     "vic_record_media_id", "vic_series", "vic_flags", "vic_tags", "vic_exif",
+    # Content Credentials as declared (gleapp/provenance.py): the state, the class of
+    # the source type the manifest declares, the signer, the unsigned XMP
+    # declaration, and the whole record as JSON
+    "c2pa_state", "c2pa_dst_class", "c2pa_signer", "c2pa_xmp_dst", "c2pa_info",
 ]
 
 
@@ -144,6 +148,7 @@ def export_csv(case: Case, dest: str | Path, where: str = "", *,
             vv = vicdetails.view(d)
             d.update(vic_record_media_id=vv["media_id"], vic_series=vv["series"],
                      vic_flags=vv["flags"], vic_tags=vv["tags"], vic_exif=vv["exif"])
+            d["c2pa_xmp_dst"] = provenance.xmp_text(provenance.load(d.get("c2pa_info")))
             w.writerow(d)
     return dest
 
@@ -163,7 +168,10 @@ def export_json(case: Case, dest: str | Path, where: str = "",
                     if case.db.get_meta("basemap_sha256") else None),
         # files.path is where the bytes sat on this machine; rel_path, orig_path and
         # file_path say where the file was within the evidence, and that is what leaves.
-        "files": [{k: v for k, v in d.items() if k != "path"} for d in _rows(case, where)],
+        "files": [{k: (provenance.load(v) if k == "c2pa_info" else v)
+                   for k, v in d.items() if k != "path"} for d in _rows(case, where)],
+        # what c2pa_state and the rest of each file's Content Credentials mean
+        "c2pa_caveat": provenance.CAVEAT,
     }
     dest.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return dest
@@ -337,6 +345,12 @@ def _origin_label(d) -> str:
     return _ORIGIN_LABELS.get(got, got)
 
 
+def _c2pa_text(d: dict) -> str:
+    if d.get("kind") not in ("image", "video"):
+        return ""
+    return provenance.describe_text(provenance.load(d.get("c2pa_info")))
+
+
 # key -> (label, value fn, is_monospace).  The report dialog offers exactly
 # these; the examiner picks which appear under each image.
 _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
@@ -381,6 +395,9 @@ _FIELD_DEFS: dict[str, tuple[str, "callable", bool]] = {
     "vic_tags":   ("VIC tags",      lambda d: vicdetails.view(d)["tags"], False),
     "vic_exif":   ("VIC Exif (as recorded)", lambda d: vicdetails.view(d)["exif"], False),
     "error":      ("Error",         lambda d: d.get("error") or "", False),
+    # what the file's Content Credentials declare; the report prints
+    # provenance.CAVEAT once whenever this field is chosen
+    "c2pa":       ("Content Credentials", _c2pa_text, False),
 }
 # the fields that show a file's path, which carry the derived-file mark
 _DERIVED_MARK_FIELDS = {"path", "orig_path"}
@@ -1300,6 +1317,9 @@ def export_html(case: Case, dest: str | Path, where: str = "", *,
     body = [_HTML_HEAD.format(case=cn, blur_cls="blur" if blur else "")]
     body.append(_header_html(case, header, thumbs=thumbs))
     body.append(_summary_html(case, rows, scope_label, flag_mode=by_flag))
+    if "c2pa" in keys:
+        body.append("<div class='summary'><b>Content Credentials.</b> "
+                    f"{html.escape(provenance.CAVEAT)}</div>")
     body.append(_overview_html(case, overview_uri, map_tally, drawn_rows, marker_px))
     rptbar_html = (
         "<div class='rptbar'><span class='lbl'>Metadata:</span> "

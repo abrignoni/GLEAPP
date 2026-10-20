@@ -1,0 +1,23 @@
+{
+  "source": "https://github.com/c2pa-org/conformance-public",
+  "commit": "43a0a6f09091a062083a4ba33e3acc19dd721282",
+  "fetched": "2026-10-06",
+  "licence": "CC-BY-4.0",
+  "licence_file": "gleapp/trust/LICENSE-c2pa-trust-lists",
+  "files": [
+    {
+      "name": "C2PA-TRUST-LIST.pem",
+      "kind": "manifest",
+      "sha256": "75cacc98b79ecac33713c7ecfb58d4a0ef383f3c1f886e7409f9e37e8664aea5",
+      "certificates": 30,
+      "last_changed_in": "70ec46e16962b81e70795fcb50a05e0128329a20"
+    },
+    {
+      "name": "C2PA-TSA-TRUST-LIST.pem",
+      "kind": "tsa",
+      "sha256": "c688d3555f4a2f1f8d663472bbd37888ff234abdd234c25934c0f9292e4eb5c9",
+      "certificates": 22,
+      "last_changed_in": "4cb1f317aa4c7ce9cca557dc0cecee18bd784bb7"
+    }
+  ]
+}

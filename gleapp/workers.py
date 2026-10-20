@@ -1,8 +1,9 @@
 """How GLEAPP starts its isolated worker processes.
 
-Decoding a video, decoding a GPU texture and reading a Windows.edb each run in a
-short-lived child process, so a native crash or an endless loop costs one file
-rather than the run (``_vidworker``, ``_texworker`` and ``_edbworker``). A frozen
+Decoding a video, decoding a GPU texture, reading a Windows.edb and reading Content
+Credentials each run in a short-lived child process, so a native crash or an endless
+loop costs one file rather than the run (``_vidworker``, ``_texworker``,
+``_edbworker`` and ``_c2paworker``). A frozen
 build starts its own executable again with a flag that
 ``packaging/entrypoint.py`` dispatches. A source run starts the same Python with
 a one-line bootstrap that imports the worker from the ``gleapp`` package this
@@ -40,8 +41,8 @@ _BOOTSTRAP = (
 
 
 def worker_command(name: str) -> list[str]:
-    """The command that starts worker ``name`` ("vidworker", "texworker" or
-    "edbworker"). The caller appends the worker's own arguments."""
+    """The command that starts worker ``name`` ("vidworker", "texworker",
+    "edbworker" or "c2paworker"). The caller appends the worker's own arguments."""
     if getattr(sys, "frozen", False):
         return [sys.executable, f"--{name}"]
     return [sys.executable, "-c", _BOOTSTRAP, _PACKAGE_PARENT, f"gleapp._{name}"]

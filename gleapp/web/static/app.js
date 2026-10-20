@@ -247,6 +247,8 @@ function filterParams() {
   if ($("#fflag").value !== "any") p.set("flag", $("#fflag").value);
   if ($("#fsrc").value) p.set("source", $("#fsrc").value);
   if ($("#forigin").value) p.set("origin", $("#forigin").value);
+  if ($("#fc2pa").value) p.set("c2pa", $("#fc2pa").value);
+  if ($("#fc2padst").value) p.set("c2pa_dst", $("#fc2padst").value);
   if ($("#finarch").checked) p.set("in_archive", "1");
   if ($("#findoc").checked) p.set("in_document", "1");
   if ($("#fdup").value) p.set("hasdup", $("#fdup").value);
@@ -488,6 +490,12 @@ function tileEl(f) {
   const hit = hashBadges(f);
   const gps = f.gps_lat != null ? `<span class="b">\u{1F4CD}</span>` : "";
   const err = f.error && !f.thumb ? `<span class="b err">ERR</span>` : "";
+  // what the file declares about generative AI (provenance.ai_declaration): solid
+  // when a valid signature backs it, dashed when nothing does. A declaration, never
+  // a finding, and no mark at all when nothing declares it.
+  const ai = f.c2pa_ai
+    ? `<span class="b ai${f.c2pa_ai.backed ? "" : " unbacked"}" title="${esc(f.c2pa_ai.title)}">${esc(f.c2pa_ai.badge)}</span>`
+    : "";
   const flagB = f.flags && f.flags.length
     ? `<span class="b" title="${esc(f.flags.map(x => x.name).join(", "))}">⚑ ${f.flags.length}</span>`
     : "";
@@ -518,7 +526,7 @@ function tileEl(f) {
       ${media}
       ${f.kind === "video" ? `<div class="scrub"><i></i></div>
         <span class="vid">▶ ${fmtDur(f.duration)}</span>` : ""}
-      <div class="badges">${hit}${err}${dist}${faces}${gps}${flagB}</div>
+      <div class="badges">${hit}${ai}${err}${dist}${faces}${gps}${flagB}</div>
       ${stack}
       <span class="selcheck">✓</span>
     </div>
@@ -609,6 +617,7 @@ const shortHash = h => !h ? "" : h.length > 12 ? h.slice(0, 12) + "…" : h;
 // label:    header text
 // type:     text | num | enum | date  (drives the filter widget)
 // get(f):   display string
+// title(f): the cell's tooltip, when it is not the display string
 // mono:     render in monospace
 // options:  for enum filters — array or () => array of {value,label}
 // The three ways a file reaches a case. The keys are the stored files.origin
@@ -629,6 +638,33 @@ const ORIGIN_SHORT = {
   walk: "Walked",
   deleted: "Deleted record",
   carve: "Carved",
+};
+
+// Content Credentials, as declared: the state of the file's credentials and the class
+// of the source type its manifest declares. Same keys as provenance.STATES and
+// provenance.DST_CLASSES; the short forms fit the 130px enum column.
+const C2PA_STATE_SHORT = {
+  absent: "None",
+  malformed: "Malformed",
+  invalid: "Invalid",
+  valid_untrusted: "Valid, unlisted",
+  trusted: "Valid, listed",
+  not_checked: "Not checked",
+};
+const C2PA_DST_LABEL = {
+  generative_ai: "Generative AI",
+  ai_edited: "Edited using Generative AI",
+  ai_composite: "Composite including generative AI elements",
+  algorithmic: "Algorithmic",
+  algorithmically_altered: "Algorithmically-altered media",
+  capture: "Capture",
+  composite_capture: "Composite of captured elements",
+  composite: "Composite of elements",
+  screen: "Screen capture",
+  virtual_recording: "Virtual event recording",
+  human_edit: "Human edits",
+  other: "Other",
+  none: "No source type in the manifest",
 };
 
 const LIST_DEFS = [
@@ -654,6 +690,17 @@ const LIST_DEFS = [
   // this is off by default and turned on from the column picker.
   { key: "origin", label: "How recovered", type: "enum", get: f => ORIGIN_SHORT[f.origin] || "",
     options: () => Object.entries(ORIGIN_SHORT).map(([value, label]) => ({ value, label })) },
+  { key: "c2pa_state", label: "Content Credentials", type: "enum",
+    get: f => C2PA_STATE_SHORT[f.c2pa_state] || "",
+    options: () => Object.entries(C2PA_STATE_SHORT).map(([value, label]) => ({ value, label })) },
+  { key: "c2pa_dst_class", label: "Declared source type", type: "enum",
+    get: f => C2PA_DST_LABEL[f.c2pa_dst_class] || "",
+    options: () => Object.entries(C2PA_DST_LABEL).map(([value, label]) => ({ value, label })) },
+  { key: "c2pa_signer", label: "C2PA signer", type: "text", get: f => f.c2pa_signer || "" },
+  // the gallery's "AI declared" mark, in words; worked out per page, so neither
+  // sorted nor filtered on
+  { key: "", alt: "c2pa_ai", label: "AI declaration", type: "",
+    get: f => f.c2pa_ai ? f.c2pa_ai.text : "", title: f => f.c2pa_ai ? f.c2pa_ai.title : "" },
   { key: "kind", label: "Type", type: "enum", get: f => f.kind || "",
     options: [{ value: "image", label: "image" }, { value: "video", label: "video" },
               { value: "other", label: "other" }] },
@@ -1019,7 +1066,8 @@ function lvRowEl(f, defs) {
       cls += " catcell";
       style = ` style="border-left-color:${catColor(f.category)}"`;
     }
-    return `<td class="${cls.trim()}"${style} title="${esc(v)}">${d.mark ? pathHtml(f, v) : esc(v)}</td>`;
+    const tip = d.title ? d.title(f) : v;
+    return `<td class="${cls.trim()}"${style} title="${esc(tip)}">${d.mark ? pathHtml(f, v) : esc(v)}</td>`;
   }).join("");
   return tr;
 }
@@ -1623,6 +1671,11 @@ async function showMeta(id) {
       ${vic.exif.length ? `<details style="margin-top:8px"><summary class="muted"
           title="The Exif reading the Project VIC record carries for the file it describes. It is shown as recorded and is not this file's own metadata; a location in it is not drawn on any map.">VIC Exif, as recorded (${vic.exif.length})</summary>
         <table>${vic.exif.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v ?? "")}</td></tr>`).join("")}</table>
+      </details>` : ""}
+      ${f.c2pa_rows ? `<details style="margin-top:8px" ${f.c2pa_state && f.c2pa_state !== "absent" ? "open" : ""}>
+        <summary class="muted" title="${esc(f.c2pa_caveat || "")}">Content Credentials: ${esc(C2PA_STATE_SHORT[f.c2pa_state] || "not read yet")}</summary>
+        <table>${f.c2pa_rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td style="white-space:pre-line">${esc(v ?? "")}</td></tr>`).join("")}</table>
+        <div class="fnote">${esc(f.c2pa_caveat || "")}</div>
       </details>` : ""}
 
       <div class="muted" style="margin-top:8px">Notes <span id="mNoteState" class="muted" style="font-size:11px"></span></div>
@@ -2303,7 +2356,7 @@ document.addEventListener("keydown", e => {
 /* ---------- filter wiring ---------- */
 // #fsort has its own handler (it maps to state.sortCol/Dir), so it's not here
 ["#fq", "#fkind", "#fcat", "#fflag", "#fsrc", "#forigin", "#finarch", "#findoc", "#fdup", "#ffaces", "#fgps",
- "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fdfrom", "#fdto", "#fdnone"].forEach(s => {
+ "#fhit", "#fhashset", "#fhidegood", "#ferr", "#fskin", "#fcollapse", "#fdfrom", "#fdto", "#fdnone", "#fc2pa", "#fc2padst"].forEach(s => {
   const el = $(s);
   el.addEventListener(s === "#fq" ? "input" : "change", debounce(reload, 250));
 });
@@ -2323,6 +2376,7 @@ const SEC_ACTIVE = {
   date:   () => !!($("#fdfrom").value || $("#fdto").value) || $("#fdnone").checked,
   loc:    () => $("#fgps").checked,
   carve:  () => !!$("#forigin").value,
+  c2pa:   () => !!$("#fc2pa").value || !!$("#fc2padst").value,
   arch:   () => $("#finarch").checked || $("#findoc").checked,
 };
 // Each active filter drives a removable chip under "N filters" - "Clear"
@@ -2349,6 +2403,12 @@ const FILTER_DEFS = [
   { active: () => !!$("#forigin").value,
     label: () => `How recovered: ${esc($("#forigin").selectedOptions[0].textContent)}`,
     clear: () => { $("#forigin").value = ""; } },
+  { active: () => !!$("#fc2pa").value,
+    label: () => `Content Credentials: ${esc($("#fc2pa").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fc2pa").value = ""; } },
+  { active: () => !!$("#fc2padst").value,
+    label: () => `Declared source type: ${esc($("#fc2padst").selectedOptions[0].textContent)}`,
+    clear: () => { $("#fc2padst").value = ""; } },
   { active: () => !!$("#fhashset").value,
     label: () => `Known hashes: ${esc($("#fhashset").selectedOptions[0].textContent)}`,
     clear: () => { $("#fhashset").value = ""; } },
@@ -2578,6 +2638,7 @@ async function refreshContext() {
   state.flags = c.flags || [];
   try { await refreshFlags(); } catch (e) {}
   updateScreenInfo(c.screening);
+  updateC2paInfo(c.provenance);
   refreshSimIndexInfo();
   updateArchInfo(c.archives); updateContainerCounts(c.containers);
   updateKnownHash(c.known_hash);
@@ -2602,6 +2663,7 @@ $("#btnClearFilters").onclick = () => {
   $("#fflag").value = "any";
   $("#fsrc").value = "";
   $("#forigin").value = "";
+  $("#fc2pa").value = ""; $("#fc2padst").value = "";
   $("#finarch").checked = false;
   $("#findoc").checked = false;
   $("#fdup").value = "";
@@ -3032,6 +3094,30 @@ function updateScreenInfo(scr) {
     btn.style.display = "";
     btn.textContent = "Re-run screening";
   }
+}
+/* ---------- Content Credentials (metadata, never a classification) ---------- */
+function updateC2paInfo(pv) {
+  if (!pv) return;
+  const info = $("#c2paInfo"), btn = $("#btnC2pa");
+  const st = pv.states || {};
+  const read = Object.values(st).reduce((a, b) => a + (b || 0), 0);
+  // a store the reader read, as the "Has Content Credentials" filter counts them; a
+  // file not checked may hold one or not
+  const withCr = ["malformed", "invalid", "valid_untrusted", "trusted"]
+    .reduce((a, k) => a + (st[k] || 0), 0);
+  const lines = [];
+  if (pv.unread) lines.push(`Not read yet: ${pv.unread.toLocaleString()} pictures and videos.`);
+  if (read) lines.push(`Read: ${read.toLocaleString()}; Content Credentials the reader read: `
+    + `${withCr.toLocaleString()}; not checked: ${(st.not_checked || 0).toLocaleString()}.`);
+  if (!pv.library) lines.push("The c2pa library is not installed, so signatures are not checked.");
+  info.textContent = lines.join(" ");
+  // what the pass reads again: the not checked a second read can change (not a format
+  // the reader does not support, nor a remote manifest), and only with the library there
+  const again = pv.library ? (pv.retry || 0) : 0;
+  btn.style.display = pv.unread || again ? "" : "none";
+  btn.textContent = pv.unread
+    ? `Read Content Credentials (${(pv.unread + again).toLocaleString()} files)`
+    : `Read again the ${again.toLocaleString()} not checked`;
 }
 // The sidebar is narrow, so a long job message is cut off with an ellipsis; hovering
 // the bar shows all of it. Several jobs write the text, so the tooltip follows it.
@@ -3540,6 +3626,21 @@ $("#btnScreen").onclick = async () => {
       updateScreenInfo(c.screening);
     } catch (e) {}
     toast("Screening complete");
+    load();
+  });
+};
+$("#btnC2pa").onclick = async () => {
+  const r = await api("/api/provenance", { method: "POST", body: JSON.stringify({}) });
+  if (r.error) return toast(r.message || "Could not start reading Content Credentials");
+  $("#btnC2pa").disabled = true;
+  trackJob("#c2paInfo", "#taskProg", "Reading Content Credentials", async (ok) => {
+    $("#btnC2pa").disabled = false;
+    if (!ok) return;                     // leave the failure text in place
+    try {
+      const c = await api("/api/context");
+      updateC2paInfo(c.provenance);
+    } catch (e) {}
+    toast("Content Credentials read");
     load();
   });
 };
@@ -5278,6 +5379,7 @@ $("#mapViewClose").onclick = closeMapView;
     document.title = "GLEAPP — " + (c.case || "");
     if (c.vic) $("#btnVic").style.display = "";
     updateScreenInfo(c.screening);
+    updateC2paInfo(c.provenance);
     refreshSimIndexInfo();
     updateArchInfo(c.archives); updateContainerCounts(c.containers);
     updateKnownHash(c.known_hash);

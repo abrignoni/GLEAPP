@@ -25,6 +25,7 @@ datas = [
     (str(PKG / "web" / "templates"), "gleapp/web/templates"),
     (str(PKG / "web" / "static"), "gleapp/web/static"),
     (str(PKG / "models"), "gleapp/models"),
+    (str(PKG / "trust"), "gleapp/trust"),
 ]
 binaries = []
 hiddenimports = ["gleapp.desktop", "gleapp.cli", "gleapp.web.app", "gleapp.projectvic",
@@ -73,7 +74,11 @@ a = Analysis(
     excludes=["tkinter", "matplotlib", "pytest", "PyInstaller",
               # dev-only, and its wheels carry the GPLv2 x265 encoder: the
               # fallback import in gleapp/imaging.py must not drag it in here
-              "pillow_heif"],
+              "pillow_heif",
+              # the optional [provenance] extra: PyInstaller would follow the import in
+              # gleapp/provenance.py and collect the package without the native library
+              # it loads through ctypes, with no notice for the Rust code inside it
+              "c2pa"],
     cipher=block_cipher,
     noarchive=False,
 )

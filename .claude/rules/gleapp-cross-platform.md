@@ -1239,3 +1239,154 @@ make readers wait on the real case. What they wait for is a context being worked
 and a page of the list being read, each as long as its longest statement. A read
 connection would remove that and change what a reader sees (see the section before this
 one); making those statements cheaper removes it without that.
+
+## C2PA reading is an optional extra, and no build carries it
+
+`gleapp/provenance.py` reads Content Credentials with c2pa-python, declared as the
+`[provenance]` extra (`c2pa-python>=0.38,<0.39`), never in `requirements.txt`. Checked on
+2026-10-06 with pip 26.2.1 (`--dry-run --only-binary=:all:`, each platform's full tag set,
+CPython 3.10 to 3.14):
+
+| platform | c2pa-python 0.38.0 | cryptography it gets from wheels |
+| --- | --- | --- |
+| Windows x64 | wheel | 50.0.2 |
+| Windows ARM64 | wheel | 46.0.3 on 3.11 to 3.14; 3.10 does not resolve (cffi has no cp310 win_arm64 wheel) |
+| macOS arm64 | wheel | 50.0.2 |
+| macOS x86_64 | wheel | 48.0.1 |
+| manylinux x86_64, aarch64 | wheel | 50.0.2 |
+
+c2pa-python's wheels are `py3-none-<platform>` and carry a native library (23.3 MB in the
+manylinux x86_64 one). Its declared dependency `cryptography` is the gap: 50.0.2 has no
+Intel macOS or win_arm64 wheel, so a plain `pip install` builds it from source there
+(Rust and OpenSSL) unless given `--prefer-binary`, which takes the versions above. Nothing
+the app imports needs it: `import c2pa` loads `c2pa`, `c2pa.c2pa` and `c2pa.lib`, standard
+library and ctypes only, and reading worked with cryptography, requests and toml blocked
+by a meta-path hook. Installed, cryptography does change one thing in a source run: pypdf
+prefers it over pycryptodome for encrypted PDFs.
+
+**Why no build carries it.** The 0.38.0 wheels hold no licence text (its pyproject sets
+`license-files = []`; LICENSE-MIT and LICENSE-APACHE, "(c) Copyright 2020 Adobe", are only
+in the sdist). The native library is c2pa-rs 0.91.0 (commit e7cc666c), byte-identical to
+the c2pa-rs release asset, built without a committed lockfile, and upstream publishes no
+third-party notice, SBOM or Cargo.lock for it. A lock reconstructed from the release date
+matched all 156 crate versions the seven shipped libraries name, but it is a
+reconstruction, not a record, and its 290-odd crates include CDLA-Permissive-2.0 data
+(webpki-roots), Unicode-3.0, ISC and BSD-3-Clause, six with no licence text in the crate.
+`collect_all("c2pa")` would also pull `c2pa.build`, which imports requests: that brings
+certifi (MPL-2.0) and cryptography with a static OpenSSL 4.0.3, and about 293 MB of
+`.pdb`/`.lib`/`.exp` build files on Windows. So the spec excludes `c2pa` (PyInstaller
+follows the import inside a function), and the frozen app records "Not checked: the
+c2pa library is not installed". The exclude keeps the code out, not the metadata:
+PyInstaller copies the dist-info of any distribution the code names to
+`importlib.metadata`, excluded or not. Measured 2026-10-11 on Linux with PyInstaller 6.22.2
+and the extra installed, while the code called `metadata.version("c2pa-python")`: the
+bundle carried `c2pa_python-0.38.0.dist-info`, a RECORD of files it did not hold. The
+version now comes from `c2pa.__version__`. `tests/test_c2pa_packaging.py` pins the extra,
+its absence from the requirements, the exclude, that the code names no distribution to
+`importlib.metadata`, and the CI split.
+
+**CI runs both paths.** The Linux `pytest` job and `windows-smoke` install `.[dev,provenance]`
+so the tests that sign synthetic fixtures with the real library run; the runtime-contract
+matrix does not, so every Python from 3.10 to 3.14 runs the suite without it.
+
+**The pin is below 0.39 on purpose.** c2pa-rs 0.91.0 deprecates `trust.trust_anchors` and
+`trust.user_anchors` ("Will be removed in 0.92.0 (scheduled for mid-November 2026)"); GLEAPP
+uses `trust.anchors`. Raise the pin only with the reader's tests run against the new minor.
+
+**c2pa-rs accepts the C2PA EKU only when it is named.** A reader opened from settings builds
+its certificate policy without c2pa-rs's own `valid_eku_oids.cfg`, so a signer whose only
+EKU is c2pa-kp-claimSigning (1.3.6.1.4.1.62558.2.1, the EKU the C2PA Trust List is for)
+read as `signingCredential.invalid`, "certificate missing required EKU", and the manifest
+Invalid. Measured 2026-10-06 with c2pa-python 0.38.0 / c2pa-rs 0.91.0 and a synthetic
+chain: Invalid without `trust.trust_config`, Valid with the six default OIDs in it, Trusted
+once the root is an anchor. `provenance.reader_settings` passes them (`VALID_EKUS`), and
+`tests/test_provenance_signed.py` signs every fixture with that EKU alone. The Builder has
+the same gap at signing time, which is why the tests' signing settings name it too.
+
+**Trust lists are added to, never replaced.** C2PA 2.2 §14.4.1 and §14.4.2 say a
+validator's anchors include the C2PA Trust List and TSA list; an examiner's anchors go in
+beside them and only a newer copy of a C2PA list stands in for the bundled one. c2pa-rs
+reports the `trust_uri` of the anchor list a trusted signer chained to, measured with
+several lists of one kind, so each record names it. It also reports Trusted for a signer
+that chains only to an anchor loaded as a TSA; GLEAPP records that as valid_untrusted.
+
+**The native library never loads in the GLEAPP process.** The parent decides from the bytes
+and checks only that the package is installed; a file holding a store is read by
+`gleapp/_c2paworker.py`, a batch at a time, the paths and anchors on stdin. A batch that
+stops is split until the file it stopped on is alone. A batch whose time runs out keeps
+what it answered, since the worker answers in order and flushes each line, and the file
+it was on is read again alone: until 2026-10-12 the answers were dropped and the batch
+halved, a 600 s timeout at every halving, and a fake reader that hung on the 20th of 25
+files was started 11 times and timed out 6. `NotSupported`, `Io` and
+`FileNotFound` from the reader say nothing about a manifest and are not_checked, and so is
+a remote manifest, which c2pa-python 0.38.0 raises as a plain `C2paError("Remote: ...")`
+(its `RemoteManifest` subclass is for another prefix); every other `C2paError` is
+malformed. With an empty format c2pa sniffs the bytes itself: a GIF reads as no manifest,
+a BMP or ICO as unsupported (c2pa-rs 0.91.0). Asking it for one of the containers it does
+not read cost a reader process per 25 files to hear NotSupported, and without the library
+those files were recorded "the c2pa library is not installed", which it would not have
+changed. `provenance.UNSUPPORTED_CONTAINERS` names them (BMP, Matroska and WebM, ASF,
+FLV, MPEG program and transport streams, JPEG 2000, KTX); they are told apart from their
+leading bytes and recorded unsupported without the reader. `tests/test_provenance_signed.py`
+holds the list to `Reader.get_supported_mime_types()` and to the reader's own answer for
+a sample of each, so a c2pa that starts reading one fails there.
+
+**The bytes settle absence only when the walk reaches the container's end.** A JPEG up to
+its image data, a PNG to IEND, a GIF to its trailer, a WebP or an AVI to the size its RIFF
+header gives (and an AVI's AVIX chunks after it), every entry of a TIFF's first IFD, the
+top-level boxes of an ISOBMFF file filling it exactly. Measured
+2026-10-11 with a signed synthetic JPEG and one stray byte between two segments: Pillow and
+OpenCV opened it, c2pa-rs read its manifest (generative AI declared), and a walk that
+stopped at the byte had recorded "No Content Credentials". A walk cut short now leaves the
+file to the reader, or not_checked without one.
+
+**GIF and AVI are walked as c2pa-rs reads them.** Until 2026-10-19 both went to the reader
+to hear there was no store: a pass over 100 plain GIFs took 652 ms and one reader process,
+and walked takes 21 ms and none (100 MJPEG AVIs: 737 ms, 10 ms; median of five passes,
+Python 3.12, Windows). The walk follows c2pa-rs 0.91.0's `gif_io` and `riff_io` (read at
+e7cc666c), checked against signed files. A GIF's store is an Application Extension
+`C2PA_GIF`, auth code 01 00 00, which c2pa-rs looks for only before the first image; an
+AVI's is a top-level `C2PA` chunk, read only in the first RIFF, not in an AVIX. The walk
+records either wherever it sees it, so the reader decides. c2pa-rs walks some GIF blocks
+other than GIF89a lays them out (a Plain Text Extension, a Graphic Control Extension not of
+4 bytes, an extension label GIF89a does not define, an Application Extension not of 11
+bytes) and stops on them with "asset could not be parsed", the store past them unread; the
+walk stops there too. c2pa-rs writes a GIF's XMP as sub-blocks, so a length byte can fall
+inside a remote manifest's address: searched as the bytes lay, a 300-character address
+was found with the byte in it. The walk searches what the sub-blocks carry, and a packet
+written raw, as the XMP specification writes it, as it lies; the spec's magic trailer
+tells the two apart. A GIF is the one container walked to its end frame by frame: a
+16.7 MB GIF of 40 frames walks in 10 ms, against 18 ms stepping through each sub-block.
+
+**An ingredient's state is the reader's, not its signing tool's.** An ingredient carries
+the validation the tool that signed the parent recorded, against that tool's trust lists,
+and c2pa-rs 0.91.0 reports only how its own check differs, in `ingredientDeltas`, keyed by
+the manifest that holds the ingredient (so at any depth). Measured 2026-10-12 with a
+synthetic chain the signing tool trusted and GLEAPP did not: recorded
+`signingCredential.trusted`, delta `signingCredential.untrusted`, and the reverse when only
+GLEAPP trusted it; a delta's `signingCredential.trusted` explanation names the trust list
+("found in [gleapp:tsa:sha256:...] trust anchors"). A code found now replaces the
+recorded one it contradicts, and only that one: a recorded `signingCredential.expired`
+stays whatever trust is found.
+
+**Schema 19 adds four columns; NULL is "not read yet".** Processing reads what it processes
+and does not start reading an older case: on an E01 read in place that would pull every
+file out again. `gleapp provenance` and the gallery's button do it when asked.
+
+**The sidebar's Content Credentials counts come from the `c2pa_state` index**, in three
+statements of their own, not as sums in the context's pass over the table. Measured
+2026-10-12 on a synthetic case of 150,000 pictures (2,000 with a record, 21,000 not read;
+Python 3.12, Linux): the sums added 85 ms to that pass, since every row was read for
+them, and the three statements take 27 ms, 7 ms of it the states and 20 ms the rows not
+read. `test_the_context_counts_credentials_from_the_index` asks SQLite for the plan of
+the statements the context really runs. The byte walk processing adds per file was
+0.02 to 0.24 ms against 29 to 230 ms for the hashes of the same files (a 14 MB JPEG,
+a 9 MB PNG, a 71 MB MP4).
+
+**A source-type class is worked out from the URI, so moving a term raises
+`provenance.DST_VOCABULARY`.** A record keeps the digital source type URI it was declared
+with and no class: every surface works the class out where it shows it. The one class
+kept is the `c2pa_dst_class` column (the filter and the list), which
+`CaseDB.refresh_dst_classes` works out again once per value of `DST_VOCABULARY`;
+`c2pa_info` is never rewritten. A build that moves a term to another class and leaves
+the constant alone leaves every case an older build read filtering under the older class.

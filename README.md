@@ -15,7 +15,8 @@ gallery** with right-click *find-similar* and *cursor-scrub video preview*.
 > illegal-content hash database and it performs **no** content classification:
 > categorization is always a human decision. Every case is seeded with the
 > locked **Project VIC 2.0 (US)** category scheme (codes 0–5); the examiner adds
-> their own categories (code 6+) as needed.
+> their own categories (code 6+) as needed. Content Credentials are recorded as what
+> a file declares about itself, not as a finding about its content.
 
 A full **manual** is built into the app (the **? Help** button, or press `?`)
 and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
@@ -38,6 +39,7 @@ and mirrored at [`docs/MANUAL.md`](docs/MANUAL.md).
 | **Metadata** | EXIF capture time, camera make/model, GPS → decimal degrees; filesystem-time fallback; capture **timeline** via the list view's Captured (EXIF) column sort |
 | **Video** | Dimensions/duration (OpenCV, no ffmpeg needed), evenly-spaced **key-frame** extraction, per-frame pHash so a still can find its source video |
 | **Visual screening** | **YuNet** DNN face detection + broad **skin-tone ratio** as triage aids (pluggable: swap in another model behind the same functions) |
+| **Content Credentials** | Reads a picture's or video's C2PA Content Credentials and IPTC digital source type as provenance metadata: what the file declares about how it was made, who signed it, whether the signature validates, and whether the signer chains to the bundled C2PA Trust List or to anchors you add. Offline and read-only; validating needs the optional `c2pa-python` extra. Recorded as a declaration, never as a classification |
 | **Similarity search** | *Right-click → Find similar* across stills **and** video key frames; also on the CLI |
 | **Categories** | Locked **Project VIC 2.0 (US)** presets (codes 0–5) in every case; examiner adds their own (code 6+: rename / delete / reorder, auto colors), and can save them, plus flags if they choose, as a set that new cases start with; shown as a color bar + name on every tile |
 | **Flags** | Independent of category: a file can carry any number (Evidence, Bondage, whatever the case calls for); examiner-defined, none preseeded or locked; searchable, filterable, and shown as colored labels in every report |
@@ -788,7 +790,7 @@ four MIT and vendored under `gleapp/vendor/`. GLEAPP is part of the **LEAPP** fa
 (ALEAPP / iLEAPP / RLEAPP …), the project started by Alexis Brignoni &
 contributors, and its Android storage-view table is ported from ALEAPP. It
 reads the **Project VIC** data model and the **NSRL RDS** (NIST). Full
-attributions and licenses: **section 20 of the manual** (`docs/MANUAL.md`, or
+attributions and licenses: **section 21 of the manual** (`docs/MANUAL.md`, or
 **? Help** in the app).
 
 ## License

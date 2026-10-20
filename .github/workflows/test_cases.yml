@@ -63,7 +63,10 @@ jobs:
           # pillow-heif, and the HEIC test fixture is written with pillow-heif's encoder,
           # which pi-heif leaves out. Nothing here reaches a build; packaging/gleapp.spec
           # excludes pillow_heif and refuses any build that bundles a GPL codec.
-          python -m pip install -e ".[dev]"
+          # The provenance extra (c2pa-python) is installed here and on Windows so the
+          # signed-fixture tests run; the runtime-contract matrix leaves it out, so the
+          # "not installed" path runs too. The spec excludes it from every build.
+          python -m pip install -e ".[dev,provenance]"
 
       - name: Run test suite
         run: python -m pytest tests -v

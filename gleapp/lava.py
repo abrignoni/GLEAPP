@@ -45,8 +45,8 @@ from contextlib import suppress
 from pathlib import Path
 
 from .db import category_code, is_uncategorized
-from . import (__version__, archive, basemaps, categories, exocache, hashstore, stash,
-               staticmap, timeutil, vicdetails)
+from . import (__version__, archive, basemaps, categories, exocache, hashstore, provenance,
+               stash, staticmap, timeutil, vicdetails)
 from .case import Case
 # The two helpers that decide what a report may say about where a file lived.
 # Shared rather than re-derived: they are the rule, not a formatting detail.
@@ -666,6 +666,8 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
         ("Modified Timestamp", "datetime"), ("Created Timestamp", "datetime"),
         ("Accessed Timestamp", "datetime"), RECORDED_LABEL, "Capture Time",
         "File Name", "Path", "Also Under", "Source", "How Recovered", "App Cache",
+        "Content Credentials", "Declared Source Type", "C2PA Signer",
+        "Content Credentials Detail",
         ("Media", "media"),
         "Kind", "Category", "Flags", "Reviewed By", "Examiner Notes",
         ("Size", "integer"), "Dimensions", "Duration", "Camera",
@@ -686,6 +688,7 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
             row.get("source") or "",
             _origin_label(row),
             exocache.describe(row),
+            *_c2pa_cells(row),
             writer.reference(media.get(row["id"]), name, row.get("disp_name") or ""),
             row.get("kind") or "", row.get("category_label") or "", row.get("flags") or "",
             row.get("reviewed_by") or "", row.get("notes") or "",
@@ -702,7 +705,24 @@ def _artifact_media_files(writer: "_Writer", rows: list[dict], media: dict[int, 
         "GLEAPP Media", name, headers, data, icon="image",
         source_path="case.gleapp",
         description="Media files registered in the GLEAPP case.",
-        notes=_MEDIA_NOTES.format(media=_media_note(thumbs)))
+        notes=_MEDIA_NOTES.format(media=_media_note(thumbs)) + " " + _C2PA_NOTES)
+
+
+def _c2pa_cells(row: dict) -> list[str]:
+    """Content Credentials, Declared Source Type, C2PA Signer and the detail, for a
+    picture or video; empty for anything else."""
+    if row.get("kind") not in ("image", "video"):
+        return ["", "", "", ""]
+    record = provenance.load(row.get("c2pa_info"))
+    state = row.get("c2pa_state")
+    declared = ""
+    cls = row.get("c2pa_dst_class")
+    if cls and cls != "none":
+        declared = provenance.DST_CLASS_LABELS.get(cls, cls)
+        if state not in provenance.VALID_STATES:
+            declared += f" ({provenance.NOT_BACKED})"
+    return [provenance.STATE_LABELS.get(state, "Not read yet") if state else "Not read yet",
+            declared, row.get("c2pa_signer") or "", provenance.describe_text(record)]
 
 
 def _artifact_categorized(writer: "_Writer", rows: list[dict],
@@ -1432,6 +1452,19 @@ _MAP_NOTE = (
     "nothing around it. So a row with coordinates and no map means the basemap does "
     "not cover them, none was imported, or the per-report cap was reached, and never "
     "that the location is unknown."
+)
+
+_C2PA_NOTES = (
+    "Content Credentials, Declared Source Type, C2PA Signer and Content Credentials "
+    "Detail record what a picture's or video's own Content Credentials (C2PA) and IPTC "
+    "digital source type declare, read from its metadata with nothing fetched: the "
+    "state of the credentials, the class of the source type the c2pa.created action "
+    "declares (or the first action that declares one), who signed it when the claim "
+    "signature verified, and the rest of the record in the detail. A declaration from "
+    "credentials that do not validate is shown as " + provenance.NOT_BACKED + ", and "
+    "one found only in XMP is an unsigned declaration, kept in the detail and never in "
+    "Declared Source Type. 'Not read yet' is a picture or video whose credentials were "
+    "not read; gleapp provenance reads them. " + provenance.CAVEAT
 )
 
 _MEDIA_NOTES = (

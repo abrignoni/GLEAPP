@@ -76,6 +76,10 @@ REPO_NOTICES = [
      "gleapp/web/static/maps/LICENSE-protomaps-basemaps.txt"),
     ("Noto Sans map glyphs (gleapp/web/static/maps/fonts/)",
      "gleapp/web/static/maps/fonts/OFL.txt"),
+    ("C2PA Trust List and C2PA TSA Trust List, published by the Coalition for Content "
+     "Provenance and Authenticity in c2pa-org/conformance-public, unmodified "
+     "(gleapp/trust/*.pem)",
+     "gleapp/trust/LICENSE-c2pa-trust-lists"),
 ]
 
 # GLEAPP's own distribution, as pyproject.toml names it. REPO_NOTICES already carries

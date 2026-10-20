@@ -129,6 +129,8 @@
   .tile .b.vic{background:#d9822b}
   .tile .b.err{background:var(--danger)}
   .tile .b.face{background:#0e7490}
+  .tile .b.ai{background:#a21caf;pointer-events:auto;cursor:help}
+  .tile .b.ai.unbacked{background:rgba(0,0,0,.72);border:1px dashed #e879f9;color:#f5d0fe}
   .vicchip{font-size:10px;letter-spacing:.04em;border-radius:3px;padding:0 5px;color:#fff;background:#d9822b}
   .tile .stacks{position:absolute;right:4px;bottom:5px;display:flex;gap:3px}
   .tile .stackn{background:rgba(0,0,0,.8);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:4px;padding:0 5px;font-size:11px;font-weight:700;line-height:1.6}
@@ -629,6 +631,44 @@
           <input type="range" id="fskin" min="0" max="100" step="5" value="0"></label>
         <button class="btn sm block" id="btnScreen" style="display:none">Run face / skin screening</button>
         <div id="screenInfo" class="fnote"></div>
+      </div>
+    </details>
+
+    <details class="fsec" data-sec="c2pa">
+      <summary>Content Credentials <span class="fdot"></span></summary>
+      <div class="fbody">
+        <label class="flabel" title="What the file's Content Credentials (C2PA) say, read from its metadata. A signature that validates shows the credentials were not changed after signing; on a trust list means the signer's certificate chains to a trust list GLEAPP holds, which says nothing about the content.">State
+          <select id="fc2pa">
+            <option value="">Any file</option>
+            <option value="any">Has Content Credentials</option>
+            <option value="trusted">Valid, signer on a trust list</option>
+            <option value="valid_untrusted">Valid, signer not on a trust list</option>
+            <option value="invalid">Invalid</option>
+            <option value="malformed">Malformed</option>
+            <option value="not_checked">Not checked</option>
+            <option value="absent">No Content Credentials</option>
+            <option value="unread">Not read yet</option>
+          </select></label>
+        <label class="flabel" title="The class of the digital source type the active manifest declares, valid or not. A declaration, not a finding.">Declared source type
+          <select id="fc2padst">
+            <option value="">Any</option>
+            <option value="generative_ai">Generative AI</option>
+            <option value="ai_edited">Edited using Generative AI</option>
+            <option value="ai_composite">Composite including generative AI elements</option>
+            <option value="algorithmic">Algorithmic</option>
+            <option value="algorithmically_altered">Algorithmically-altered media</option>
+            <option value="capture">Capture</option>
+            <option value="composite_capture">Composite of captured elements</option>
+            <option value="composite">Composite of elements</option>
+            <option value="screen">Screen capture</option>
+            <option value="virtual_recording">Virtual event recording</option>
+            <option value="human_edit">Human edits</option>
+            <option value="other">Other</option>
+            <option value="none">No source type in the manifest</option>
+          </select></label>
+        <button class="btn sm block" id="btnC2pa" style="display:none"
+                title="Read what each picture and video declares about how it was made, who signed it and whether the signature validates. Metadata only; nothing is fetched.">Read Content Credentials</button>
+        <div id="c2paInfo" class="fnote"></div>
       </div>
     </details>
 

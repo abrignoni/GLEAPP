@@ -10,7 +10,7 @@ from pathlib import Path
 
 from gleapp import hashdb, projectvic
 from gleapp.case import open_case
-from gleapp.db import (NONPERTINENT_CATEGORY, UNCATEGORIZED_CATEGORY, CaseDB,
+from gleapp.db import (NONPERTINENT_CATEGORY, SCHEMA_VERSION, UNCATEGORIZED_CATEGORY, CaseDB,
                        is_uncategorized)
 
 
@@ -58,7 +58,7 @@ def test_an_older_case_has_its_0_and_5_swapped_once(tmp_path):
             assert got == (5, 0, 1, 5)
             assert reopened.category_name(0) == "Non-pertinent"
             assert reopened.category_name(5) == "Uncategorized"
-            assert reopened.get_meta("schema_version") == "18"
+            assert reopened.get_meta("schema_version") == str(SCHEMA_VERSION)
         finally:
             reopened.close()
 
