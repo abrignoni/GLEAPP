@@ -814,13 +814,25 @@ def process(
     # images/other: threads (fast, in-process)
     recs = archive.source_records(case)
     archive.clear_tmp(case.root)
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-        futs = [ex.submit(_process_one, case.root, case.thumb_dir, r, force=force,
-                          keyframes=keyframes, screen=screen, rec=recs.get(r["source"]),
-                          defer_video=True)
-                for r in imgs]
-        for fut in as_completed(futs):
-            _write(fut.result())
+    # OpenCV runs each call (the face detector, resizes) on threads of its own,
+    # one per processor by default, so several workers each asked for every
+    # processor and fought over them. Measured on 800 photos with screening, 8
+    # logical processors: 4 workers 17.0 files/s, 8 workers 16.9; 8 workers with
+    # OpenCV on one thread each 24.1. With one worker it keeps its own threads.
+    import cv2  # pylint: disable=import-outside-toplevel
+    cv_threads = cv2.getNumThreads()  # pylint: disable=no-member
+    if workers > 1:
+        cv2.setNumThreads(1)  # pylint: disable=no-member
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+            futs = [ex.submit(_process_one, case.root, case.thumb_dir, r, force=force,
+                              keyframes=keyframes, screen=screen,
+                              rec=recs.get(r["source"]), defer_video=True)
+                    for r in imgs]
+            for fut in as_completed(futs):
+                _write(fut.result())
+    finally:
+        cv2.setNumThreads(cv_threads)  # pylint: disable=no-member
     case.db.commit()
     if deferred:
         vids += [case.db.get_file(i) for i in deferred]
