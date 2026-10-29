@@ -117,7 +117,7 @@ def test_processing_starts_its_count_at_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(webapp, "ingest_sources", fake_ingest)
     monkeypatch.setattr(webapp, "process", fake_process)
     try:
-        webapp._run_job(state, [], {})
+        webapp._run_job(state, [], {})          # pylint: disable=protected-access
     finally:
         case.close()
     assert seen == {"done": 0, "total": 500}
