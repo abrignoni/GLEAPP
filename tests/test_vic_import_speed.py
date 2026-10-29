@@ -95,3 +95,29 @@ def test_the_web_job_shows_what_a_vic_import_is_doing(tmp_path, monkeypatch):
         case.close()
     assert ("Reading Project VIC entries" in {w for _k, w in seen})
     assert seen[-1][0] == 25
+
+
+def test_processing_starts_its_count_at_zero(tmp_path, monkeypatch):
+    """The ingest's count must not carry into processing: a VIC import reports
+    every entry, and the bar read n/n, 100%, before a file was processed."""
+    from gleapp.pipeline import RunStats
+    from gleapp.web import app as webapp
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    state = {"case": case, "job": {}, "indexer": None}
+    seen = {}
+
+    def fake_ingest(_case, _sources, *, progress=None, **_kw):
+        progress(500, "Registering files")
+        return 500
+
+    def fake_process(_case, **_kw):
+        seen["done"], seen["total"] = state["job"]["done"], state["job"]["total"]
+        return RunStats()
+
+    monkeypatch.setattr(webapp, "ingest_sources", fake_ingest)
+    monkeypatch.setattr(webapp, "process", fake_process)
+    try:
+        webapp._run_job(state, [], {})
+    finally:
+        case.close()
+    assert seen == {"done": 0, "total": 500}

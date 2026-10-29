@@ -3238,7 +3238,10 @@ def _run_job(state: dict, sources, opts: dict) -> None:
                     progress=lambda k, _s=src.name: job.update(
                         done=k, message=f"Carving {_s}… {k:,} found"))
 
-        job.update(stage="process", total=n, message=f"Processing {n} files…")
+        # done=0: the ingest's own count is still in the job, and a Project VIC
+        # import counts up to every entry, so left there the bar read
+        # n/n, 100%, before the first file was processed
+        job.update(stage="process", done=0, total=n, message=f"Processing {n} files…")
 
         def progress(done: int, total: int) -> None:
             job.update(done=done, total=total)
