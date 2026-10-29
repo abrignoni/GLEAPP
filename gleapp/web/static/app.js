@@ -4072,6 +4072,7 @@ $("#aeTypePath").addEventListener("keydown", e => {
   if (e.key === "Enter") { aeAddSource($("#aeTypePath").value); $("#aeTypePath").value = ""; }
 });
 $("#aeKf").addEventListener("input", () => $("#aeKfv").textContent = $("#aeKf").value);
+$("#aeWorkers").addEventListener("input", () => $("#aeWkv").textContent = $("#aeWorkers").value);
 for (const id of ["optExpand", "aeExpand"])
   $("#" + id).addEventListener("change", () =>
     $("#" + id + "Warn").style.display = $("#" + id).checked ? "block" : "none");
@@ -4087,6 +4088,7 @@ $("#btnAddEvidence").onclick = () => {
   $("#aeExpandWarn").style.display = "none";
   $("#aeDocs").checked = false;
   $("#aeKf").value = 6; $("#aeKfv").textContent = "6";
+  $("#aeWorkers").value = 4; $("#aeWkv").textContent = "4";
   $("#aeGo").disabled = false;
   $("#addEvDlg").style.display = "block";
 };
@@ -4107,6 +4109,7 @@ $("#aeGo").onclick = async () => {
   const ing = await postIngest({
     spec: specs[0] || null, sources: folders,
     options: { screen: $("#aeScreen").checked, keyframes: +$("#aeKf").value,
+               workers: +$("#aeWorkers").value,
                stage: $("#aeStage").checked, carve: $("#aeCarve").checked,
                c2pa: $("#aeC2pa").checked,
                expand_archives: $("#aeExpand").checked,
@@ -4562,6 +4565,7 @@ function renderSources() {
     b.onclick = () => { Lr.sources.splice(+b.dataset.rm, 1); renderSources(); });
 }
 function showLauncher(ctx) {
+  setWorkerRange(ctx.cpu_count);
   Lr.native = !!ctx.native;
   $("#launcher").style.display = "block";
   $("#main").style.display = "none";
@@ -4875,6 +4879,15 @@ $("#srcTypePath").addEventListener("keydown", e => {
   if (e.key === "Enter") { addSource($("#srcTypePath").value); $("#srcTypePath").value = ""; }
 });
 $("#optKf").addEventListener("input", () => $("#kfv").textContent = $("#optKf").value);
+$("#optWorkers").addEventListener("input", () => $("#wkv").textContent = $("#optWorkers").value);
+// "Files processed at once": up to this machine's logical processors (at most 32)
+function setWorkerRange(cpus) {
+  const max = Math.max(4, Math.min(+cpus || 4, 32));
+  for (const [range, note] of [["#optWorkers", "#wkCpu"], ["#aeWorkers", "#aeWkCpu"]]) {
+    $(range).max = max;
+    $(note).textContent = cpus ? `(this machine has ${+cpus} logical processors)` : "";
+  }
+}
 $("#createGo").onclick = async () => {
   const path = $("#newPath").value.trim();
   if (!path) { toast("Choose a case folder"); $("#newPath").focus(); return; }
@@ -4908,6 +4921,7 @@ $("#createGo").onclick = async () => {
   const ing = await postIngest({
     spec: specs[0] || null, sources: folders,
     options: { screen: $("#optScreen").checked, keyframes: +$("#optKf").value,
+               workers: +$("#optWorkers").value,
                stage: $("#optStage").checked, carve: $("#optCarve").checked,
                c2pa: $("#optC2pa").checked,
                expand_archives: $("#optExpand").checked,
@@ -5620,6 +5634,7 @@ $("#mapViewClose").onclick = closeMapView;
     showSourceStatus(c.archive_sources);
     showFolderStatus(c.folder_sources);
     setupTz(c);
+    setWorkerRange(c.cpu_count);
     try { await refreshCats(); } catch (e) {}
     try { await refreshFlags(); } catch (e) {}
     (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));

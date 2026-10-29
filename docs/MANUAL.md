@@ -170,6 +170,9 @@ your user settings, not in any case.
 
 - *Face / skin tone pre-processing*: on by default, and can be run later.
 - *Video preview key frames*: default 6.
+- *Files processed at once*: default 4. The form shows how many logical processors
+  the machine has, and the slider goes up to that number (at most 32). Raising it
+  makes a large case process faster and uses more of the processor while it runs.
 - *Copy media out of extraction/acquisition into the case*: off keeps the case small but the
   archive must stay in place. On makes the case self-contained.
 - *Expand archives found inside the sources*: off by default. Opens each `.zip`,

@@ -181,3 +181,39 @@ def test_a_video_found_by_sniffing_goes_to_the_batched_video_pass(tmp_path, monk
     assert batched == [3]
     assert all(r["kind"] == "video" and r["thumb"] and r["sha256"] for r in rows)
     assert stats.processed == 3
+
+
+
+def test_files_processed_at_once_default_to_4_and_follow_the_form():
+    """Processing worked on 4 files at once whatever was asked; the ingest form
+    now chooses, 4 when it says nothing."""
+    from gleapp.web import app as webapp
+    w = webapp._workers                          # pylint: disable=protected-access
+    assert w({}) == 4 and w({"workers": None}) == 4 and w({"workers": "x"}) == 4
+    assert w({"workers": 16}) == 16
+    assert w({"workers": 0}) == 4 and w({"workers": -3}) == 1
+    assert w({"workers": 999}) == webapp.MAX_WORKERS
+
+
+def test_the_web_job_processes_with_the_chosen_workers(tmp_path, monkeypatch):
+    from gleapp.pipeline import RunStats
+    from gleapp.web import app as webapp
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    state = {"case": case, "job": {}, "indexer": None}
+    seen = {}
+    monkeypatch.setattr(webapp, "ingest_sources", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(webapp, "process",
+                        lambda _c, **kw: (seen.update(kw), RunStats())[1])
+    try:
+        webapp._run_job(state, [], {"workers": 12})          # pylint: disable=protected-access
+    finally:
+        case.close()
+    assert seen["workers"] == 12
+
+
+def test_the_context_says_how_many_processors(monkeypatch):
+    import os
+    from gleapp.web.app import create_app
+    monkeypatch.setattr(os, "cpu_count", lambda: 24)
+    ctx = create_app(None).test_client().get("/api/context").get_json()
+    assert ctx["cpu_count"] == 24

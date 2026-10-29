@@ -718,7 +718,9 @@ def _process_videos(case: Case, vids, *, force, keyframes, screen, workers, writ
                                "fields": {"error": f"source archive unavailable: {why}"
                                           [:300]}})
 
-    with ThreadPoolExecutor(max_workers=min(max(2, workers), 4)) as ex:
+    # each chunk is a child process decoding 20 videos; as many at once as the
+    # examiner chose workers (it used to stop at 4 whatever was chosen)
+    with ThreadPoolExecutor(max_workers=max(2, workers)) as ex:
         list(ex.map(do_chunk, chunks))
 
 
