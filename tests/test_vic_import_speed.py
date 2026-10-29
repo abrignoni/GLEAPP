@@ -121,3 +121,24 @@ def test_processing_starts_its_count_at_zero(tmp_path, monkeypatch):
     finally:
         case.close()
     assert seen == {"done": 0, "total": 500}
+
+
+def test_a_video_with_a_video_extension_is_not_opened_for_lzc(tmp_path, monkeypatch):
+    """Before processing, every video was opened to check for a Snapchat LZC
+    bundle. A bundle has no extension, so only those are opened now."""
+    from gleapp import lzc, pipeline
+    opened = []
+    real = lzc.is_lzc
+    monkeypatch.setattr(lzc, "is_lzc", lambda p: (opened.append(Path(p).name), real(p))[1])
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    try:
+        for name in ("a.mp4", "b.MOV", "c_noext"):
+            p = tmp_path / name
+            p.write_bytes(b"\x00" * 16)
+            case.db.upsert_file(str(p), kind="video")
+        case.db.commit()
+        pipeline.process(case, similar=False, screen=False)
+    finally:
+        case.close()
+    assert "a.mp4" not in opened and "b.MOV" not in opened
+    assert "c_noext" in opened

@@ -26,7 +26,7 @@ from PIL import Image
 from . import archive, dedupe, detect, exocache, hashdb, imaging, lzc, nested, winsearch  # noqa: F401  (imaging: decoder setup)
 from .case import Case, Source
 from .hashing import crypto_hashes, perceptual_hashes
-from .ingest import _head, is_document, scan, sniff_kind
+from .ingest import VIDEO_EXTS, _head, is_document, scan, sniff_kind
 from .media import extract_video_isolated, make_image_thumb
 from .metadata import extract_image
 from . import videometa
@@ -776,8 +776,14 @@ def process(
                 progress(done[0], total)
 
     # LZC bundles are unpacked in-process by _process_one even when they hold a
-    # video, so keep them out of the batched video path.
-    vids = [r for r in rows if r["kind"] == "video" and not lzc.is_lzc(r["path"])]
+    # video, so keep them out of the batched video path. A bundle is named by
+    # hash with no extension, so only a video without a video extension is
+    # opened to look: opening every video, one after another, before any file
+    # was processed held a 218,838-file Project VIC case at 0% for minutes on
+    # a machine where each open was slow.
+    vids = [r for r in rows if r["kind"] == "video"
+            and (Path(r["path"]).suffix.lower() in VIDEO_EXTS
+                 or not lzc.is_lzc(r["path"]))]
     _vid_ids = {r["id"] for r in vids}
     imgs = [r for r in rows if r["id"] not in _vid_ids]
 
