@@ -217,3 +217,39 @@ def test_the_context_says_how_many_processors(monkeypatch):
     monkeypatch.setattr(os, "cpu_count", lambda: 24)
     ctx = create_app(None).test_client().get("/api/context").get_json()
     assert ctx["cpu_count"] == 24
+
+
+def test_the_folder_check_is_not_redone_on_every_processing_write(tmp_path, monkeypatch):
+    """relink.folder_status read every path of the case again after any write, so
+    during processing the gallery's polls each read all of them (218,838 in one
+    case) and its screen stopped updating. It is now redone only when a file is
+    added or removed, or a path or source changes."""
+    from gleapp import relink
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    calls = []
+    real = relink._folder_facts                  # pylint: disable=protected-access
+    monkeypatch.setattr(relink, "_folder_facts", lambda c: (calls.append(1), real(c))[1])
+    try:
+        src = tmp_path / "ev"
+        src.mkdir()
+        ids = []
+        for i in range(3):
+            (src / f"{i}.jpg").write_bytes(b"x")
+            ids.append(case.db.upsert_file(str(src / f"{i}.jpg"), kind="image",
+                                           source="ev"))
+        assert relink.folder_status(case)[0]["files"] == 3
+        for i in ids:                            # what processing writes
+            case.db.update_file(i, md5="a" * 32, thumb="t.jpg", phash="0" * 16)
+        relink.folder_status(case)
+        assert len(calls) == 1
+        (src / "3.jpg").write_bytes(b"x")        # a new file
+        case.db.upsert_file(str(src / "3.jpg"), kind="image", source="ev")
+        assert relink.folder_status(case)[0]["files"] == 4
+        moved = tmp_path / "moved"
+        moved.mkdir()
+        (moved / "0.jpg").write_bytes(b"x")
+        case.db.update_file(ids[0], path=str(moved / "0.jpg"))   # a path changes
+        relink.folder_status(case)
+        assert len(calls) == 3
+    finally:
+        case.close()

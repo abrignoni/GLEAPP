@@ -100,11 +100,13 @@ def folder_status(case) -> list[dict]:
     the folder is gone or a sample of its files is not where the case recorded.
 
     The gallery asks for this with every context. What comes from the rows is
-    kept until a row is written (``CaseDB.derived``); the folder and the sample
-    are looked for on disk every time, since a folder moves without the case
-    being told."""
+    kept until a file is added or removed or a path or source changes
+    (``CaseDB.derived_by_paths``), not until any row is written: processing writes
+    every few files, and the paths of every file were read again on each poll.
+    The folder and the sample are looked for on disk every time, since a folder
+    moves without the case being told."""
     out = []
-    for name, root, files, sample in case.db.derived(
+    for name, root, files, sample in case.db.derived_by_paths(
             "relink.folder_facts", lambda: _folder_facts(case)):
         gone = (root is None or not Path(root).is_dir()
                 or any(not Path(p).is_file() for p in sample))
@@ -163,6 +165,7 @@ def relink_folder(case, name: str, new_root, progress=None) -> dict:
 
     with case.db.lock:
         case.db.conn.executemany("UPDATE files SET path = ? WHERE id = ?", moves)
+        case.db.path_writes += 1
         case.db.conn.commit()
     case.db.audit_log(case.examiner, "relink-folder", json.dumps(
         {"source": name, "from": old_root, "to": str(new_root), "files": len(moves)}))
