@@ -142,3 +142,42 @@ def test_a_video_with_a_video_extension_is_not_opened_for_lzc(tmp_path, monkeypa
         case.close()
     assert "a.mp4" not in opened and "b.MOV" not in opened
     assert "c_noext" in opened
+
+
+def test_a_video_found_by_sniffing_goes_to_the_batched_video_pass(tmp_path, monkeypatch):
+    """A file registered as something else that turns out to be a video was
+    decoded in a child process of its own, one per file. It now joins the
+    batched pass, 20 to a process, and still gets its key frames."""
+    import cv2
+    import numpy as np
+    from gleapp import media, pipeline
+
+    def no_single(*_a, **_kw):
+        raise AssertionError("decoded one at a time")
+    monkeypatch.setattr(pipeline, "extract_video_isolated", no_single)
+    batched = []
+    real_batch = media.extract_videos_batch
+    monkeypatch.setattr(media, "extract_videos_batch",
+                        lambda paths, *a, **kw: (batched.append(len(paths)),
+                                                 real_batch(paths, *a, **kw))[1])
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    try:
+        ids = []
+        for i in range(3):
+            clip = tmp_path / f"clip{i}.dat"          # no video extension
+            mp4 = tmp_path / f"clip{i}.mp4"
+            vw = cv2.VideoWriter(  # pylint: disable=no-member
+                str(mp4), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (64, 48))  # pylint: disable=no-member
+            for f in range(10):
+                vw.write(np.full((48, 64, 3), f * 20, np.uint8))
+            vw.release()
+            mp4.rename(clip)
+            ids.append(case.db.upsert_file(str(clip), kind="other"))
+        case.db.commit()
+        stats = pipeline.process(case, similar=False, screen=False)
+        rows = [case.db.get_file(i) for i in ids]
+    finally:
+        case.close()
+    assert batched == [3]
+    assert all(r["kind"] == "video" and r["thumb"] and r["sha256"] for r in rows)
+    assert stats.processed == 3
