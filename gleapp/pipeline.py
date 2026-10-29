@@ -63,7 +63,10 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None,
 
     ``progress(n)`` (optional) is called every ~200 files with the running
     count, and the DB is committed at the same cadence so the web UI can show
-    files as they are registered rather than only when the whole scan ends.
+    files as they are registered rather than only when the whole scan ends. A
+    Project VIC import calls it as ``progress(n, what)`` too, ``what`` saying
+    whether it is still reading entries or registering files, so a callback
+    given here has to take an optional second argument.
 
     ``expand_archives`` opens each archive found inside a source and registers the
     media in it. Off, the archives are still registered as containers and can be
@@ -87,8 +90,11 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None,
     n = 0
     for src in sources:
         if src.kind == "projectvic":
+            base = n
             reg, missing = projectvic.import_vic(
-                case, src.path, files_dir=src.files_dir
+                case, src.path, files_dir=src.files_dir,
+                progress=(lambda k, what, _b=base: progress(_b + k, what))
+                if progress else None,
             )
             n += reg + missing
             if progress:

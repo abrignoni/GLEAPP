@@ -3206,7 +3206,9 @@ def _run_job(state: dict, sources, opts: dict) -> None:
     try:
         n = ingest_sources(
             case, sources,
-            progress=lambda k: job.update(done=k, message=f"Registering files… {k:,}"),
+            # a Project VIC import also says when it is still reading its entries
+            progress=lambda k, what="Registering files": job.update(
+                done=k, message=f"{what}… {k:,}"),
             expand_archives=bool(opts.get("expand_archives", True)),
             expand_documents=bool(opts.get("expand_documents", False)),
         )

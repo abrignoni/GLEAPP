@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -271,22 +272,58 @@ def load(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
+class _Locator:
+    """Where an entry's file is and whether it is there, from one listing per folder.
+
+    Resolving every entry's path cost 84% of the time spent reading a large VIC
+    file on Windows, where ``Path.resolve`` makes five ``GetFinalPathName`` calls
+    and two link reads for each path: 11.8 of 14.0 s over 30,000 entries, so about
+    2 minutes over the 380,000 entries of a 627 MB file before a single row was
+    written. An export keeps its files in one folder, so the folder is resolved
+    once and listed once, and each entry is a lookup in that listing.
+
+    The listing also gives each existing file the name as the disk spells it,
+    which is what ``resolve`` returned on a case-insensitive volume, so the path
+    a row is keyed on is the one an earlier import of the same file used. A file
+    that is itself a link is not followed, as ``resolve`` would have.
+    """
+
+    def __init__(self) -> None:
+        self._folders: dict[str, tuple[Path, dict[str, str]]] = {}
+
+    def locate(self, path: Path) -> tuple[Path, bool]:
+        key = os.path.normcase(str(path.parent))
+        folder = self._folders.get(key)
+        if folder is None:
+            where = path.parent.resolve()
+            try:
+                names = {os.path.normcase(n): n for n in os.listdir(where)}
+            except OSError:
+                names = {}
+            folder = self._folders[key] = (where, names)
+        where, names = folder
+        found = names.get(os.path.normcase(path.name))
+        return (where / found, True) if found else (where / path.name, False)
+
+
 def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None
                  ) -> Iterator[VicRecord]:
     cases = doc.get("value") or doc.get("Cases") or []
     if isinstance(cases, dict):
         cases = [cases]
+    locator = _Locator()
     for case in cases:
         for m in case.get("Media", []) or []:
             rel = m.get("RelativeFilePath") or m.get("FilePath")
             abs_path = None
+            exists = False
             if rel:
                 rel_norm = rel.replace("\\", "/")
                 if files_dir is not None:
                     abs_path = files_dir / Path(rel_norm).name
                 else:
                     abs_path = json_dir / rel_norm
-                abs_path = abs_path.resolve()
+                abs_path, exists = locator.locate(abs_path)
             mf = (m.get("MediaFiles") or [{}])[0]
             cat = m.get("Category")
             try:
@@ -300,7 +337,7 @@ def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None
                 category=cat,
                 rel_path=rel,
                 abs_path=str(abs_path) if abs_path else None,
-                exists=bool(abs_path and abs_path.exists()),
+                exists=exists,
                 size=m.get("MediaSize"),
                 mime=m.get("MimeType"),
                 orig_name=mf.get("FileName"),
@@ -372,7 +409,11 @@ def region_mismatch(case, odata_context: str | None) -> str | None:
             "as they are")
 
 
-def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = None):
+PROGRESS_EVERY = 2000
+
+
+def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = None,
+               progress=None):
     """Register every Media entry from ``vic_path`` into ``case``.
 
     Returns (registered, missing), both counted in Media entries rather than in
@@ -380,6 +421,10 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
     paths as ``alt_paths``.  Files are not hashed/thumbnailed here - the normal
     pipeline does that next, and fills in whichever hashes the VIC file did not
     carry.
+
+    ``progress(n)`` (optional) is called every ``PROGRESS_EVERY`` entries read and
+    again as they are registered, with the running count of entries. Before it, a
+    large file showed nothing at all until every entry was registered.
     """
     vic_path = Path(vic_path).resolve()
     fdir = Path(files_dir).resolve() if files_dir else None
@@ -415,7 +460,9 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
     # ``storage_views`` already uses for the Android views of one file and which the
     # gallery shows as "Also under".
     groups: dict[str, list[VicRecord]] = {}
-    for r in iter_records(doc, json_dir=json_dir, files_dir=fdir):
+    for n, r in enumerate(iter_records(doc, json_dir=json_dir, files_dir=fdir), 1):
+        if progress and n % PROGRESS_EVERY == 0:
+            progress(n, "Reading Project VIC entries")
         if not r.abs_path:
             continue
         groups.setdefault(r.abs_path, []).append(r)
@@ -480,6 +527,9 @@ def import_vic(case, vic_path: str | Path, *, files_dir: str | Path | None = Non
         else:
             registered += len(recs)
         case.db.upsert_file(abs_path, **fields)
+        done = registered + missing
+        if progress and done // PROGRESS_EVERY != (done - len(recs)) // PROGRESS_EVERY:
+            progress(done, "Registering files")
 
     # make sure category rows exist for every VIC code we saw (blank name -> the
     # examiner names them)

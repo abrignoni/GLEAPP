@@ -1,0 +1,97 @@
+"""A Project VIC import finds each entry's file from one listing per folder, and
+says how far it has got while it reads and registers.
+
+Before, every entry's path was resolved on its own, which on Windows was 84% of
+the time spent reading a large file, and nothing was reported until every entry
+was registered: a 627 MB file showed "Scanning sources" for minutes."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from gleapp import projectvic
+from gleapp.case import open_case
+
+
+def _write(tmp_path: Path, n: int, present: set[int]) -> Path:
+    files = tmp_path / "exportFiles"
+    files.mkdir()
+    media = []
+    for i in range(n):
+        name = f"{i:032x}.jpg"
+        if i in present:
+            (files / name).write_bytes(b"x")
+        media.append({"MediaID": i + 1, "MD5": f"{i:032x}",
+                      "RelativeFilePath": f"exportFiles\\{name}",
+                      "MediaFiles": [{"FileName": f"IMG_{i}.jpg"}]})
+    vic = tmp_path / "export.json"
+    vic.write_text(json.dumps({"value": [{"Media": media}]}), encoding="utf-8")
+    return vic
+
+
+def test_entries_are_found_where_resolve_would_have_put_them(tmp_path):
+    vic = _write(tmp_path, 5, present={0, 2, 4})
+    doc = projectvic.load(vic)
+    recs = list(projectvic.iter_records(doc, json_dir=tmp_path))
+    assert [r.exists for r in recs] == [True, False, True, False, True]
+    for r in recs:
+        old = (tmp_path / r.rel_path.replace("\\", "/")).resolve()
+        assert r.abs_path == str(old)
+        assert r.exists == old.exists()
+
+
+def test_a_name_in_another_case_takes_the_disks_spelling(tmp_path):
+    vic = _write(tmp_path, 1, present={0})
+    doc = projectvic.load(vic)
+    m = doc["value"][0]["Media"][0]
+    m["RelativeFilePath"] = m["RelativeFilePath"].upper().replace("EXPORTFILES", "exportFiles")
+    (rec,) = projectvic.iter_records(doc, json_dir=tmp_path)
+    upper = tmp_path / "exportFiles" / Path(m["RelativeFilePath"].replace("\\", "/")).name
+    if upper.exists():       # a case-insensitive volume: the file is found as it is spelled on disk
+        assert rec.exists and rec.abs_path == str(upper.resolve())
+    else:                    # case-sensitive: it is not the same file
+        assert not rec.exists
+
+
+def test_files_dir_is_listed_too(tmp_path):
+    vic = _write(tmp_path, 3, present={1})
+    elsewhere = tmp_path / "moved"
+    (tmp_path / "exportFiles").rename(elsewhere)
+    recs = list(projectvic.iter_records(projectvic.load(vic), json_dir=tmp_path,
+                                        files_dir=elsewhere))
+    assert [r.exists for r in recs] == [False, True, False]
+    assert all(Path(r.abs_path).parent == elsewhere.resolve() for r in recs)
+
+
+def test_an_import_reports_reading_and_registering(tmp_path, monkeypatch):
+    monkeypatch.setattr(projectvic, "PROGRESS_EVERY", 10)
+    vic = _write(tmp_path, 35, present=set(range(0, 35, 2)))
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    calls = []
+    try:
+        reg, missing = projectvic.import_vic(
+            case, vic, progress=lambda k, what: calls.append((k, what)))
+    finally:
+        case.close()
+    assert (reg, missing) == (18, 17)
+    reading = [k for k, what in calls if what.startswith("Reading")]
+    registering = [k for k, what in calls if what.startswith("Registering")]
+    assert reading == [10, 20, 30]
+    assert registering == [10, 20, 30]
+
+
+def test_the_web_job_shows_what_a_vic_import_is_doing(tmp_path, monkeypatch):
+    from gleapp import pipeline
+    from gleapp.case import Source
+    monkeypatch.setattr(projectvic, "PROGRESS_EVERY", 10)
+    vic = _write(tmp_path, 25, present={0})
+    case = open_case(tmp_path / "case", create=True, examiner="t")
+    seen = []
+    try:
+        pipeline.ingest_sources(
+            case, [Source(name=vic.name, kind="projectvic", path=str(vic))],
+            progress=lambda k, what="Registering files": seen.append((k, what)))
+    finally:
+        case.close()
+    assert ("Reading Project VIC entries" in {w for _k, w in seen})
+    assert seen[-1][0] == 25
