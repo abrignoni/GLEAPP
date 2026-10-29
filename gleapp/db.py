@@ -439,7 +439,10 @@ class CaseDB:
         self.lock = threading.RLock()
         # answers worked out from the case's rows, kept until a row is written;
         # see derived()
-        self._derived: dict[str, tuple[int, Any]] = {}
+        self._derived: dict[str, tuple[Any, Any]] = {}
+        # moved on every write of a row's path or source through this connection
+        # (see derived_by_paths); raw SQL that rewrites either moves it itself
+        self.path_writes = 0
         # examiner changes since the last backup snapshot (drives auto-save UI)
         self.dirty = False
         self.last_write = 0.0
@@ -905,6 +908,28 @@ class CaseDB:
         self._derived[name] = (stamp, value)
         return value
 
+    def derived_by_paths(self, name: str, compute):
+        """``derived``, but kept until a file is added or removed or a path or source
+        changes, not until any row is written. For answers that come from where the
+        case's files are and nothing else (relink.folder_status): keyed on any
+        write, every write during processing threw the answer away, and the
+        gallery read all 218,838 paths of one case again on each poll, which kept
+        its screen from updating while processing ran. With nothing written since
+        the last call no row is read, as for ``derived``; after a write one count
+        decides whether the answer still holds."""
+        changes = self.conn.total_changes
+        hit = self._derived.get(name)
+        if hit is not None and hit[0][0] == changes:
+            return hit[1]
+        n, top = self.conn.execute("SELECT COUNT(*), MAX(id) FROM files").fetchone()
+        stamp = (n, top, self.path_writes)
+        if hit is not None and hit[0][1] == stamp:
+            self._derived[name] = ((changes, stamp), hit[1])
+            return hit[1]
+        value = compute()
+        self._derived[name] = ((changes, stamp), value)
+        return value
+
     def close(self) -> None:
         # Under the lock every query takes: closing the connection while another
         # thread's query runs on it crashed the interpreter (segfault, Linux CI).
@@ -950,6 +975,8 @@ class CaseDB:
                     )
                     if _EXO_NAME_COLUMNS & fields.keys():
                         self._refresh_exo_cache(row["id"])
+                    if "source" in fields:
+                        self.path_writes += 1
                 return int(row["id"])
             fields.setdefault("ingested_at", time.time())
             fields["exo_cache"] = exo_cache_flag(
@@ -976,6 +1003,8 @@ class CaseDB:
             )
             if _EXO_NAME_COLUMNS & fields.keys():
                 self._refresh_exo_cache(file_id)
+            if "path" in fields or "source" in fields:
+                self.path_writes += 1
 
     def iter_files(self, where: str = "", params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         sql = "SELECT * FROM files"

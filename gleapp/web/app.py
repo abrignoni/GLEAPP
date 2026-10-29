@@ -2117,6 +2117,8 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                             # whether the intro video opens with the launcher -
                             # see /api/settings {show_intro}
                             "show_intro": appconfig.get_show_intro(),
+                            # the ingest form's "Files processed at once" range
+                            "cpu_count": os.cpu_count() or 4,
                             # the category region (regions.py): None until the
                             # examiner picks one on first launch
                             **_region_payload(None)})
@@ -2264,6 +2266,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             "timezone": case.db.get_meta("display_tz") or appconfig.get_timezone(),
             # the intro's "Don't show this at startup" box, reachable from the case menu
             "show_intro": appconfig.get_show_intro(),
+            "cpu_count": os.cpu_count() or 4,
             "timezone_options": [{"value": v, "label": lbl}
                                  for v, lbl in timeutil.COMMON_ZONES],
             "case": case.db.get_meta("case_name"),
@@ -3198,6 +3201,20 @@ def _member_counts(case, row) -> dict:
     return got
 
 
+MAX_WORKERS = 32
+
+
+def _workers(opts: dict) -> int:
+    """Files processed at once: the ingest form's choice, 4 when it makes none.
+    Raising it uses more of the processor; on a 16-core machine 4 left most of
+    it idle (a 218,838-file Project VIC case at about 43 files a second)."""
+    try:
+        n = int(opts.get("workers") or 4)
+    except (TypeError, ValueError):
+        n = 4
+    return max(1, min(n, MAX_WORKERS))
+
+
 def _run_job(state: dict, sources, opts: dict) -> None:
     job = state["job"]
     case = state["case"]
@@ -3206,7 +3223,9 @@ def _run_job(state: dict, sources, opts: dict) -> None:
     try:
         n = ingest_sources(
             case, sources,
-            progress=lambda k: job.update(done=k, message=f"Registering files… {k:,}"),
+            # a Project VIC import also says when it is still reading its entries
+            progress=lambda k, what="Registering files": job.update(
+                done=k, message=f"{what}… {k:,}"),
             expand_archives=bool(opts.get("expand_archives", True)),
             expand_documents=bool(opts.get("expand_documents", False)),
         )
@@ -3236,7 +3255,10 @@ def _run_job(state: dict, sources, opts: dict) -> None:
                     progress=lambda k, _s=src.name: job.update(
                         done=k, message=f"Carving {_s}… {k:,} found"))
 
-        job.update(stage="process", total=n, message=f"Processing {n} files…")
+        # done=0: the ingest's own count is still in the job, and a Project VIC
+        # import counts up to every entry, so left there the bar read
+        # n/n, 100%, before the first file was processed
+        job.update(stage="process", done=0, total=n, message=f"Processing {n} files…")
 
         def progress(done: int, total: int) -> None:
             job.update(done=done, total=total)
@@ -3244,7 +3266,7 @@ def _run_job(state: dict, sources, opts: dict) -> None:
         stats = process(
             case,
             force=opts.get("force", False),
-            workers=int(opts.get("workers", 4)),
+            workers=_workers(opts),
             keyframes=int(opts.get("keyframes", 6)),
             screen=opts.get("screen", True),
             phash_cluster_threshold=int(opts.get("cluster_threshold", 8)),

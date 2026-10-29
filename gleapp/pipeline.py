@@ -26,7 +26,7 @@ from PIL import Image
 from . import archive, dedupe, detect, exocache, hashdb, imaging, lzc, nested, winsearch  # noqa: F401  (imaging: decoder setup)
 from .case import Case, Source
 from .hashing import crypto_hashes, perceptual_hashes
-from .ingest import _head, is_document, scan, sniff_kind
+from .ingest import VIDEO_EXTS, _head, is_document, scan, sniff_kind
 from .media import extract_video_isolated, make_image_thumb
 from .metadata import extract_image
 from . import videometa
@@ -63,7 +63,10 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None,
 
     ``progress(n)`` (optional) is called every ~200 files with the running
     count, and the DB is committed at the same cadence so the web UI can show
-    files as they are registered rather than only when the whole scan ends.
+    files as they are registered rather than only when the whole scan ends. A
+    Project VIC import calls it as ``progress(n, what)`` too, ``what`` saying
+    whether it is still reading entries or registering files, so a callback
+    given here has to take an optional second argument.
 
     ``expand_archives`` opens each archive found inside a source and registers the
     media in it. Off, the archives are still registered as containers and can be
@@ -87,8 +90,11 @@ def ingest_sources(case: Case, sources: list[Source], *, progress=None,
     n = 0
     for src in sources:
         if src.kind == "projectvic":
+            base = n
             reg, missing = projectvic.import_vic(
-                case, src.path, files_dir=src.files_dir
+                case, src.path, files_dir=src.files_dir,
+                progress=(lambda k, what, _b=base: progress(_b + k, what))
+                if progress else None,
             )
             n += reg + missing
             if progress:
@@ -235,10 +241,14 @@ def add_documents(case: Case, *, progress=None) -> dict:
 
 
 def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, screen: bool,
-                 rec: dict | None = None) -> dict:
+                 rec: dict | None = None, defer_video: bool = False) -> dict:
     """Pure worker: no DB access. Returns a payload for the writer thread.
 
     payload = {"id", "status": ok|skip|error, "fields": {...}, "keyframes": [...]}
+
+    With ``defer_video``, a file registered as something else that turns out to be
+    a video is not decoded here: the status is ``defer_video`` and the fields
+    (its hashes, and ``kind`` video) are written for the batched video pass.
 
     ``rec`` is the archive source record for a row whose bytes live in a zip; they are
     pulled out for the duration of the work and dropped again.
@@ -255,7 +265,8 @@ def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, scre
     try:
         with archive.local_copy(case_root, rec, row) as local:
             return _process_one_at(thumb_dir, row, str(local), force=force,
-                                   keyframes=keyframes, screen=screen)
+                                   keyframes=keyframes, screen=screen,
+                                   defer_video=defer_video)
     except archive.ArchiveUnavailable as exc:
         why = imaging.scrub_local_paths(str(exc), rec["path"] if rec else None)
         return {"id": fid, "status": "error", "keyframes": [],
@@ -263,7 +274,7 @@ def _process_one(case_root, thumb_dir, row, *, force: bool, keyframes: int, scre
 
 
 def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
-                    screen: bool) -> dict:
+                    screen: bool, defer_video: bool = False) -> dict:
     """The work of ``_process_one`` once the bytes are at ``local``. The registered
     path still names the thumbnail, so a thumbnail is the same whichever mode made it."""
     fid = row["id"]
@@ -347,6 +358,16 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
                     upd.update(s)
             finally:
                 im.close()
+
+        elif kind == "video" and defer_video and decode_path == local:
+            # Found to be a video only now (registered as something else, as a
+            # Project VIC entry with an extension or MIME type that does not say
+            # video is). Decoded here, each one started a child process of its own,
+            # about 1.7 files a second on an examiner's machine; the batched video
+            # pass runs 20 to a process. An LZC bundle's video is decoded here, as
+            # its bytes are not the row's file.
+            upd["kind"] = "video"
+            return {"id": fid, "status": "defer_video", "fields": upd, "keyframes": []}
 
         elif kind == "video":
             # read first: a clip that will not decode still has its location
@@ -697,7 +718,9 @@ def _process_videos(case: Case, vids, *, force, keyframes, screen, workers, writ
                                "fields": {"error": f"source archive unavailable: {why}"
                                           [:300]}})
 
-    with ThreadPoolExecutor(max_workers=min(max(2, workers), 4)) as ex:
+    # each chunk is a child process decoding 20 videos; as many at once as the
+    # examiner chose workers (it used to stop at 4 whatever was chosen)
+    with ThreadPoolExecutor(max_workers=max(2, workers)) as ex:
         list(ex.map(do_chunk, chunks))
 
 
@@ -741,7 +764,14 @@ def process(
     total = len(rows)
     done = [0]
 
+    deferred: list[int] = []
+
     def _write(res: dict) -> None:
+        if res["status"] == "defer_video":
+            # counted when the video pass writes it
+            case.db.update_file(res["id"], **res["fields"])
+            deferred.append(res["id"])
+            return
         if res["status"] == "ok":
             stats.processed += 1
         elif res["status"] == "skip":
@@ -770,21 +800,42 @@ def process(
                 progress(done[0], total)
 
     # LZC bundles are unpacked in-process by _process_one even when they hold a
-    # video, so keep them out of the batched video path.
-    vids = [r for r in rows if r["kind"] == "video" and not lzc.is_lzc(r["path"])]
+    # video, so keep them out of the batched video path. A bundle is named by
+    # hash with no extension, so only a video without a video extension is
+    # opened to look: opening every video, one after another, before any file
+    # was processed held a 218,838-file Project VIC case at 0% for minutes on
+    # a machine where each open was slow.
+    vids = [r for r in rows if r["kind"] == "video"
+            and (Path(r["path"]).suffix.lower() in VIDEO_EXTS
+                 or not lzc.is_lzc(r["path"]))]
     _vid_ids = {r["id"] for r in vids}
     imgs = [r for r in rows if r["id"] not in _vid_ids]
 
     # images/other: threads (fast, in-process)
     recs = archive.source_records(case)
     archive.clear_tmp(case.root)
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-        futs = [ex.submit(_process_one, case.root, case.thumb_dir, r, force=force,
-                          keyframes=keyframes, screen=screen, rec=recs.get(r["source"]))
-                for r in imgs]
-        for fut in as_completed(futs):
-            _write(fut.result())
+    # OpenCV runs each call (the face detector, resizes) on threads of its own,
+    # one per processor by default, so several workers each asked for every
+    # processor and fought over them. Measured on 800 photos with screening, 8
+    # logical processors: 4 workers 17.0 files/s, 8 workers 16.9; 8 workers with
+    # OpenCV on one thread each 24.1. With one worker it keeps its own threads.
+    import cv2  # pylint: disable=import-outside-toplevel
+    cv_threads = cv2.getNumThreads()  # pylint: disable=no-member
+    if workers > 1:
+        cv2.setNumThreads(1)  # pylint: disable=no-member
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+            futs = [ex.submit(_process_one, case.root, case.thumb_dir, r, force=force,
+                              keyframes=keyframes, screen=screen,
+                              rec=recs.get(r["source"]), defer_video=True)
+                    for r in imgs]
+            for fut in as_completed(futs):
+                _write(fut.result())
+    finally:
+        cv2.setNumThreads(cv_threads)  # pylint: disable=no-member
     case.db.commit()
+    if deferred:
+        vids += [case.db.get_file(i) for i in deferred]
 
     # videos: batched child processes (each decode is isolated from the run)
     if vids:
