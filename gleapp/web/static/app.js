@@ -4088,7 +4088,7 @@ $("#btnAddEvidence").onclick = () => {
   $("#aeExpandWarn").style.display = "none";
   $("#aeDocs").checked = false;
   $("#aeKf").value = 6; $("#aeKfv").textContent = "6";
-  $("#aeWorkers").value = 4; $("#aeWkv").textContent = "4";
+  $("#aeWorkers").value = defaultWorkers; $("#aeWkv").textContent = defaultWorkers;
   $("#aeGo").disabled = false;
   $("#addEvDlg").style.display = "block";
 };
@@ -4565,7 +4565,7 @@ function renderSources() {
     b.onclick = () => { Lr.sources.splice(+b.dataset.rm, 1); renderSources(); });
 }
 function showLauncher(ctx) {
-  setWorkerRange(ctx.cpu_count);
+  setWorkerRange(ctx.cpu_count, ctx.default_workers);
   Lr.native = !!ctx.native;
   $("#launcher").style.display = "block";
   $("#main").style.display = "none";
@@ -4880,11 +4880,17 @@ $("#srcTypePath").addEventListener("keydown", e => {
 });
 $("#optKf").addEventListener("input", () => $("#kfv").textContent = $("#optKf").value);
 $("#optWorkers").addEventListener("input", () => $("#wkv").textContent = $("#optWorkers").value);
-// "Files processed at once": up to this machine's logical processors (at most 32)
-function setWorkerRange(cpus) {
+// "Files processed at once": up to this machine's logical processors (at most 32),
+// starting at the default the server reports (default_workers in pipeline.py)
+let defaultWorkers = 4;
+function setWorkerRange(cpus, dflt) {
   const max = Math.max(4, Math.min(+cpus || 4, 32));
-  for (const [range, note] of [["#optWorkers", "#wkCpu"], ["#aeWorkers", "#aeWkCpu"]]) {
+  defaultWorkers = Math.max(1, Math.min(+dflt || 4, max));
+  for (const [range, note, shown] of [["#optWorkers", "#wkCpu", "#wkv"],
+                                      ["#aeWorkers", "#aeWkCpu", "#aeWkv"]]) {
     $(range).max = max;
+    $(range).value = defaultWorkers;
+    $(shown).textContent = defaultWorkers;
     $(note).textContent = cpus ? `(this machine has ${+cpus} logical processors)` : "";
   }
 }
@@ -5634,7 +5640,7 @@ $("#mapViewClose").onclick = closeMapView;
     showSourceStatus(c.archive_sources);
     showFolderStatus(c.folder_sources);
     setupTz(c);
-    setWorkerRange(c.cpu_count);
+    setWorkerRange(c.cpu_count, c.default_workers);
     try { await refreshCats(); } catch (e) {}
     try { await refreshFlags(); } catch (e) {}
     (c.sources || []).forEach(s => $("#fsrc").insertAdjacentHTML("beforeend", `<option>${esc(s)}</option>`));

@@ -33,7 +33,7 @@ from ..case import image_set_source, open_case, parse_source_spec
 from ..db import FILE_PATH_SQL, ORIGINS, TOOL_ACTOR
 from ..facematch import find_matching_faces
 from ..ingest import DOCUMENT_EXTS, is_exoplayer_cache_name
-from ..pipeline import ingest_sources, process
+from ..pipeline import default_workers, ingest_sources, process
 from ..similar import find_similar
 
 AUTO_BACKUP_POLL = 60.0   # seconds between the snapshot loop's checks
@@ -2119,6 +2119,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                             "show_intro": appconfig.get_show_intro(),
                             # the ingest form's "Files processed at once" range
                             "cpu_count": os.cpu_count() or 4,
+                            "default_workers": default_workers(),
                             # the category region (regions.py): None until the
                             # examiner picks one on first launch
                             **_region_payload(None)})
@@ -2267,6 +2268,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             # the intro's "Don't show this at startup" box, reachable from the case menu
             "show_intro": appconfig.get_show_intro(),
             "cpu_count": os.cpu_count() or 4,
+            "default_workers": default_workers(),
             "timezone_options": [{"value": v, "label": lbl}
                                  for v, lbl in timeutil.COMMON_ZONES],
             "case": case.db.get_meta("case_name"),
@@ -3205,13 +3207,13 @@ MAX_WORKERS = 32
 
 
 def _workers(opts: dict) -> int:
-    """Files processed at once: the ingest form's choice, 4 when it makes none.
-    Raising it uses more of the processor; on a 16-core machine 4 left most of
-    it idle (a 218,838-file Project VIC case at about 43 files a second)."""
+    """Files processed at once: the ingest form's choice, ``default_workers()``
+    when it makes none. 4 used to be the default; on a 16-core machine it left
+    most of it idle (a 218,838-file Project VIC case at about 43 files a second)."""
     try:
-        n = int(opts.get("workers") or 4)
+        n = int(opts.get("workers") or default_workers())
     except (TypeError, ValueError):
-        n = 4
+        n = default_workers()
     return max(1, min(n, MAX_WORKERS))
 
 

@@ -57,6 +57,20 @@ class RunStats:
         return self.__dict__.copy()
 
 
+# Files processed at once when none is chosen: one per logical processor, at most
+# DEFAULT_WORKERS_CAP. Measured on 12 logical processors, 4,000 photos with screening
+# (OpenCV threads shared between the workers): 4 workers 86 files/s, 6 102, 8 115 to
+# 117, 12 119, 16 122. The workers are threads of one process, and past about 8
+# busy cores more of them added little. On a 32-processor machine 32 workers ran
+# slower than 16 (about 22 against 60 files/s), so the default stops at 16.
+DEFAULT_WORKERS_CAP = 16
+
+
+def default_workers() -> int:
+    """How many files processing works on at once when the examiner does not say."""
+    return max(1, min(os.cpu_count() or 4, DEFAULT_WORKERS_CAP))
+
+
 def ingest_sources(case: Case, sources: list[Source], *, progress=None,
                    expand_archives: bool = True, expand_documents: bool = False) -> int:
     """Discover files from each source and register them in the DB.

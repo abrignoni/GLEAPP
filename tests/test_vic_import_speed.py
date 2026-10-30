@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from gleapp import projectvic
 from gleapp.case import open_case
 
@@ -184,14 +186,21 @@ def test_a_video_found_by_sniffing_goes_to_the_batched_video_pass(tmp_path, monk
 
 
 
-def test_files_processed_at_once_default_to_4_and_follow_the_form():
+@pytest.mark.parametrize("cpus, default", [(24, 16), (12, 12), (2, 2), (None, 4)])
+def test_files_processed_at_once_default_to_the_processors_and_follow_the_form(
+        monkeypatch, cpus, default):
     """Processing worked on 4 files at once whatever was asked; the ingest form
-    now chooses, 4 when it says nothing."""
+    now chooses, and when it says nothing the default is the machine's logical
+    processors, at most 16."""
+    import os
+    from gleapp import pipeline
     from gleapp.web import app as webapp
+    monkeypatch.setattr(os, "cpu_count", lambda: cpus)
+    assert pipeline.default_workers() == default
     w = webapp._workers                          # pylint: disable=protected-access
-    assert w({}) == 4 and w({"workers": None}) == 4 and w({"workers": "x"}) == 4
-    assert w({"workers": 16}) == 16
-    assert w({"workers": 0}) == 4 and w({"workers": -3}) == 1
+    assert w({}) == default and w({"workers": None}) == default
+    assert w({"workers": "x"}) == default and w({"workers": 0}) == default
+    assert w({"workers": 16}) == 16 and w({"workers": -3}) == 1
     assert w({"workers": 999}) == webapp.MAX_WORKERS
 
 
@@ -216,7 +225,7 @@ def test_the_context_says_how_many_processors(monkeypatch):
     from gleapp.web.app import create_app
     monkeypatch.setattr(os, "cpu_count", lambda: 24)
     ctx = create_app(None).test_client().get("/api/context").get_json()
-    assert ctx["cpu_count"] == 24
+    assert ctx["cpu_count"] == 24 and ctx["default_workers"] == 16
 
 
 def test_the_folder_check_is_not_redone_on_every_processing_write(tmp_path, monkeypatch):
