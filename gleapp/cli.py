@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import __version__, hashdb, lava, report
 from .case import carry_options, image_set_source, open_case, parse_source_spec
-from .pipeline import ingest_sources, process
+from .pipeline import DEFAULT_WORKERS_CAP, default_workers, ingest_sources, process
 from .similar import find_similar
 
 
@@ -991,7 +991,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_proc_opts(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--force", action="store_true", help="reprocess already-done files")
-        sp.add_argument("--workers", type=int, default=4)
+        sp.add_argument("--workers", type=int, default=default_workers(),
+                        help="files processed at once (default: logical processors, "
+                             f"at most {DEFAULT_WORKERS_CAP}; here {default_workers()})")
         sp.add_argument("--keyframes", type=int, default=6, help="frames per video")
         sp.add_argument("--no-screen", action="store_true", help="skip face/skin screening")
         sp.add_argument("--cluster-threshold", type=int, default=8)

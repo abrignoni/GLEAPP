@@ -906,7 +906,7 @@
     <label title="After processing, read what each picture and video declares about its own provenance: a C2PA manifest store (who signed it, with what tool, its actions and digital source types) and an IPTC digital source type in XMP. Nothing is verified. Off, nothing is read; you can read them later from the Content Credentials section of the sidebar."><input type="checkbox" id="optC2pa"> Read Content Credentials (C2PA)</label>
     <label>Video preview key frames: <span id="kfv">6</span>
       <input type="range" id="optKf" min="2" max="16" step="1" value="6" style="width:100%"></label>
-    <label title="How many files are worked on at the same time. 4 is the default. Raising it toward this machine's number of logical processors makes a large case process faster, and uses more of the processor while it runs.">Files processed at once: <span id="wkv">4</span>
+    <label title="How many files are worked on at the same time. The default is this machine's number of logical processors, at most 16. Lowering it leaves more of the processor free while a case processes, and takes longer.">Files processed at once: <span id="wkv">4</span>
       <span class="muted" id="wkCpu"></span>
       <input type="range" id="optWorkers" min="1" max="32" step="1" value="4" style="width:100%"></label>
     <label title="Off, an extraction archive or acquisition is read in place and the case stays small; the file must stay where it is. On, the media is copied out so the case stands alone. A compressed tar is always copied out."><input type="checkbox" id="optStage"> Copy media out of extraction/acquisition into the case</label>
@@ -1108,7 +1108,7 @@
   <label title="After processing, read the Content Credentials (C2PA) and IPTC digital source type of every picture and video not read yet. Nothing is verified."><input type="checkbox" id="aeC2pa"> Read Content Credentials (C2PA)</label>
   <label>Video preview key frames: <span id="aeKfv">6</span>
     <input type="range" id="aeKf" min="2" max="16" step="1" value="6" style="width:100%"></label>
-  <label title="How many files are worked on at the same time. 4 is the default. Raising it toward this machine's number of logical processors makes a large case process faster, and uses more of the processor while it runs.">Files processed at once: <span id="aeWkv">4</span>
+  <label title="How many files are worked on at the same time. The default is this machine's number of logical processors, at most 16. Lowering it leaves more of the processor free while a case processes, and takes longer.">Files processed at once: <span id="aeWkv">4</span>
     <span class="muted" id="aeWkCpu"></span>
     <input type="range" id="aeWorkers" min="1" max="32" step="1" value="4" style="width:100%"></label>
   <div class="row" style="margin-top:14px;display:flex;gap:6px">
