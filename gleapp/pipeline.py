@@ -484,8 +484,10 @@ def rematch_hashes(case: Case, *, progress=None) -> int:
     rows = list(case.db.iter_files(
         "md5 IS NOT NULL OR sha1 IS NOT NULL OR sha256 IS NOT NULL"))
     total, hits = len(rows), 0
+    phash_entries = hashdb.PhashEntries(case.db)     # read once for the whole run
     for i, r in enumerate(rows, 1):
-        found = hashdb.match_all(case.db, r, use_stash=use_stash, use_vic=use_vic)
+        found = hashdb.match_all(case.db, r, use_stash=use_stash, use_vic=use_vic,
+                                 phash_entries=phash_entries)
         if found:
             hits += 1
             found = hashdb.ordered_hits(found)
