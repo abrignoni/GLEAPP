@@ -27,6 +27,7 @@ import datetime as _dt
 import json
 import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
@@ -286,10 +287,17 @@ class _Locator:
     which is what ``resolve`` returned on a case-insensitive volume, so the path
     a row is keyed on is the one an earlier import of the same file used. A file
     that is itself a link is not followed, as ``resolve`` would have.
+
+    The listing is matched with ``os.path.normcase``, which folds case only on
+    Windows. A Mac volume (and a FAT or exFAT drive anywhere) also treats names
+    that differ in case, or in how an accented letter is composed, as one file,
+    and ``Path.exists`` found such a file before. So a name that matches a listed
+    one only loosely is asked of the filesystem, which decides; a name with no
+    loose match is missing without another call.
     """
 
     def __init__(self) -> None:
-        self._folders: dict[str, tuple[Path, dict[str, str]]] = {}
+        self._folders: dict[str, tuple[Path, dict[str, str], set[str]]] = {}
 
     def locate(self, path: Path) -> tuple[Path, bool]:
         key = os.path.normcase(str(path.parent))
@@ -297,13 +305,22 @@ class _Locator:
         if folder is None:
             where = path.parent.resolve()
             try:
-                names = {os.path.normcase(n): n for n in os.listdir(where)}
+                listed = os.listdir(where)
             except OSError:
-                names = {}
-            folder = self._folders[key] = (where, names)
-        where, names = folder
+                listed = []
+            names = {os.path.normcase(n): n for n in listed}
+            folder = self._folders[key] = (where, names, {_loose(n) for n in listed})
+        where, names, loose = folder
         found = names.get(os.path.normcase(path.name))
-        return (where / found, True) if found else (where / path.name, False)
+        if found:
+            return where / found, True
+        candidate = where / path.name
+        return candidate, _loose(path.name) in loose and candidate.exists()
+
+
+def _loose(name: str) -> str:
+    """A file name as a case- and composition-insensitive volume compares it."""
+    return unicodedata.normalize("NFC", name).casefold()
 
 
 def iter_records(doc: dict, *, json_dir: Path, files_dir: Path | None = None

@@ -7,6 +7,8 @@ was registered: a 627 MB file showed "Scanning sources" for minutes."""
 from __future__ import annotations
 
 import json
+import sys
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -63,6 +65,55 @@ def test_files_dir_is_listed_too(tmp_path):
                                         files_dir=elsewhere))
     assert [r.exists for r in recs] == [False, True, False]
     assert all(Path(r.abs_path).parent == elsewhere.resolve() for r in recs)
+
+
+def _locate_with_listing(tmp_path, monkeypatch, on_disk: str, listed: str, asked: str):
+    """``asked`` looked up in a folder holding ``on_disk``, whose listing reads as
+    ``listed``: how a case- or composition-insensitive volume answers, on any
+    platform the suite runs on."""
+    folder = tmp_path / "exportFiles"
+    folder.mkdir()
+    (folder / on_disk).write_bytes(b"x")
+    real = projectvic.os.listdir
+    monkeypatch.setattr(projectvic.os, "listdir",
+                        lambda p: [listed] if Path(p) == folder.resolve() else real(p))
+    return projectvic._Locator().locate(folder / asked)  # pylint: disable=protected-access
+
+
+def test_a_name_the_listing_spells_in_another_case_is_found(tmp_path, monkeypatch):
+    # v2026.5.6 asked Path.exists, which a Mac volume answers for any case;
+    # the listing alone missed it there, since normcase folds case only on Windows
+    path, exists = _locate_with_listing(tmp_path, monkeypatch, on_disk="IMG_7.JPG",
+                                        listed="img_7.jpg", asked="IMG_7.JPG")
+    assert exists and path.name.casefold() == "img_7.jpg"
+
+
+def test_a_name_composed_another_way_is_found(tmp_path, monkeypatch):
+    nfc = unicodedata.normalize("NFC", "fot\u00f3.jpg")
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfc != nfd
+    _, exists = _locate_with_listing(tmp_path, monkeypatch, on_disk=nfc, listed=nfd,
+                                     asked=nfc)
+    assert exists
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows folds case in the listing")
+def test_a_loose_match_the_filesystem_denies_is_missing(tmp_path, monkeypatch):
+    # a case-sensitive volume: "a.jpg" is listed, "A.jpg" is another, absent file
+    path, exists = _locate_with_listing(tmp_path, monkeypatch, on_disk="a.jpg",
+                                        listed="a.jpg", asked="A.jpg")
+    assert path.name == "A.jpg"
+    if not (tmp_path / "exportFiles" / "A.jpg").exists():
+        assert not exists
+
+
+def test_a_name_with_no_loose_match_is_missing_without_asking(tmp_path, monkeypatch):
+    asked = []
+    real = Path.exists
+    monkeypatch.setattr(Path, "exists", lambda self, *a, **k: asked.append(self) or real(self))
+    _, exists = _locate_with_listing(tmp_path, monkeypatch, on_disk="a.jpg",
+                                     listed="a.jpg", asked="b.jpg")
+    assert not exists and not asked
 
 
 def test_an_import_reports_reading_and_registering(tmp_path, monkeypatch):
