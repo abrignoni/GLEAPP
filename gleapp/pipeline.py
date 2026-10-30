@@ -818,11 +818,16 @@ def process(
     # one per processor by default, so several workers each asked for every
     # processor and fought over them. Measured on 800 photos with screening, 8
     # logical processors: 4 workers 17.0 files/s, 8 workers 16.9; 8 workers with
-    # OpenCV on one thread each 24.1. With one worker it keeps its own threads.
+    # OpenCV on one thread each 24.1. So each worker gets its share of OpenCV's
+    # threads rather than all of them. One thread each whatever the count left
+    # cores idle when the workers were fewer than the processors: on 12 logical
+    # processors, 4,000 photos with screening, 4 workers ran at 70.4 and 72.0
+    # files/s on one thread each and at 87.3 and 87.6 on OpenCV's own count.
+    # With one worker it keeps its own threads.
     import cv2  # pylint: disable=import-outside-toplevel
     cv_threads = cv2.getNumThreads()  # pylint: disable=no-member
     if workers > 1:
-        cv2.setNumThreads(1)  # pylint: disable=no-member
+        cv2.setNumThreads(max(1, cv_threads // workers))  # pylint: disable=no-member
     try:
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
             futs = [ex.submit(_process_one, case.root, case.thumb_dir, r, force=force,
