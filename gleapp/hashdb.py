@@ -555,8 +555,81 @@ def ordered_hits(hits: list[dict]) -> list[dict]:
     return sorted(hits, key=lambda h: _SOURCE_ORDER[hit_source(h)])
 
 
+class PhashEntries:
+    """Every perceptual-hash entry a match compares against (the case's own sets,
+    then the global store), read once and held for a whole run.
+
+    ``match_all`` used to read them again for every file and compare them one at
+    a time in Python, so a run cost files x entries: measured at 11.8 ms a file
+    against 10,000 entries and 118.8 ms against 100,000, which is 43 minutes and
+    7.2 hours over 218,000 files. Here the 16-hex-digit values, the shape
+    ``perceptual_hashes`` writes, are compared together as 64-bit integers;
+    any other shape still goes through ``hamming`` one by one, so every distance
+    is the one the old loop computed.
+    """
+
+    def __init__(self, db: CaseDB) -> None:
+        import numpy as np
+        from . import hashstore
+        self.entries = list(db.conn.execute(
+            "SELECT e.value v, e.category c, hs.name n, hs.kind k, hs.vic vic "
+            "FROM hashset_entries e JOIN hashsets hs ON hs.id=e.hashset_id "
+            "WHERE e.algo = ?", (PHASH_ALGO,)
+        )) + list(hashstore.iter_phash())
+        self.vic = np.array([bool("vic" in e.keys() and e["vic"]) for e in self.entries],
+                            dtype=bool)
+        fast, values, slow = [], [], []
+        for i, e in enumerate(self.entries):
+            v = _hex64(e["v"])
+            if v is None:
+                slow.append(i)
+            else:
+                fast.append(i)
+                values.append(v)
+        self._fast = np.array(fast, dtype=np.int64)
+        self._values = np.array(values, dtype=np.uint64)
+        self._slow = slow
+
+    def best(self, ph: str, threshold: int, use_vic: bool) -> dict | None:
+        """The nearest entry within ``threshold`` bits, the first in entry order
+        among equals (what the old loop kept), as a hit; None if none is."""
+        import numpy as np
+        if not self.entries:
+            return None
+        dist = np.full(len(self.entries), 999, dtype=np.int64)
+        mine = _hex64(ph)
+        if mine is not None:
+            dist[self._fast] = np.bitwise_count(self._values ^ np.uint64(mine))
+            slow = self._slow
+        else:
+            slow = range(len(self.entries))
+        for i in slow:
+            dist[i] = hamming(ph, self.entries[i]["v"])
+        if not use_vic:
+            dist[self.vic] = 999
+        i = int(np.argmin(dist))
+        d = int(dist[i])
+        if d > threshold:
+            return None
+        e = self.entries[i]
+        return {"name": e["n"], "kind": e["k"], "category": e["c"],
+                "via": f"phash~{d}", "vic": bool(self.vic[i])}
+
+
+def _hex64(value) -> int | None:
+    """A 16-hex-digit perceptual hash as an integer, or None for any other shape."""
+    if not isinstance(value, str) or len(value) != 16:
+        return None
+    try:
+        v = int(value, 16)
+    except ValueError:
+        return None
+    return v if v >= 0 else None      # int() takes a sign; a uint64 cannot
+
+
 def match_all(db: CaseDB, row, *, phash_threshold: int = 6,
-              use_stash: bool = True, use_vic: bool = True) -> list[dict]:
+              use_stash: bool = True, use_vic: bool = True,
+              phash_entries: PhashEntries | None = None) -> list[dict]:
     """Every source that flags this file, each ``{'name','kind','category',
     'via', 'vic', ...}``. Empty when nothing does.
 
@@ -615,25 +688,13 @@ def match_all(db: CaseDB, row, *, phash_threshold: int = 6,
     # A perceptual match is a similar picture, not the recorded file, so it
     # carries no record details (no "media_id" in the hit).
     if ph:
-        best = None
         # Only PHASH_ALGO. A PhotoDNA entry is a 144-byte vector that shares
         # neither length nor meaning with this 64-bit hash, so Hamming-
-        # comparing one would be arithmetic on unrelated values.
-        entries = list(db.conn.execute(
-            "SELECT e.value v, e.category c, hs.name n, hs.kind k, hs.vic vic "
-            "FROM hashset_entries e JOIN hashsets hs ON hs.id=e.hashset_id "
-            "WHERE e.algo = ?", (PHASH_ALGO,)
-        )) + list(hashstore.iter_phash())
-        for e in entries:
-            if "vic" in e.keys() and e["vic"] and not use_vic:
-                continue
-            d = hamming(ph, e["v"])
-            if d <= phash_threshold and (best is None or d < best[0]):
-                best = (d, {"name": e["n"], "kind": e["k"], "category": e["c"],
-                            "via": f"phash~{d}",
-                            "vic": bool("vic" in e.keys() and e["vic"])})
+        # comparing one would be arithmetic on unrelated values. A caller
+        # matching many files passes the entries it read once (rematch_hashes).
+        best = (phash_entries or PhashEntries(db)).best(ph, phash_threshold, use_vic)
         if best:
-            return [best[1]]
+            return [best]
     return []
 
 
