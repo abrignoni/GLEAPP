@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+import numpy as np
+
 from .db import CaseDB
 from .hashing import hamming
 
@@ -115,17 +117,28 @@ def _perceptual_groups(rows, threshold: int, *, progress=None) -> dict[int, list
         for bi in range(_BANDS):
             buckets[(bi, hx[bi * 2:bi * 2 + 2])].append(fid)
 
-    # the pairwise comparisons below are where the time actually goes on a
-    # large case, so progress is reported per-bucket rather than per-row
+    # The pairwise comparisons below are where the time goes on a large case: a
+    # bucket holds about n/256 files, so the pairs grow with the square of the
+    # case. Compared one pair at a time in Python, one call took 0.9 s on 16,000
+    # files and 225 s on 218,000. Each bucket's pairs are now compared together
+    # as 64-bit integers; a bucket holding a hash wider than 64 bits keeps the
+    # loop. The groups are the connected pairs either way, so the order the
+    # pairs are found in does not change them. Progress is per bucket.
+    wide = {fid for fid, v in ph.items()
+            if v >> 64 or (dh[fid] is not None and dh[fid] >> 64)}
     total_buckets = len(buckets)
     for bi, ids in enumerate(buckets.values(), 1):
         if len(ids) >= 2 and len(ids) <= _MAX_BUCKET:
-            for i in range(len(ids)):
-                a = ids[i]
-                for j in range(i + 1, len(ids)):
-                    b = ids[j]
-                    if find(a) != find(b) and close(a, b):
-                        union(a, b)
+            if wide.isdisjoint(ids):
+                for a, b in _close_pairs(ids, ph, dh, threshold):
+                    union(a, b)
+            else:
+                for i in range(len(ids)):
+                    a = ids[i]
+                    for j in range(i + 1, len(ids)):
+                        b = ids[j]
+                        if find(a) != find(b) and close(a, b):
+                            union(a, b)
         if progress:
             progress(bi, total_buckets)
 
@@ -133,6 +146,20 @@ def _perceptual_groups(rows, threshold: int, *, progress=None) -> dict[int, list
     for fid in parent:
         out[find(fid)].append(fid)
     return out
+
+
+def _close_pairs(ids: list[int], ph: dict, dh: dict, threshold: int):
+    """Every pair in one bucket that ``_perceptual_groups``' ``close`` accepts:
+    pHash within ``threshold`` bits and, when both files have a dHash, dHash
+    within ``threshold + 2``. Every value here fits in 64 bits."""
+    p = np.array([ph[i] for i in ids], dtype=np.uint64)
+    has_d = np.array([dh[i] is not None for i in ids])
+    d = np.array([dh[i] or 0 for i in ids], dtype=np.uint64)
+    ok = np.bitwise_count(p[:, None] ^ p[None, :]) <= threshold
+    ok &= ((np.bitwise_count(d[:, None] ^ d[None, :]) <= threshold + 2)
+           | ~(has_d[:, None] & has_d[None, :]))
+    rows, cols = np.nonzero(np.triu(ok, 1))
+    return [(ids[i], ids[j]) for i, j in zip(rows.tolist(), cols.tolist())]
 
 
 def cluster_near(db: CaseDB, *, threshold: int = 10, progress=None) -> int:
