@@ -880,6 +880,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         fields = [k for k in report.DEFAULT_REPORT_FIELDS if not k.startswith("vic_")]
     out_dir = case.report_dir
     made = []
+    notes: list[str] = []
     fmts = args.format or ["html", "csv", "json"]
     if args.no_media and "lava" in fmts:
         _p("A LAVA report carries the media itself and cannot be metadata-only; "
@@ -908,7 +909,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     if "vic" in fmts:
         made.append(report.export_projectvic(
             case, out_dir / "projectvic_export.json",
-            only_categorized=args.scope == "categorized"))
+            only_categorized=args.scope == "categorized", notes=notes))
     if "lava" in fmts:
         # A folder rather than a file: LAVA opens a project, and the media it shows
         # lives beside the manifest.
@@ -921,6 +922,8 @@ def cmd_report(args: argparse.Namespace) -> int:
                                      keyframes=not args.no_keyframes, progress=prog))
     for m in made:
         _p(f"  wrote {m}")
+    for n in notes:
+        _p(f"  note: {n}")
     case.close()
     return 0
 

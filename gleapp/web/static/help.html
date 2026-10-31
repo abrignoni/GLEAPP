@@ -521,14 +521,17 @@ case.</p>
 <strong>Add my saved set…</strong> in either editor adds it to the open case. Names
 the case already has (ignoring upper/lower case) are skipped, and a category hidden
 in the case is shown again. A category keeps its saved code so it is the same number
-in every case and every Project VIC export. If the case already uses that code for a
+in every case. If the case already uses that code for a
 different category, it gets the next free code and the result says so. Every save
 and add is written to the case audit log. It is a copy, not a link: editing a case's
 categories never changes the saved set, and saving a new set never changes an older
 case.</p>
 <p><strong>Project VIC JSON.</strong> A <code>Category</code> of 0 is imported as
 Non-pertinent; an empty (<code>null</code>) category or 5 is imported as
-Uncategorized. On export, Uncategorized is written back as <code>null</code>.</p>
+Uncategorized. On export, Uncategorized is written back as <code>null</code>, and so
+is a category you added: Project VIC has no code for it, so the file would carry a bare
+number nobody can read. The category stays in the case, and the export says how many
+entries went out that way.</p>
 <p><strong>Cases made by an older GLEAPP.</strong> Before schema v18 GLEAPP stored
 these two codes the other way round (0 Uncategorized, 5 Non-pertinent). The first
 time this version opens such a case it swaps them on every file and category, so
@@ -1347,7 +1350,7 @@ current selection) and one or more <strong>formats</strong>:</p>
   <tr><td>JSON</td><td>the same data, structured; carries the case header too</td></tr>
   <tr><td>KMZ</td><td>geolocated media for Google Earth / mapping tools: a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location</td></tr>
   <tr><td>MD5 list</td><td>one hash per row (also from the selection bar / right-click)</td></tr>
-  <tr><td>Project VIC JSON</td><td>the original VIC file with your Category / Comments / Tags written back, keyed by MediaID and MD5 (shown for VIC cases); Uncategorized is written as <code>null</code></td></tr>
+  <tr><td>Project VIC JSON</td><td>the original VIC file with your Category and Comments written back (Tags and Series are left as the file had them), keyed by MediaID and MD5 (shown for VIC cases); Uncategorized and the categories you added are written as <code>null</code></td></tr>
   <tr><td>LAVA report</td><td>a project folder LAVA opens: the media, a location map for each geolocated file and an overview map drawn offline from the basemap you imported (&sect;19), the video key frames, and the artifact tables. Takes minutes rather than seconds, so it runs as a job and the bar at the bottom follows it</td></tr>
 </table>
 <p>Each part of the dialog (Which files, Format, Media, Maps, Report header,

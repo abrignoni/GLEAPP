@@ -554,7 +554,7 @@ A new case can start with the set (the boxes on the New case form, §1), or
 **Add my saved set…** in either editor adds it to the open case. Names the case
 already has (ignoring upper/lower case) are skipped, and a category hidden in
 the case is shown again. A category keeps its saved code so it is the same
-number in every case and every Project VIC export. If the case already uses
+number in every case. If the case already uses
 that code for a different category, it gets the next free code and the result
 says so. Every save and add is written to the case audit log. It is a copy, not
 a link: editing a case's categories never changes the saved set, and saving a
@@ -562,7 +562,9 @@ new set never changes an older case.
 
 **Project VIC JSON.** A `Category` of 0 is imported as Non-pertinent; an empty
 (`null`) category or 5 is imported as Uncategorized. On export, Uncategorized is
-written back as `null`.
+written back as `null`, and so is a category you added: Project VIC has no code
+for it, so the file would carry a bare number nobody can read. The category
+stays in the case, and the export says how many entries went out that way.
 
 **Cases made by an older GLEAPP.** Before schema v18 GLEAPP stored these two
 codes the other way round (0 Uncategorized, 5 Non-pertinent). The first time
@@ -1479,7 +1481,7 @@ want, or current selection) and one or more **formats**:
 | JSON | the same data, structured; carries the case header too |
 | KMZ | geolocated media for Google Earth / mapping tools: a zipped KML with a thumbnail (or video key frame) bundled for every placemark, so clicking a pin shows the picture at its location |
 | MD5 list | one hash per row (also from the selection bar / right-click) |
-| Project VIC JSON | the original VIC file with Category / Comments / Tags written back, keyed by MediaID and MD5 (VIC cases); Uncategorized is written as `null` |
+| Project VIC JSON | the original VIC file with Category and Comments written back (Tags and Series are left as the file had them), keyed by MediaID and MD5 (VIC cases); Uncategorized and the categories you added are written as `null` |
 | LAVA report | a project folder LAVA opens: the media, a location map for each geolocated file the basemap covers and an overview map drawn offline from the basemap you imported (§19), the video key frames, and the artifact tables. Takes minutes rather than seconds, so it runs as a job and the bar at the bottom follows it |
 
 Each part of the dialog (Which files, Format, Media, Maps, Report header,

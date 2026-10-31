@@ -349,7 +349,8 @@ error flag so the counts still line up for export.
 Each file carries its VIC MD5 (processing trusts it, skips re-hashing), MediaID,
 original filename and device path, MIME type, victim/offender/distributed flags,
 and the Series and Tags the record carried, kept apart from the examiner's own flags. Existing `Category` values are imported; GLEAPP category codes map 1:1 to
-VIC codes (0 = Non-pertinent; 5 = Uncategorized, written back as `null`): the
+VIC codes (0 = Non-pertinent; 5 = Uncategorized, written back as `null`, as is a
+category the examiner added, which has no VIC code): the
 codes 0–5 GLEAPP seeds in a US case *are* the Project VIC scheme, so an imported
 category lands on the matching locked preset. In another region's case codes are
 imported as they are, and an import whose `@odata.context` names a different

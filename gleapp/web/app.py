@@ -2920,6 +2920,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
 
             def _job() -> None:
                 j = state["job"]
+                notes: list[str] = []
                 try:
                     written = _write_reports(
                         case, fmts, out, tag, where, label, header=header,
@@ -2931,10 +2932,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                         only_categorized=body.get("scope") == "categorized"
                         or bool(body.get("only_categorized")),
                         progress=lambda d, t: j.update(done=d, total=t),
-                        stage_cb=lambda m: j.update(message=m))
+                        stage_cb=lambda m: j.update(message=m), notes=notes)
                     j.update(running=False, stage="done",
                              message="Export complete",
-                             stats={"written": written, "report_dir": str(out)})
+                             stats={"written": written, "report_dir": str(out),
+                                    "notes": notes})
                 # any writer failing has to reach the bar rather than the log
                 except Exception as exc:  # pylint: disable=broad-except
                     j.update(running=False, stage="error",
@@ -2944,6 +2946,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
             return jsonify({"ok": True, "job": True, "scope": label,
                             "dir": str(out)})
 
+        notes: list[str] = []
         try:
             made = _write_reports(
                 case, fmts, out, tag, where, label, header=header, fields=fields,
@@ -2952,10 +2955,11 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
                 by_flag=by_flag, only_flags=only_flags, exiftool=want_exiftool,
                 exiftool_categories=exif_cats, c2pa=want_c2pa,
                 only_categorized=body.get("scope") == "categorized"
-                or bool(body.get("only_categorized")))
+                or bool(body.get("only_categorized")), notes=notes)
         except FileNotFoundError as exc:
             return jsonify({"error": "no_vic", "message": str(exc)}), 400
-        return jsonify({"ok": True, "written": made, "dir": str(out), "scope": label})
+        return jsonify({"ok": True, "written": made, "dir": str(out), "scope": label,
+                        "notes": notes})
 
     @app.post("/api/export/md5")
     def export_md5_only():
@@ -3082,13 +3086,14 @@ def _write_reports(case, fmts, out, tag, where, label, *, header, fields,
                    full_images, full_videos, maps, tz, only_categorized, blur=True,
                    no_media=False, by_flag=False, only_flags=None, exiftool=False,
                    exiftool_categories=None, c2pa=False, progress=None,
-                   stage_cb=None) -> list[str]:
+                   stage_cb=None, notes=None) -> list[str]:
     """Write every picked format into ``out`` and return the paths written.
 
     Shared by the inline route and the job the LAVA format runs in, so the two
     cannot drift into writing different things for the same request.
     ``no_media`` leaves every picture out of the HTML report and the KMZ; the
-    CSV, JSON, MD5 list and Project VIC JSON never carry one.
+    CSV, JSON, MD5 list and Project VIC JSON never carry one. A writer's
+    warnings for the examiner are appended to ``notes``.
     """
     if no_media and "lava" in fmts:
         raise ValueError("a LAVA report cannot be metadata-only")
@@ -3116,7 +3121,7 @@ def _write_reports(case, fmts, out, tag, where, label, *, header, fields,
     if "vic" in fmts:
         made.append(str(report.export_projectvic(
             case, out / "projectvic_export.json",
-            only_categorized=only_categorized)))
+            only_categorized=only_categorized, notes=notes)))
     if "lava" in fmts:
         if stage_cb:
             stage_cb("Building the LAVA report…")
