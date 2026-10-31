@@ -603,11 +603,18 @@ def _ensure_category(db, code: int) -> None:
 
 
 # --------------------------------------------------------------------------
-def export_vic(case, dest: str | Path, *, only_categorized: bool = False) -> Path:
+def export_vic(case, dest: str | Path, *, only_categorized: bool = False,
+               notes: list[str] | None = None) -> Path:
     """Write a VIC file: the original with Category and Comments updated.
 
     Tags and Series are not written back. The original document is re-read and
     copied, so whatever it carried for them survives untouched.
+
+    Only a code of the case's region scheme is written to ``Category``. A file
+    in a category the examiner added has no code the file's reader can know, so
+    it is written as ``null`` (and left out of an ``only_categorized`` export);
+    the decision stays in the case. How many were, and in which categories, is
+    appended to ``notes`` and to the audit log.
     """
     src = case.db.get_meta("vic_source_json")
     if not src or not Path(src).exists():
@@ -629,6 +636,8 @@ def export_vic(case, dest: str | Path, *, only_categorized: bool = False) -> Pat
         if row["md5"]:
             by_md5[row["md5"].lower()] = info
 
+    scheme_codes = case.db.scheme.codes
+    custom: dict[int, int] = {}          # custom code -> entries written as null
     updated = 0
     for c in doc.get("value", []):
         kept = []
@@ -638,6 +647,9 @@ def export_vic(case, dest: str | Path, *, only_categorized: bool = False) -> Pat
                 info = by_md5.get((m.get("MD5") or "").strip().lower())
             if info is not None:
                 code = info["category"]
+                if not case.db.is_uncategorized(code) and int(code) not in scheme_codes:
+                    custom[int(code)] = custom.get(int(code), 0) + 1
+                    code = None
                 m["Category"] = None if case.db.is_uncategorized(code) else code
                 if m["Category"] is not None:
                     m["IsPrecategorized"] = True
@@ -653,5 +665,16 @@ def export_vic(case, dest: str | Path, *, only_categorized: bool = False) -> Pat
 
     dest = Path(dest)
     dest.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
-    case.db.audit_log(case.examiner, "export_vic", f"{dest.name}: {updated} updated")
+    detail = f"{dest.name}: {updated} updated"
+    if custom:
+        n = sum(custom.values())
+        names = ", ".join(f"{case.db.category_name(k) or k} ({v})"
+                          for k, v in sorted(custom.items()))
+        msg = (f"{n} Project VIC {'entry' if n == 1 else 'entries'} in a category "
+               f"you added ({names}) went out with no Category: Project VIC has "
+               "no code for it. The category stays in the case.")
+        if notes is not None:
+            notes.append(msg)
+        detail += f"; {n} in added categories written as null"
+    case.db.audit_log(case.examiner, "export_vic", detail)
     return dest

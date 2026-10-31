@@ -2583,11 +2583,12 @@ async function liveJob() {
     await refreshContext().catch(() => {});
     await load({ keepScroll: true }).catch(() => {});
     setTimeout(() => { $("#procBar").style.display = "none"; }, 4000);
+    const notes = exported ? exportNotes(j.stats.notes) : "";
     toast(exported
-      ? `Export complete → ${j.stats.report_dir} — click to open`
+      ? `Export complete → ${j.stats.report_dir} — click to open` + notes
       : "Processing complete" + (j.stats && j.stats.processed
         ? ` — ${j.stats.processed.toLocaleString()} files` : ""),
-      exported ? 5000 : 1800,
+      exported ? (notes ? 15000 : 5000) : 1800,
       exported ? () => openFolder(j.stats.report_dir) : null);
     if (exported) {
       addReportNotification(j.stats.report_dir,
@@ -2896,7 +2897,9 @@ $("#reportGo").onclick = async () => {
     liveTick = 0; liveJob();
     return;
   }
-  toast(`Exported (${r.scope}) → ${r.dir} — click to open`, 5000, () => openFolder(r.dir));
+  const notes = exportNotes(r.notes);
+  toast(`Exported (${r.scope}) → ${r.dir} — click to open` + notes,
+    notes ? 15000 : 5000, () => openFolder(r.dir));
   addReportNotification(r.dir, `Export (${r.scope})`);
 };
 
@@ -4032,8 +4035,13 @@ async function runVicExport(onlyCategorized) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ format: ["vic"], only_categorized: onlyCategorized })
   });
-  if (r.error) toast(r.message || "VIC export failed");
-  else toast("Project VIC file written: " + (r.written[0] || r.dir));
+  if (r.error) return toast(r.message || "VIC export failed");
+  const notes = exportNotes(r.notes);
+  toast("Project VIC file written: " + (r.written[0] || r.dir) + notes, notes ? 15000 : undefined);
+}
+// what an export's writers asked the examiner to know, after its toast's own text
+function exportNotes(notes) {
+  return notes && notes.length ? " — " + notes.join(" ") : "";
 }
 $("#btnVic").onclick = () => { $("#vicExportDlg").style.display = "block"; };
 $("#vicExportAll").onclick = () => runVicExport(false);

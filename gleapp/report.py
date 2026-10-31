@@ -42,10 +42,12 @@ _CSV_FIELDS = [
 
 
 def export_projectvic(case: Case, dest: str | Path, *,
-                      only_categorized: bool = False) -> Path:
+                      only_categorized: bool = False,
+                      notes: list[str] | None = None) -> Path:
     """Round-trip export to Project VIC 2.0 JSON (see gleapp.projectvic)."""
     from . import projectvic
-    return projectvic.export_vic(case, dest, only_categorized=only_categorized)
+    return projectvic.export_vic(case, dest, only_categorized=only_categorized,
+                                 notes=notes)
 
 
 def _rows(case: Case, where: str = "") -> list[dict]:
