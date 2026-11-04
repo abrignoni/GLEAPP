@@ -36,9 +36,9 @@ def _record(fixed_data, null_ids, last_fixed=4):
     return struct.pack("<BBH", last_fixed, 127, end_of_fixed) + fixed_data + bytes(bitmap)
 
 
-def _decode(tag, columns=_DEFAULT):
+def _decode(tag, columns=None):
     reader = impacket_ese.ESENT_DB.__new__(impacket_ese.ESENT_DB)
-    cursor = {"TableData": {"Columns": columns}}
+    cursor = {"TableData": {"Columns": _DEFAULT if columns is None else columns}}
     return reader._ESENT_DB__tagToRecord(cursor, tag)  # pylint: disable=protected-access
 
 
