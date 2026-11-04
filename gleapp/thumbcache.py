@@ -9,16 +9,18 @@ a GIF, or a headerless BMP (older, small sizes).
 
 The layout follows libyal's reverse-engineered format documentation for this
 database (``libwtcdb``): a file header carries the format version and the
-offset of the first and first-available entries, and Windows 8 (version
-``0x1A``) and later insert a width/height pair into every entry, widening its
-header from 48 to 56 bytes. The walk below follows those offsets rather than
+offset of the first and first-available entries, and Windows 8 (version 30,
+``0x1E``) and later insert a width/height pair into every entry, widening its
+header from 48 to 56 bytes. Where the file header keeps those two offsets
+differs by version: Windows 7 (version 21, ``0x15``) keeps them at bytes 12
+and 16, as libwtcdb documents; Windows 8 and later at 16 and 20. The walk below follows those offsets rather than
 scanning for a repeated ``CMMM`` signature - the entry data itself (a JPEG's
 compressed bytes) can coincidentally contain those same 4 bytes, which a
 blind scan would misread as the start of the next record. The tradeoff is
 the one real thumbcache readers accept too: a corrupt or truncated record
 stops the walk rather than trying to resynchronise past it, so a damaged
 tail is lost rather than risking a false read. Format:
-https://github.com/libyal/libwtcdb/blob/main/documentation/Windows%20Explorer%20thumbnail%20cache%20database%20format.asciidoc
+https://github.com/libyal/libwtcdb/blob/6c0d9c21e843b8a4332fcb6223154e3ced7cfd70/documentation/Windows%20Explorer%20Thumbnail%20Cache%20database%20format.asciidoc
 
 Each entry carries a 64-bit ``ThumbnailCacheId`` and its own stored
 "identifier" (sometimes a path, sometimes a shell-folder GUID, sometimes just
@@ -43,11 +45,19 @@ from typing import Iterator, NamedTuple
 
 FILE_MAGIC = b"CMMM"
 
-# Win8 (version 0x1A) and later insert a width/height pair into the entry
-# header, widening it from the Vista/7 layout.
+# Win8 (version 30, 0x1E) and later insert a width/height pair into the entry
+# header, widening it from the Vista/7 layout. Any version from 0x1A up takes
+# the wide header; no version between 21 and 30 is known.
 _HEADER_SIZE_LEGACY = 48
 _HEADER_SIZE_MODERN = 56
 _VERSION_MODERN_MIN = 0x1A
+
+# Windows 7's file header keeps the first-entry and first-available offsets at
+# bytes 12 and 16 (libwtcdb, "File header"). Windows 8 and later keep them at
+# 16 and 20. Vista (version 20) is left on the second reading: its entry header
+# also differs (libwtcdb, "Cache entry - format version 20") and no Vista cache
+# has been measured.
+_VERSION_WIN7 = 0x15
 
 # Longest identifier string worth trusting; a run of garbage from a
 # misread offset is not a real one.
@@ -95,8 +105,9 @@ def iter_entries(path: str | Path) -> Iterator[ThumbEntry]:
     if data[:4] != FILE_MAGIC or len(data) < 24:
         return
     version = struct.unpack_from("<I", data, 4)[0]
-    first = struct.unpack_from("<I", data, 16)[0]
-    available = struct.unpack_from("<I", data, 20)[0]
+    offsets_at = 12 if version == _VERSION_WIN7 else 16
+    first = struct.unpack_from("<I", data, offsets_at)[0]
+    available = struct.unpack_from("<I", data, offsets_at + 4)[0]
     header_size = _HEADER_SIZE_MODERN if version >= _VERSION_MODERN_MIN else _HEADER_SIZE_LEGACY
     n = len(data)
     limit = available if 0 < available <= n else n

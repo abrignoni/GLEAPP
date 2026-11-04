@@ -48,8 +48,11 @@ def _cache_file(entries: list[bytes]) -> bytes:
     top_header_size = 24
     first = top_header_size
     available = first + len(body)
-    top = (b"CMMM" + struct.pack("<I", 0x15) + b"\x00" * 8
-           + struct.pack("<I", first) + struct.pack("<I", available))
+    # Windows 7 (version 0x15) file header: cache type, first entry, first
+    # available, entry count (libwtcdb; see gleapp/thumbcache.py)
+    top = (b"CMMM" + struct.pack("<I", 0x15) + struct.pack("<I", 0)
+           + struct.pack("<I", first) + struct.pack("<I", available)
+           + struct.pack("<I", len(entries)))
     return top.ljust(top_header_size, b"\x00") + body
 
 
