@@ -41,8 +41,15 @@ def _cache_file(entries: list[bytes], *, version=0x15, top_header_size=24) -> by
     body = b"".join(entries)
     first = top_header_size
     available = first + len(body)
-    top = (b"CMMM" + struct.pack("<I", version) + b"\x00" * 8
-           + struct.pack("<I", first) + struct.pack("<I", available))
+    if version == 0x15:
+        # Windows 7: cache type, first entry, first available, entry count
+        top = (b"CMMM" + struct.pack("<I", version) + struct.pack("<I", 0)
+               + struct.pack("<I", first) + struct.pack("<I", available)
+               + struct.pack("<I", len(entries)))
+    else:
+        # Windows 8 and later: the two offsets sit four bytes further on
+        top = (b"CMMM" + struct.pack("<I", version) + b"\x00" * 8
+               + struct.pack("<I", first) + struct.pack("<I", available))
     return top.ljust(top_header_size, b"\x00") + body
 
 
@@ -163,3 +170,25 @@ def test_a_non_thumbcache_db_file_is_left_alone(tmp_path):
     rows = _rows(case)
     assert rows["places.db"]["kind"] == "other"
     assert rows["places.db"]["container_id"] is None
+
+
+def test_win7_header_offsets_sit_at_12_and_16(tmp_path):
+    """A version 21 (Windows 7) file keeps its first-entry and first-available
+    offsets at bytes 12 and 16, then an entry count at 20 (libwtcdb). Read at
+    16 and 20, as Windows 8 and later keep them, the walk starts at the end of
+    the used space, stops at the count, and finds nothing."""
+    from gleapp import thumbcache
+
+    entries = [_entry(0x11, _jpg((1, 1, 1))), _entry(0x22, _jpg((2, 2, 2)))]
+    p = tmp_path / "thumbcache_256.db"
+    p.write_bytes(_cache_file(entries, version=0x15))
+    assert [e.entry_id for e in thumbcache.iter_entries(p)] == [0x11, 0x22]
+
+
+def test_win10_header_offsets_are_unchanged(tmp_path):
+    from gleapp import thumbcache
+
+    entries = [_entry(0x33, _jpg((3, 3, 3)), version=0x20)]
+    p = tmp_path / "thumbcache_256.db"
+    p.write_bytes(_cache_file(entries, version=0x20))
+    assert [e.entry_id for e in thumbcache.iter_entries(p)] == [0x33]

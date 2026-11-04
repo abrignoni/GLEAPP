@@ -75,7 +75,7 @@ _ZIP_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 # reader a new format, or changes which members are kept, has to raise it: a mark
 # from another generation is ignored, so every container that gave nothing is opened
 # once more by the build that might get something from it.
-MARK_GENERATION = 1
+MARK_GENERATION = 2
 _BITS = 0xFF
 OPENED = 1                    # its members were looked at
 OPENED_WITH_OTHER = 2         # ... and files that are not media were kept (include_other)
