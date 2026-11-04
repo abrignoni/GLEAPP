@@ -1,0 +1,69 @@
+"""The vendored ESE reader returns None for a fixed column whose bit is set in the
+record's fixed-column null bitmap, and the stored value when the bit is clear,
+whatever bytes the column holds. Ported from DLEAPP's
+admin/test/scripts/test_ese_null_fixed_columns.py (abrignoni/DLEAPP#800)."""
+
+from __future__ import annotations
+
+import struct
+from collections import OrderedDict
+
+from gleapp.vendor import impacket_ese
+
+FILL = b"*"  # chRECFill, the byte ESE fills reorganised record space with
+
+
+def _columns(*specs):
+    out = OrderedDict()
+    for identifier, name, coltype, size in specs:
+        out[name.encode()] = {"Record": {"Identifier": identifier, "ColumnType": coltype,
+                                         "SpaceUsage": size, "CodePage": 1200}}
+    return out
+
+
+_DEFAULT = _columns((1, "IsDeleted", impacket_ese.JET_coltypBit, 1),
+                    (2, "IsFolder", impacket_ese.JET_coltypBit, 1),
+                    (3, "Updated", impacket_ese.JET_coltypLongLong, 8),
+                    (4, "Count", impacket_ese.JET_coltypLong, 4))
+
+
+def _record(fixed_data, null_ids, last_fixed=4):
+    """A record with no variable or tagged columns: header, fixed data, null bitmap."""
+    bitmap = bytearray((last_fixed + 7) // 8)
+    for identifier in null_ids:
+        bitmap[(identifier - 1) // 8] |= 1 << ((identifier - 1) % 8)
+    end_of_fixed = 4 + len(fixed_data) + len(bitmap)
+    return struct.pack("<BBH", last_fixed, 127, end_of_fixed) + fixed_data + bytes(bitmap)
+
+
+def _decode(tag, columns=None):
+    reader = impacket_ese.ESENT_DB.__new__(impacket_ese.ESENT_DB)
+    cursor = {"TableData": {"Columns": _DEFAULT if columns is None else columns}}
+    return reader._ESENT_DB__tagToRecord(cursor, tag)  # pylint: disable=protected-access
+
+
+def test_a_set_null_bit_gives_none_even_over_zero_bytes():
+    rec = _decode(_record(bytes(14), null_ids=(1, 3)))
+    assert rec[b"IsDeleted"] is None
+    assert rec[b"Updated"] is None
+    assert (rec[b"IsFolder"], rec[b"Count"]) == (0, 0)
+
+
+def test_a_clear_null_bit_gives_the_bytes_even_when_they_are_fill():
+    rec = _decode(_record(FILL * 14, null_ids=()))
+    assert rec[b"IsDeleted"] == 0x2A
+    assert rec[b"Updated"] == struct.unpack("<Q", FILL * 8)[0]
+
+
+def test_the_offsets_of_later_columns_do_not_move_past_a_null_one():
+    rec = _decode(_record(b"\x2a\xff" + struct.pack("<Q", 133214089042238679)
+                          + struct.pack("<l", 7), null_ids=(1,)))
+    assert (rec[b"IsDeleted"], rec[b"IsFolder"], rec[b"Updated"], rec[b"Count"]) == (
+        None, 0xFF, 133214089042238679, 7)
+
+
+def test_a_ninth_fixed_column_uses_the_second_bitmap_byte():
+    columns = _columns(*[(i, f"C{i}", impacket_ese.JET_coltypUnsignedByte, 1)
+                         for i in range(1, 10)])
+    rec = _decode(_record(bytes(range(1, 10)), null_ids=(9,), last_fixed=9), columns)
+    assert [rec[f"C{i}".encode()] for i in range(1, 10)] == [1, 2, 3, 4, 5, 6, 7, 8, None]
