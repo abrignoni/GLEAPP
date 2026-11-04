@@ -45,12 +45,12 @@
       "version": "n/a (adapted from impacket 0.13.1)",
       "upstream": "https://github.com/abrignoni/DLEAPP",
       "upstream_file": "scripts/vendor/impacket_ese.py",
-      "commit": "a63fab1588f18284405ae4d08f7156e6a3b5f172",
-      "commit_date": "2026-10-24T19:33:48-04:00",
-      "sha256": "4dd4749482599c8ca2cdd37073c326a58fc12ec3133921021abb8533cf665351",
+      "commit": "e37022f4b812d379950523708264d0ca50d13acc",
+      "commit_date": "2026-11-03T22:22:43-05:00",
+      "sha256": "494b4fe4b61006dc882d4271f675f4f96f827974d78670f8a07db0813e379c71",
       "licence": "Apache-1.1",
       "licence_file": "gleapp/vendor/LICENSE-impacket",
-      "note": "Copied verbatim from DLEAPP, which itself adapted it from Fortra impacket 0.13.1 (impacket/structure.py + impacket/ese.py, folded into one stdlib-only file with the six/logging dependencies inlined, plus a fix so an ESE 7-bit-compressed tagged column decodes instead of returning None). GLEAPP's own upstream for this file is DLEAPP, not impacket directly - re-vendor from DLEAPP if it updates this file, or re-adapt from impacket per the provenance note at the top of the file if going further upstream is ever needed. Reads Windows.edb (ESE) for the Windows Search index; see gleapp/winsearch.py."
+      "note": "Copied verbatim from DLEAPP, which itself adapted it from Fortra impacket 0.13.1 (impacket/structure.py + impacket/ese.py, folded into one stdlib-only file with the six/logging dependencies inlined, plus three changes its docstring documents: an ESE 7-bit-compressed tagged column decodes instead of returning None, a page's reserved-tag count is split off its tag count on every page size, and a fixed column whose bit is set in the record's fixed-column null bitmap reads as None). GLEAPP's own upstream for this file is DLEAPP, not impacket directly - re-vendor from DLEAPP if it updates this file, or re-adapt from impacket per the provenance note at the top of the file if going further upstream is ever needed. Reads Windows.edb (ESE) for the Windows Search index; see gleapp/winsearch.py."
     },
     {
       "path": "gleapp/vendor/exoprobe.py",
