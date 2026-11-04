@@ -32,7 +32,20 @@ from typing import Any
 
 from . import archive
 
-_PROPERTY_STORE = "SystemIndex_PropertyStore"
+# The table that holds the indexed items' properties, and the byte order its
+# ThumbnailCacheId binary value is stored in. libyal's esedb-kb Windows Search
+# document (https://github.com/libyal/esedb-kb/blob/f5b15f463086eec63c88e2daf5028fefde9a17da/documentation/Windows%20Search.asciidoc)
+# lists SystemIndex_PropertyStore for Windows 8, with column names prefixed by
+# a numeric tag ("4454-System_ThumbnailCacheId"), and SystemIndex_0A for
+# Windows XP, Vista and 7, with unprefixed names; it gives Windows 7's 64-bit
+# binary values as big-endian. Read big-endian, a Windows 7 index's ids match
+# the little-endian ids its thumbcache files carry; little-endian, none do.
+# Vista's SystemIndex_0A stores little-endian values and compressed strings and
+# is not handled. Tried in this order; the first table present wins.
+_PROPERTY_TABLES = (
+    ("SystemIndex_PropertyStore", "<"),
+    ("SystemIndex_0A", ">"),
+)
 _ID_SUFFIX = "System_ThumbnailCacheId"
 _PATH_SUFFIX = "System_ItemPathDisplay"
 _NAME_SUFFIX = "System_ItemNameDisplay"
@@ -45,7 +58,7 @@ _ROW_CAP = 5_000_000
 _ENTRY_NAME = re.compile(r"^entry_\d+_([0-9a-f]{16})\.")
 
 
-def _as_cache_id(value: Any) -> int | None:
+def _as_cache_id(value: Any, byte_order: str = "<") -> int | None:
     if isinstance(value, int):
         return value
     if isinstance(value, (bytes, bytearray)):
@@ -55,7 +68,7 @@ def _as_cache_id(value: Any) -> int | None:
         except (binascii.Error, ValueError):
             pass
         if len(raw) == 8:
-            return struct.unpack("<Q", raw)[0]
+            return struct.unpack(byte_order + "Q", raw)[0]
     return None
 
 
@@ -73,11 +86,13 @@ def _edb_text(value: Any) -> str:
 
 
 def edb_map(path: str | Path) -> dict[int, tuple[str, str]]:
-    """``{ThumbnailCacheId: (path, name)}`` from a Windows.edb SystemIndex_PropertyStore.
+    """``{ThumbnailCacheId: (path, name)}`` from a Windows.edb property table.
 
-    Column names carry a numeric tag that differs between images (for example
-    ``4629F-System_ThumbnailCacheId``), so they are matched by suffix off the
-    first row read rather than assumed fixed.
+    ``SystemIndex_PropertyStore`` (Windows 8 and later) or, when that table is
+    absent, ``SystemIndex_0A`` (Windows 7); see ``_PROPERTY_TABLES``. Column
+    names in the first carry a numeric tag that differs between images (for
+    example ``4629F-System_ThumbnailCacheId``), so they are matched by suffix
+    off the first row read rather than assumed fixed.
     """
     from .vendor import impacket_ese  # pylint: disable=import-outside-toplevel
 
@@ -85,7 +100,11 @@ def edb_map(path: str | Path) -> dict[int, tuple[str, str]]:
     database = impacket_ese.ESENT_DB(str(path))
     try:
         database.mountDB()
-        cursor = database.openTable(_PROPERTY_STORE)
+        cursor = byte_order = None
+        for table, byte_order in _PROPERTY_TABLES:
+            cursor = database.openTable(table)
+            if cursor is not None:
+                break
         if cursor is None:
             return result
         id_col = path_col = name_col = None
@@ -110,7 +129,7 @@ def edb_map(path: str | Path) -> dict[int, tuple[str, str]]:
                         name_col = key
                 if id_col is None:
                     return result       # this image's index does not carry the property at all
-            cache_id = _as_cache_id(row.get(id_col))
+            cache_id = _as_cache_id(row.get(id_col), byte_order)
             if cache_id is not None:
                 result[cache_id] = (_edb_text(row.get(path_col)), _edb_text(row.get(name_col)))
         return result
