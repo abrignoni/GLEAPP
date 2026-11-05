@@ -62,6 +62,23 @@ for Python, and no toolchain.
 | macOS, Apple silicon | `-macos-arm64.dmg` |
 | macOS, Intel | `-macos-x64.dmg` |
 | Linux, 64-bit | `-linux-x64.tar.gz`, built on Ubuntu 24.04 so it needs glibc 2.39 or newer |
+| Debian, Ubuntu and derivatives, 64-bit | `-amd64.deb`, the same build as the tarball, installed to `/opt/gleapp` |
+| Fedora, RHEL, openSUSE, 64-bit | `-x86_64.rpm`, the same build as the tarball, installed to `/opt/gleapp` |
+| Arch Linux | AUR `gleapp-bin` (the release) or `gleapp-git` (every commit) |
+
+The fastest way on Linux is one line, which picks the right file for your
+distribution, checks it against `SHA256SUMS.txt`, and installs it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abrignoni/GLEAPP/main/packaging/install.sh | bash
+```
+
+Pipe to `bash -s -- --user` to install under `~/.local` with no root,
+`--uninstall` to remove it, or pin a version with
+`GLEAPP_VERSION=...`. On Arch Linux you can use an AUR helper instead:
+`yay -S gleapp-bin` for the release build, or `yay -S gleapp-git` for the
+latest commit, rebuilt with `yay -Syu --devel` so you always have the newest
+version. `packaging/aur/README.md` says how the AUR packages are published.
 
 
 The macOS disk images are signed with a Developer ID and notarised by Apple, so they

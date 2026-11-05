@@ -1,0 +1,49 @@
+# Maintainer: GLEAPP contributors <https://github.com/abrignoni/GLEAPP>
+# Stable package: repacks the official frozen Linux build from the GitHub
+# release, so it carries the exact dependency versions the release was built
+# and smoke-tested with. Bump pkgver and the first sha256sum for each release.
+pkgname=gleapp-bin
+pkgver=2026.5.7
+pkgrel=1
+pkgdesc='Media forensics triage toolkit (official frozen build)'
+arch=('x86_64')
+url='https://github.com/abrignoni/GLEAPP'
+license=('MIT' 'Apache-1.1' 'Apache-2.0' 'BSD-3-Clause' 'CC0-1.0' 'OFL-1.1')
+depends=('glibc' 'hicolor-icon-theme')
+optdepends=('xdg-utils: open reports and the review gallery in your browser')
+provides=('gleapp')
+conflicts=('gleapp' 'gleapp-git')
+options=('!strip' '!debug' '!lto')
+source=("GLEAPP-$pkgver-linux-x64.tar.gz::https://github.com/abrignoni/GLEAPP/releases/download/v$pkgver/GLEAPP-$pkgver-linux-x64.tar.gz"
+        "gleapp.svg::https://raw.githubusercontent.com/abrignoni/GLEAPP/v$pkgver/docs/images/gleapp-logo.svg"
+        "gleapp.png::https://raw.githubusercontent.com/abrignoni/GLEAPP/v$pkgver/docs/images/gleapp-logo.png")
+sha256sums=('646a0dc47a74e03fd829e445d0a6f1b544bdfbb78aaab2dd25b9c0c0e1a54ece'
+            '6069c4b2af581c8d0919ab80de556e1f2871b00b2bfbe2f25fd12580eebb5dc8'
+            'ac5fd1cdffd19e50ca655e3347ac6ab9aff22d58a2def326fd01010963f168de')
+
+package() {
+  install -dm755 "$pkgdir/opt/gleapp"
+  cp -a GLEAPP/. "$pkgdir/opt/gleapp/"
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /opt/gleapp/GLEAPP "$pkgdir/usr/bin/gleapp"
+  # Same content as packaging/linux/gleapp.desktop in the repo: kept inline
+  # because the v2026.5.7 tag predates that file, so no pinned URL can fetch
+  # it. Keep the two in sync.
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/gleapp.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=GLEAPP
+GenericName=Media forensics triage
+Comment=Triage and analyze large sets of images and video in a digital-forensics workflow
+Exec=gleapp
+Icon=gleapp
+Terminal=false
+Categories=Utility;
+Keywords=forensics;images;video;triage;exif;hash;
+StartupWMClass=GLEAPP
+DESKTOP
+  install -Dm644 gleapp.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/gleapp.svg"
+  install -Dm644 gleapp.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/gleapp.png"
+  # PyInstaller 6 collects data files under _internal/; find it either way.
+  install -Dm644 "$(find "$pkgdir/opt/gleapp" -maxdepth 2 -name NOTICES.txt | head -1)" "$pkgdir/usr/share/licenses/$pkgname/NOTICES.txt"
+}

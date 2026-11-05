@@ -186,6 +186,18 @@ jobs:
             /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" dist/GLEAPP.app/Contents/Info.plist
           fi
 
+      # The .deb and the .rpm wrap the same one-folder build, so a packaging
+      # change that breaks them is caught here rather than at release time.
+      - name: Linux, build and inspect the .deb and .rpm
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rpm
+          python packaging/linux/build_linux_packages.py --dist dist/GLEAPP --out-dir dist
+          dpkg-deb --info "dist/gleapp_"*"_amd64.deb"
+          rpm -qpi dist/gleapp-*.x86_64.rpm
+
       # Windows only. --selfcheck imports the window's backend; this opens the window
       # itself from the marked single file, the way a user starts it: pythonnet loading .NET,
       # the WebView2 control, and Flask serving the launcher into it, then closes it

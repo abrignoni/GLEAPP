@@ -402,6 +402,19 @@ jobs:
           esac
           ls -l assets/
 
+      # Native packages for the distributions that have them: the .deb and the
+      # .rpm wrap the same one-folder build the tarball archives, so they carry
+      # the binaries that were smoke-tested above. Built here rather than in a
+      # later job so the checksums cover them together with everything else.
+      - name: Linux, build the .deb and .rpm
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rpm
+          python packaging/linux/build_linux_packages.py --dist dist/GLEAPP --out-dir assets
+          ls -l assets/
+
       - name: Upload the assets
         uses: actions/upload-artifact@v4
         with:
