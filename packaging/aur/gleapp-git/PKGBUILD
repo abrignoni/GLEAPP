@@ -1,0 +1,45 @@
+# Maintainer: GLEAPP contributors <https://github.com/abrignoni/GLEAPP>
+# VCS package: rebuilt from the tip of main, so --devel updates always follow
+# the latest commit. The frozen binary is built from source at install time,
+# which is why this takes several minutes: it pip-installs the exact
+# dependency versions the release uses and runs PyInstaller over them.
+pkgname=gleapp-git
+pkgver=2026.5.7.r794.g602cdf0
+pkgrel=1
+pkgdesc='Media forensics triage toolkit (latest git)'
+arch=('x86_64')
+url='https://github.com/abrignoni/GLEAPP'
+license=('MIT' 'Apache-1.1' 'Apache-2.0' 'BSD-3-Clause' 'CC0-1.0' 'OFL-1.1')
+depends=('glibc' 'hicolor-icon-theme')
+makedepends=('git' 'python' 'python-pip' 'gcc')
+optdepends=('xdg-utils: open reports and the review gallery in your browser')
+provides=('gleapp')
+conflicts=('gleapp' 'gleapp-bin')
+options=('!strip' '!debug' '!lto')
+source=('git+https://github.com/abrignoni/GLEAPP.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd GLEAPP
+  ver=$(python -c "import re; print(re.search(r'^__version__\s*=\s*\"([^\"]+)\"', open('gleapp/__init__.py').read(), re.M).group(1))")
+  printf '%s.r%s.g%s' "$ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd GLEAPP
+  python packaging/build.py exe
+}
+
+package() {
+  cd GLEAPP
+  install -dm755 "$pkgdir/opt/gleapp"
+  cp -a dist/GLEAPP/. "$pkgdir/opt/gleapp/"
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /opt/gleapp/GLEAPP "$pkgdir/usr/bin/gleapp"
+  install -Dm644 packaging/linux/gleapp.desktop "$pkgdir/usr/share/applications/gleapp.desktop"
+  install -Dm644 docs/images/gleapp-logo.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/gleapp.svg"
+  install -Dm644 docs/images/gleapp-logo.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/gleapp.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # PyInstaller 6 collects data files under _internal/; find it either way.
+  install -Dm644 "$(find "$pkgdir/opt/gleapp" -maxdepth 2 -name NOTICES.txt | head -1)" "$pkgdir/usr/share/licenses/$pkgname/NOTICES.txt"
+}
