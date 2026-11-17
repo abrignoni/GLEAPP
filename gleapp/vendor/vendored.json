@@ -16,12 +16,12 @@
     {
       "path": "gleapp/vendor/ewfprobe.py",
       "name": "ewfprobe",
-      "version": "0.15.0",
+      "version": "0.15.1",
       "upstream": "https://github.com/abrignoni/ewfprobe",
       "upstream_file": "ewfprobe.py",
-      "commit": "4af1a54a223edbce12693b29fb3838b63a26b4f2",
-      "commit_date": "2026-10-23T11:44:00-04:00",
-      "sha256": "4169e397ee125591f4245791b5d7427ea3c2fd7b44e390a4a127a7548d39c2f6",
+      "commit": "d14572626e54f3bb99763287b3adfea212c47d7e",
+      "commit_date": "2026-11-13T13:52:07-05:00",
+      "sha256": "f596b57072ec9fbb555d1d1439851a030b2b99c6c370f11b71a48226797b4017",
       "licence": "MIT",
       "licence_file": "gleapp/vendor/LICENSE-ewfprobe",
       "note": "Copied verbatim. Fix upstream and re-vendor; edits here are reverted by the next sync."
@@ -29,12 +29,12 @@
     {
       "path": "gleapp/vendor/mediacarve.py",
       "name": "mediacarve",
-      "version": "0.14.0",
+      "version": "0.14.1",
       "upstream": "https://github.com/abrignoni/mediacarve",
       "upstream_file": "mediacarve.py",
-      "commit": "81dbe9e7189a50f94f1e3e002096b3e66aee7845",
-      "commit_date": "2026-10-16T20:38:59-04:00",
-      "sha256": "4b6155b0c4b1f4e938abc8cb7fcb5964a4155fbbce171c6217d5b0fa4b9b5c68",
+      "commit": "5df22ddaa882fd1449c3a4ff1b236d1904e1ec60",
+      "commit_date": "2026-11-13T13:52:17-05:00",
+      "sha256": "64716c7751c4f0c0fc2c2b8bb85d1070bb9ea5f3afbcf5b180b6fb383d39a382",
       "licence": "MIT",
       "licence_file": "gleapp/vendor/LICENSE-mediacarve",
       "note": "Copied verbatim. Fix upstream and re-vendor; edits here are reverted by the next sync."

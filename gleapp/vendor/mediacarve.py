@@ -50,7 +50,7 @@ import zipfile
 import zlib
 from typing import NamedTuple
 
-__version__ = "0.14.0"
+__version__ = "0.14.1"
 
 # How much to read at a time while scanning, and how much to carry over so a
 # signature straddling two blocks is still found.
