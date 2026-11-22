@@ -38,6 +38,12 @@ jobs:
       - name: Every tracked text file is LF
         run: bash tools/check_line_endings.sh
 
+      # One syntax error anywhere in app.js stops the whole file from loading, so every
+      # button, filter and shortcut in the gallery goes dead while the Python tests stay
+      # green. The runner already has node, and --check parses without running the file.
+      - name: The gallery script parses
+        run: node --check gleapp/web/static/app.js
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

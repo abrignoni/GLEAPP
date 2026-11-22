@@ -46,6 +46,11 @@ per run while the repository is private. It runs when `packaging/`, `pyproject.t
 
 `tools/check_line_endings.sh` runs in the required test job. See the cross-platform rules.
 
+## The gallery script must parse
+
+`node --check gleapp/web/static/app.js` runs in the required test job. The Python tests read
+that file as text, so a duplicated `const` passed them and disabled the whole gallery (#114).
+
 ## The wheel is built and compared with the tracked files
 
 Every job installs the package editable, and an editable install reads the checkout, so
