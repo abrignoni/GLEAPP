@@ -188,7 +188,9 @@ jobs:
 
       # The .deb and the .rpm wrap the same one-folder build, so a packaging
       # change that breaks them is caught here rather than at release time.
-      - name: Linux, build and inspect the .deb and .rpm
+      # Install and run each package once to confirm the packaged binary works
+      # from /usr/bin/gleapp and matches the smoke-tested build byte-for-byte.
+      - name: Linux, build and test the .deb and .rpm
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -197,6 +199,24 @@ jobs:
           python packaging/linux/build_linux_packages.py --dist dist/GLEAPP --out-dir dist
           dpkg-deb --info "dist/gleapp_"*"_amd64.deb"
           rpm -qpi dist/gleapp-*.x86_64.rpm
+          WANT="GLEAPP $(python -c "import sys; sys.path.insert(0, 'packaging'); import build; print(build.read_version())")"
+
+          sudo dpkg -i dist/gleapp_*_amd64.deb
+          diff -rq dist/GLEAPP /opt/gleapp
+          GOT="$(gleapp --version)"
+          echo "deb gleapp --version -> '$GOT'"
+          [ "$GOT" = "$WANT" ] || { echo "expected '$WANT'"; exit 1; }
+          gleapp --selfcheck
+          sudo dpkg -r gleapp
+
+          # --nodeps because Ubuntu has no RPM database providing glibc.
+          sudo rpm -i --nodeps dist/gleapp-*.x86_64.rpm
+          diff -rq dist/GLEAPP /opt/gleapp
+          GOT="$(gleapp --version)"
+          echo "rpm gleapp --version -> '$GOT'"
+          [ "$GOT" = "$WANT" ] || { echo "expected '$WANT'"; exit 1; }
+          gleapp --selfcheck
+          sudo rpm -e gleapp
 
       # Windows only. --selfcheck imports the window's backend; this opens the window
       # itself from the marked single file, the way a user starts it: pythonnet loading .NET,

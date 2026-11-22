@@ -162,7 +162,13 @@ def build_deb(dist: Path, out_dir: Path, version: str, work: Path) -> Path:
 
 
 def spec_text(version: str, release: str, payload: Path) -> str:
-    return f"""Name: gleapp
+    return f"""# Do not run brp-strip or other post-install hooks on the frozen PyInstaller
+# tree: the RPM must ship the exact binaries that were built and smoke-tested.
+%global __os_install_post %{{nil}}
+%global debug_package %{{nil}}
+%global _build_id_links none
+
+Name: gleapp
 Version: {version}
 Release: {release}%{{?dist}}
 Summary: {SUMMARY}
