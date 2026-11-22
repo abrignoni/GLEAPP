@@ -130,7 +130,7 @@ FORMAT_EWF = "ewf"            # a disk image ewfprobe reads: E01, s01, Ex01, AFF
 # (AD_ENCRYPTED, from its first file or any numbered file of a raw set); both open
 # with their password, or with the private key of a certificate they are sealed to,
 # and so does an encrypted AFF.
-_ACQUISITIONS = ("EWF", "EWF2", "AFF", "AFD", "AFF4", "UDIF", "SPARSEIMAGE",
+_ACQUISITIONS = ("EWF", "EWF2", "AFF", "AFD", "AFF4", "UDIF", "ASIF", "SPARSEIMAGE",
                  "SPARSEBUNDLE", "DMG_ENCRYPTED", "AD_ENCRYPTED",
                  "VHD", "VHDX", "VMDK", "QCOW")
 FORMAT_RAW = "raw"            # a raw disk image: one file, or a numbered split set
@@ -1509,7 +1509,8 @@ def _open_base(path: str):
             raise ImagePasswordNeeded(path) from None
         # An AD-encrypted set can hold logical evidence rather than a disk, and
         # which only shows once it is decrypted.
-        inner = {"EWF-L01": "L01", "AD1": "AD1"}.get(getattr(img, "format", None))
+        inner = {"EWF-L01": "L01", "EWF2-Lx01": "Lx01",
+                 "AD1": "AD1"}.get(getattr(img, "format", None))
         if inner:
             img.close()
             raise ArchiveUnavailable(_logical_refusal(Path(path).name, inner,
@@ -1631,7 +1632,7 @@ def _logical_refusal(name: str, kind: str, encrypted: bool = False) -> str:
     """Why logical evidence is not ingested, and how to reach its files."""
     maker = "FTK Imager" if kind == "AD1" else "EnCase"
     locked = ", encrypted with AD encryption" if encrypted else ""
-    export = "" if kind == "Lx01" else f" (for an {kind}, ewfprobe.py export --entry)"
+    export = f" (for an {kind}, ewfprobe.py export --entry)"
     return (f"{name} is {maker} logical evidence ({kind}){locked}: it holds copies of "
             f"files, not a disk, and GLEAPP reads disk images. Export its "
             f"files{export} and add them as a folder.")
