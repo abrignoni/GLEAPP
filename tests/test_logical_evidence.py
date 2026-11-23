@@ -1081,6 +1081,34 @@ def test_a_good_first_read_does_not_clear_an_earlier_read_error(ingest):
     case.close()
 
 
+def test_a_short_header_is_counted_and_audited(ingest):
+    short = _Entry("notes.bin", b"abc")
+    short.size = 100
+    case, evidence, _image = ingest([short, _Entry("good.jpg")])
+    assert [r["orig_path"] for r in _rows(case)] == ["good.jpg"]
+    key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
+    assert case.db.get_meta(f"{key}:failed") == "1"
+    logged = [str(tuple(r)) for r in case.db.conn.execute("SELECT * FROM audit").fetchall()]
+    assert any("notes.bin" in line and "short read" in line for line in logged)
+    case.close()
+
+
+def test_a_header_returned_in_pieces_is_read_whole(ingest):
+    class Pieces(io.BytesIO):
+        def read(self, *args):
+            size = args[0] if args else -1
+            return super().read(min(size, 3) if size and size > 0 else size)
+    entry = _Entry("noext", JPEG)
+    original = _Image.open_entry
+    _Image.open_entry = lambda self, item: Pieces(item.data)
+    try:
+        case, _evidence, _image = ingest([entry])
+    finally:
+        _Image.open_entry = original
+    assert [r["kind"] for r in _rows(case)] == ["image"]
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)

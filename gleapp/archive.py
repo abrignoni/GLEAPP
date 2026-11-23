@@ -3478,8 +3478,12 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
             tally.skipped_size += 1
             continue
         try:
+            want, head = min(16, entry.size), b""
             with lock, img.open_entry(entry) as fin:
-                head = fin.read(16)
+                while len(head) < want and (chunk := fin.read(want - len(head))):
+                    head += chunk
+            if len(head) < want:
+                raise OSError(f"read {len(head)} of {want} bytes of the header")
             head_failed = False
         except _LOGICAL_ERRORS as exc:              # the name can still say what it is
             head, head_failed = b"", True
