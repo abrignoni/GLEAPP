@@ -443,6 +443,56 @@ def test_a_macosx_folder_in_the_evidence_is_kept(ingest):
     case.close()
 
 
+def test_a_read_that_differs_from_the_recorded_sha256_is_refused(ingest):
+    entry = _Entry("a.jpg", JPEG + b"1")
+    case, _ev, _img = ingest([entry])
+    row = _rows(case)[0]
+    case.db.update_file(row["id"], sha256=hashlib.sha256(JPEG + b"1").hexdigest())
+    case.db.commit()
+    entry.data = JPEG + b"2"
+    with pytest.raises(archive.ArchiveUnavailable, match="SHA-256"):
+        _read(case, _rows(case)[0])
+    case.close()
+
+
+def test_a_failed_reingest_does_not_describe_an_old_copy_as_the_new_entry(ingest):
+    entry = _Entry("a.jpg", JPEG + b"1", {"wr": 100})
+    case, evidence, _image = ingest([entry], stage=True)
+    row = _rows(case)[0]
+    entry.data, entry.times = JPEG + b"2", {"wr": 200}
+    entry.md5 = hashlib.md5(JPEG + b"3").hexdigest()
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive._drop_logical(evidence)                      # pylint: disable=protected-access
+    archive.ingest_archive(case, src)
+    again = _rows(case)[0]
+    assert again["mtime"] == 100 and Path(row["path"]).read_bytes() == JPEG + b"1"
+    assert archive.source_record(case, evidence.name)["mode"] == archive.MODE_REFERENCE
+    case.close()
+
+
+def test_a_failed_reingest_stays_staged_when_the_copy_matches_the_entry(ingest):
+    entry = _Entry("a.jpg", JPEG)
+    entry.md5 = hashlib.md5(JPEG).hexdigest()
+    case, evidence, _image = ingest([entry], stage=True)
+    entry.data = JPEG[:-1] + b"X"
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive._drop_logical(evidence)                      # pylint: disable=protected-access
+    archive.ingest_archive(case, src)
+    assert archive.source_record(case, evidence.name)["mode"] == archive.MODE_STAGED
+    case.close()
+
+
+def test_a_staged_reingest_counts_room_for_the_replacement(ingest, monkeypatch):
+    case, evidence, _image = ingest([_Entry("a.jpg")], stage=True)
+    needs = []
+    monkeypatch.setattr(archive, "_require_room", lambda _f, need, _w: needs.append(need))
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive._drop_logical(evidence)                      # pylint: disable=protected-access
+    archive.ingest_archive(case, src)
+    assert needs == [len(JPEG)]
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)

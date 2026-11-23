@@ -3103,23 +3103,29 @@ def _entry_hashes(entry) -> list:
             for kind, stored in (("md5", entry.md5), ("sha1", entry.sha1)) if stored]
 
 
-def _copy_logical(img, lock, entry, dest: Path) -> None:
+def _copy_logical(img, lock, entry, dest: Path, expect_sha256: str | None = None) -> None:
     """Write one entry to ``dest`` through a private temp name, and keep it only when it
-    has the entry's size and the hash the evidence stores for it, so a damaged read never
-    replaces a good copy or sits at the final path."""
+    has the entry's size, the hash the evidence stores for it, and the SHA-256 the case
+    recorded for the row when there is one, so a damaged or replaced read never takes the
+    place of a good copy or sits at the final path."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(f"{dest.name}.part-{os.getpid()}-{threading.get_ident()}")
     hashes = _entry_hashes(entry)
+    recorded = hashlib.sha256()
     try:
         got = 0
         with lock, img.open_entry(entry) as fin, open(part, "wb") as fout:
             while chunk := fin.read(_CHUNK):
                 fout.write(chunk)
                 got += len(chunk)
+                recorded.update(chunk)
                 for _kind, digest, _stored in hashes:
                     digest.update(chunk)
         if got != entry.size:
             raise ArchiveUnavailable(f"read {got} of {entry.size} bytes of {entry.path!r}")
+        if expect_sha256 and recorded.hexdigest() != expect_sha256.lower():
+            raise ArchiveUnavailable(f"{entry.path!r} does not match the SHA-256 the case "
+                                     "recorded for it")
         for kind, digest, stored in hashes:
             if digest.hexdigest() != stored.lower():
                 raise ArchiveUnavailable(f"{entry.path!r} does not match the {kind} the "
@@ -3147,7 +3153,7 @@ def _extract_logical_member(rec: dict, row, dest: Path) -> None:
                 f"the source no longer holds {row['orig_path']!r} where the case recorded it: "
                 f"{rec['path']}")
         try:
-            _copy_logical(img, lock, entry, dest)
+            _copy_logical(img, lock, entry, dest, _row_get(row, "sha256"))
             return
         except ValueError as exc:                   # the handle was closed as it changed
             if attempt == 2:
@@ -3160,6 +3166,18 @@ def _extract_logical_member(rec: dict, row, dest: Path) -> None:
             raise ArchiveUnavailable(
                 f"could not read {row['orig_path']!r} from the source ({exc}): "
                 f"{rec['path']}") from exc
+
+
+def _copy_matches_entry(entry, path: Path) -> bool:
+    """True when a copy under the case has every hash the evidence stores for ``entry``."""
+    hashes = _entry_hashes(entry)
+    if not hashes:
+        return False
+    with open(path, "rb") as fin:
+        while chunk := fin.read(_CHUNK):
+            for _kind, digest, _stored in hashes:
+                digest.update(chunk)
+    return all(digest.hexdigest() == stored.lower() for _kind, digest, stored in hashes)
 
 
 def _file_digest(fin, kind: str) -> str:
@@ -3325,8 +3343,11 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
             todo.append((position, entry, name, kind, ext,
                          _staged_path(case.staged_dir, slug, member)))
     if stage:
-        _require_room(case.staged_dir, sum(item[1].size for item in todo
-                                           if not item[5].exists()), path.name)
+        # a replaced copy is written beside the old one, so the largest counts once more
+        _require_room(case.staged_dir,
+                      sum(item[1].size for item in todo if not item[5].exists())
+                      + max((item[1].size for item in todo if item[5].exists()), default=0),
+                      path.name)
     n = count
     timed = uncopied = 0
     for position, entry, name, kind, ext, dest in todo:
@@ -3343,6 +3364,9 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
                         f"ingest it again, or read it on demand instead.") from exc
                 # the row stays, so the file is listed and its read error is shown
                 unread.append(name)
+                if dest.exists() and not _copy_matches_entry(entry, dest):
+                    uncopied += 1                   # the row keeps describing its old copy
+                    continue
                 uncopied += not dest.exists()
             else:
                 if mtime:
