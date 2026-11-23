@@ -1211,7 +1211,9 @@ def source_status(case) -> list[dict]:
                 if same and not locked and rec["segments"] and (
                         rec["format"] in IMAGE_FORMATS or rec["format"] == FORMAT_LOGICAL):
                     try:
-                        same = _segment_count(rec["path"], rec["format"]) >= rec["segments"]
+                        same = (_logical_set_same(case, name, rec)
+                                if rec["format"] == FORMAT_LOGICAL else
+                                _segment_count(rec["path"], rec["format"]) >= rec["segments"])
                     except (ArchiveUnavailable, *_IMAGE_ERRORS):
                         same = False                     # the set can no longer be joined
                 status = "locked" if locked else "ok" if same else "changed"
@@ -3003,6 +3005,17 @@ def _logical_stamp(img) -> tuple:
     return tuple(_source_stat(p) for p in img.paths)
 
 
+def _logical_set_same(case, name: str, rec: dict) -> bool:
+    """True when every file of a logical set has the size and time the case recorded."""
+    img = _open_logical(rec["path"])[0]
+    stamps = _logical_stamp(img)
+    recorded = json.loads(case.db.get_meta(f"{_meta_key(name)}:segment_stamps") or "null")
+    if recorded is None:
+        return len(stamps) >= rec["segments"]
+    return len(stamps) == len(recorded) and all(
+        now[0] == then[0] and abs(now[1] - then[1]) < 2 for now, then in zip(stamps, recorded))
+
+
 def _close_logical(held) -> None:
     with held[1], contextlib.suppress(Exception):           # never under a running read
         held[0].close()
@@ -3173,10 +3186,13 @@ def _copy_matches_entry(entry, path: Path) -> bool:
     hashes = _entry_hashes(entry)
     if not hashes:
         return False
-    with open(path, "rb") as fin:
-        while chunk := fin.read(_CHUNK):
-            for _kind, digest, _stored in hashes:
-                digest.update(chunk)
+    try:
+        with open(path, "rb") as fin:
+            while chunk := fin.read(_CHUNK):
+                for _kind, digest, _stored in hashes:
+                    digest.update(chunk)
+    except OSError:
+        return False
     return all(digest.hexdigest() == stored.lower() for _kind, digest, stored in hashes)
 
 
@@ -3368,6 +3384,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
                       path.name)
     n = count
     timed = uncopied = 0
+    fresh: dict[str, str] = {}                      # only rows registered in this pass
     for position, entry, name, kind, ext, dest in todo:
         mtime, atime, created = _logical_times(entry)
         if stage:
@@ -3395,6 +3412,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
         rel = name[len(root):] if root and name.startswith(root) else name
         _register(case, src, dest, name, rel, kind, ext, entry.size, mtime, created, None,
                   position, atime=atime)
+        fresh[str(position)] = _stored_hashes(entry)
         timed += bool(mtime)
         tally.registered += 1
         n += 1
@@ -3424,11 +3442,12 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
             {"source": src.name, "entries": list(dict.fromkeys(unread))}))
     key = _meta_key(src.name)
     recorded = json.loads(case.db.get_meta(f"{key}:entry_hashes") or "{}")
-    recorded.update({str(item[0]): _stored_hashes(item[1]) for item in todo})
+    recorded.update(fresh)
     case.db.set_meta(f"{key}:entry_hashes", json.dumps(recorded))
     case.db.commit()
     if not _only_documents(src):
-        case.db.set_meta(f"{_meta_key(src.name)}:segments", str(len(img.paths)))
+        case.db.set_meta(f"{key}:segments", str(len(img.paths)))
+        case.db.set_meta(f"{key}:segment_stamps", json.dumps(_logical_stamp(img)))
         case.db.commit()
     if progress:
         progress(n)
@@ -4465,6 +4484,7 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
             raise ValueError(str(exc)) from exc
         problems = _verify_logical(case, name, img, lock, skip_nested=True)
         segments = len(img.paths)
+        stamps = _logical_stamp(img)
     elif fmt == FORMAT_ZIP:
         try:
             zf = zipfile.ZipFile(new)
@@ -4490,6 +4510,7 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
     key = _meta_key(name)
     if fmt == FORMAT_LOGICAL:
         case.db.set_meta(f"{key}:segments", str(segments))
+        case.db.set_meta(f"{key}:segment_stamps", json.dumps(stamps))
     if fmt == FORMAT_TAR:
         for r in case.db.iter_files("source = ?", (name,)):
             case.db.update_file(r["id"], member_offset=index[r["orig_path"]][2])

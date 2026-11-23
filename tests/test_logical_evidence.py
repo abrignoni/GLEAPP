@@ -534,6 +534,52 @@ def test_ingest_reads_through_its_own_handle(tmp_path, monkeypatch):
     case.close()
 
 
+def test_a_changed_later_segment_reads_as_changed(ingest, tmp_path):
+    second = tmp_path / "evidence.L02"
+    second.write_bytes(b"segment")
+    case, evidence, image = ingest([_Entry("a.jpg")])
+    image.paths.append(str(second))
+    key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
+    case.db.set_meta(f"{key}:segment_stamps", json.dumps(
+        archive._logical_stamp(image)))                  # pylint: disable=protected-access
+    case.db.commit()
+    assert archive.source_status(case)[0]["status"] == "ok"
+    second.write_bytes(b"changed longer")
+    assert archive.source_status(case)[0]["status"] == "changed"
+    case.close()
+
+
+def test_an_unreadable_old_copy_counts_as_unverified(ingest, monkeypatch):
+    entry = _Entry("a.jpg", JPEG)
+    entry.md5 = hashlib.md5(JPEG).hexdigest()
+    real_open = open
+
+    def refuse(path, *args, **kwargs):
+        if str(path) == str(target):
+            raise OSError("unreadable")
+        return real_open(path, *args, **kwargs)
+    case, _evidence, _image = ingest([entry], stage=True)
+    target = Path(_rows(case)[0]["path"])
+    monkeypatch.setattr("builtins.open", refuse)
+    assert archive._copy_matches_entry(entry, target) is False  # pylint: disable=protected-access
+    monkeypatch.undo()
+    case.close()
+
+
+def test_a_skipped_row_keeps_the_hashes_it_was_ingested_with(ingest):
+    entry = _Entry("a.jpg", JPEG + b"1")
+    entry.md5 = hashlib.md5(JPEG + b"1").hexdigest()
+    first = entry.md5
+    case, evidence, _image = ingest([entry], stage=True)
+    entry.data = JPEG + b"2"
+    entry.md5 = hashlib.md5(JPEG + b"3").hexdigest()
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive.ingest_archive(case, src)
+    key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
+    assert json.loads(case.db.get_meta(f"{key}:entry_hashes"))["0"].startswith(first)
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)
