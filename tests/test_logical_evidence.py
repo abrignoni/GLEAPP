@@ -693,6 +693,60 @@ def test_relink_refuses_a_set_that_changes_during_verification(ingest, monkeypat
     case.close()
 
 
+def test_room_counts_what_replaced_copies_grow_by(ingest, monkeypatch):
+    one, two = _Entry("a.jpg", JPEG), _Entry("b.jpg", JPEG)
+    case, evidence, _image = ingest([one, two], stage=True)
+    one.data, two.data = JPEG + b"12", JPEG + b"123"
+    one.size, two.size = len(one.data), len(two.data)
+    needs = []
+
+    def full(_folder, need, _what):
+        needs.append(need)
+    monkeypatch.setattr(archive, "_require_room", full)
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive.ingest_archive(case, src)
+    assert needs == [2 + 3 + len(JPEG) + 3]
+    case.close()
+
+
+def test_a_file_changed_during_ingest_reads_as_changed(tmp_path, monkeypatch):
+    evidence = tmp_path / "own.L01"
+    evidence.write_bytes(L01_SIGNATURE + bytes(4096))
+    image = _Image([_Entry("a.jpg")], archive.ewfprobe.FORMAT_L01, [str(evidence)])
+    real = image.open_entry
+
+    def changes(entry):
+        os.utime(evidence, (1000, 1000))
+        return real(entry)
+    image.open_entry = changes
+    monkeypatch.setattr(archive.ewfprobe, "open_ewf", lambda *a, **k: image)
+    case = open_case(tmp_path / "own-case", create=True, examiner="test")
+    archive.ingest_archive(case, Source(name=evidence.name, path=str(evidence), kind="archive"))
+    image.open_entry = real
+    key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
+    now = archive._logical_stamp(image)                  # pylint: disable=protected-access
+    assert not archive._stamps_match(                    # pylint: disable=protected-access
+        now, json.loads(case.db.get_meta(f"{key}:segment_stamps")))
+    archive.close_zips()
+    case.close()
+
+
+def test_unstage_refuses_a_set_that_changes_during_verification(ingest, monkeypatch):
+    case, evidence, _image = ingest([_Entry("a.jpg")], stage=True)
+    row = _rows(case)[0]
+    real = archive._verify_logical                       # pylint: disable=protected-access
+
+    def changes(*args, **kwargs):
+        out = real(*args, **kwargs)
+        os.utime(evidence, (1000, 1000))
+        return out
+    monkeypatch.setattr(archive, "_verify_logical", changes)
+    with pytest.raises(ValueError, match="relink it first"):
+        archive.unstage_source(case, evidence.name)
+    assert Path(row["path"]).read_bytes() == JPEG
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)

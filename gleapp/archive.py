@@ -3344,7 +3344,8 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
     except _LOGICAL_ERRORS as exc:
         raise ValueError(f"cannot open the source ({exc}): {path}") from exc
     try:
-        return _register_logical(case, src, path, img, threading.Lock(), count, progress)
+        return _register_logical(case, src, path, img, threading.Lock(), count, progress,
+                                 _logical_stamp(img))
     finally:
         with contextlib.suppress(Exception):
             img.close()
@@ -3364,8 +3365,11 @@ def _stored_hashes(entry) -> str:
     return f"{entry.md5 or ''}:{entry.sha1 or ''}".lower()
 
 
-def _register_logical(case, src, path: Path, img, lock, count: int, progress) -> int:
-    """The body of ``_ingest_logical``, reading through the handle it was given."""
+def _register_logical(case, src, path: Path, img, lock, count: int, progress,
+                      opened: tuple) -> int:
+    """The body of ``_ingest_logical``, reading through the handle it was given. ``opened``
+    is the set as it was opened and is what the case records, so a file changed during the
+    scan reads as changed afterward."""
     # the file name and the source: two sources can hold evidence files of one name
     source_id = hashlib.sha1(src.name.encode("utf-8", "surrogateescape")).hexdigest()[:10]
     slug = f"{_slug(path.name)}-{source_id}"
@@ -3404,10 +3408,14 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
             todo.append((position, entry, name, kind, ext,
                          _staged_path(case.staged_dir, slug, member)))
     if stage:
-        # a replaced copy is written beside the old one, so the largest counts once more
+        # new copies, what replaced copies grow by, and the largest replacement, which is
+        # written beside the copy it replaces
+        held = {item[5]: item[5].stat().st_size for item in todo if item[5].exists()}
         _require_room(case.staged_dir,
-                      sum(item[1].size for item in todo if not item[5].exists())
-                      + max((item[1].size for item in todo if item[5].exists()), default=0),
+                      sum(item[1].size for item in todo if item[5] not in held)
+                      + sum(max(0, item[1].size - held[item[5]])
+                            for item in todo if item[5] in held)
+                      + max((item[1].size for item in todo if item[5] in held), default=0),
                       path.name)
     n = count
     timed = uncopied = 0
@@ -3476,7 +3484,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
     key = _meta_key(src.name)
     if not _only_documents(src):
         case.db.set_meta(f"{key}:segments", str(len(img.paths)))
-        case.db.set_meta(f"{key}:segment_stamps", json.dumps(_logical_stamp(img)))
+        case.db.set_meta(f"{key}:segment_stamps", json.dumps(opened))
         case.db.commit()
     if progress:
         progress(n)
@@ -5211,8 +5219,14 @@ def unstage_source(case, name: str) -> int:
                                                               rec["segment_stamps"])
         except OSError:
             same = False
-        problems = (_verify_logical(case, name, img, lock) if same else
-                    ["a file of the set changed since the case recorded it; relink it first"])
+        problems = _verify_logical(case, name, img, lock) if same else []
+        try:                                         # again, now that the read is done
+            same = same and (not rec["segment_stamps"] or _stamps_match(
+                _logical_stamp(img), rec["segment_stamps"]))
+        except OSError:
+            same = False
+        if not same:
+            problems = ["a file of the set changed since the case recorded it; relink it first"]
     elif rec["format"] == FORMAT_ZIP:
         zf = _open_zip(rec["path"])
         problems = _verify_members(case, name, zf)
