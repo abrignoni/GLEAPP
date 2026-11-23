@@ -3002,9 +3002,25 @@ _LOGICAL_ERRORS = (*_IMAGE_ERRORS, ValueError, MemoryError, OverflowError, struc
 
 
 def _logical_stamp(img) -> tuple:
-    """Size and modification time of every file of the set, so a segment lost or replaced
-    is noticed and not only a change to the first."""
-    return tuple(_source_stat(p) for p in img.paths)
+    """Size and modification time in nanoseconds of every file of the set, so a segment
+    lost or replaced is noticed and not only a change to the first."""
+    stats = [os.stat(p) for p in img.paths]
+    return tuple((st.st_size, st.st_mtime_ns) for st in stats)
+
+
+@contextlib.contextmanager
+def _private_logical(path):
+    """``(image, lock)`` on a handle of its own, for a pass that reads every entry and must
+    not have the shared handle closed under it."""
+    try:
+        img = ewfprobe.open_ewf(os.fspath(path))
+    except _LOGICAL_ERRORS as exc:
+        raise ArchiveUnavailable(f"cannot open the source ({exc}): {path}") from exc
+    try:
+        yield img, threading.Lock()
+    finally:
+        with contextlib.suppress(Exception):
+            img.close()
 
 
 def _logical_set_same(case, name: str, rec: dict) -> bool:
@@ -3018,9 +3034,8 @@ def _logical_set_same(case, name: str, rec: dict) -> bool:
 
 
 def _stamps_match(now, then) -> bool:
-    """True when two lists of (size, modification time) describe the same files."""
-    return len(now) == len(then) and all(
-        a[0] == b[0] and abs(a[1] - b[1]) < 2 for a, b in zip(now, then))
+    """True when two lists of (size, modification time in ns) describe the same files."""
+    return [list(stamp) for stamp in now] == [list(stamp) for stamp in then]
 
 
 def _close_logical(held) -> None:
@@ -4516,17 +4531,16 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
     elif fmt == FORMAT_LOGICAL:
         _drop_logical(new)
         try:
-            img, lock = _open_logical(str(new))
+            with _private_logical(new) as (img, lock):
+                stamps = _logical_stamp(img)         # before the read that vouches for them
+                problems = _verify_logical(case, name, img, lock, skip_nested=True)
+                if not _stamps_match(_logical_stamp(img), stamps):
+                    problems = ["a file of the set changed while it was being verified"]
+                segments = len(img.paths)
         except ArchiveUnavailable as exc:
             raise ValueError(str(exc)) from exc
-        try:
-            stamps = _logical_stamp(img)             # before the read that vouches for them
-            problems = _verify_logical(case, name, img, lock, skip_nested=True)
-            if not _stamps_match(_logical_stamp(img), stamps):
-                problems = ["a file of the set changed while it was being verified"]
         except OSError as exc:
             raise ValueError(f"cannot read {new}: {exc}") from exc
-        segments = len(img.paths)
     elif fmt == FORMAT_ZIP:
         try:
             zf = zipfile.ZipFile(new)
@@ -5213,18 +5227,18 @@ def unstage_source(case, name: str) -> int:
             # otherwise, so a weakly identified image is read back first
             problems = _verify_row_hashes(case, name, rec)
     elif rec["format"] == FORMAT_LOGICAL:
-        img, lock = _open_logical(rec["path"])
-        try:
-            same = not rec["segment_stamps"] or _stamps_match(_logical_stamp(img),
-                                                              rec["segment_stamps"])
-        except OSError:
-            same = False
-        problems = _verify_logical(case, name, img, lock) if same else []
-        try:                                         # again, now that the read is done
-            same = same and (not rec["segment_stamps"] or _stamps_match(
-                _logical_stamp(img), rec["segment_stamps"]))
-        except OSError:
-            same = False
+        with _private_logical(rec["path"]) as (img, lock):
+            try:
+                same = not rec["segment_stamps"] or _stamps_match(_logical_stamp(img),
+                                                                  rec["segment_stamps"])
+            except OSError:
+                same = False
+            problems = _verify_logical(case, name, img, lock) if same else []
+            try:                                     # again, now that the read is done
+                same = same and (not rec["segment_stamps"] or _stamps_match(
+                    _logical_stamp(img), rec["segment_stamps"]))
+            except OSError:
+                same = False
         if not same:
             problems = ["a file of the set changed since the case recorded it; relink it first"]
     elif rec["format"] == FORMAT_ZIP:

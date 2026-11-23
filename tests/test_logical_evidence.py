@@ -747,6 +747,34 @@ def test_unstage_refuses_a_set_that_changes_during_verification(ingest, monkeypa
     case.close()
 
 
+def test_a_small_time_change_reads_as_changed(ingest):
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    now = evidence.stat().st_mtime_ns
+    os.utime(evidence, ns=(now + 1000, now + 1000))
+    if evidence.stat().st_mtime_ns == now:
+        pytest.skip("this volume does not keep the time that finely")
+    assert archive.source_status(case)[0]["status"] == "changed"
+    case.close()
+
+
+def test_relink_and_unstage_read_through_their_own_handle(ingest, monkeypatch):
+    case, evidence, image = ingest([_Entry("a.jpg")], stage=True)
+    closed = []
+    image.close = lambda: closed.append(True)
+    archive.relink_source(case, evidence.name, evidence)
+    assert len(closed) == 1
+    archive._drop_logical(evidence)                      # pylint: disable=protected-access
+    closed.clear()
+    monkeypatch.setattr(archive, "_open_logical", _no_shared_handle)
+    assert archive.unstage_source(case, evidence.name) == 1
+    assert len(closed) == 1
+    case.close()
+
+
+def _no_shared_handle(*_a, **_k):
+    raise AssertionError("a full verification must not use the shared handle")
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)
