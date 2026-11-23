@@ -3409,6 +3409,15 @@ def _stored_hashes(entry) -> str:
     return f"{entry.md5 or ''}:{entry.sha1 or ''}".lower()
 
 
+def _set_meta_together(case, values: dict) -> None:
+    """Write several meta values in one commit, under the case lock."""
+    with case.db.lock:
+        case.db.conn.executemany(
+            "INSERT INTO meta(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", list(values.items()))
+        case.db.conn.commit()
+
+
 def _audit_unread(case, name: str, unread: dict) -> None:
     """Name each entry that could not be read, by its position, since a path can repeat."""
     if unread:
@@ -3427,9 +3436,9 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
     if before and before["segment_stamps"] and not _stamps_match(opened,
                                                                  before["segment_stamps"]):
         raise ValueError(f"{src.name} has changed since the case recorded it; relink it first")
-    # the file name and the source: two sources can hold evidence files of one name
-    source_id = hashlib.sha1(src.name.encode("utf-8", "surrogateescape")).hexdigest()[:10]
-    slug = f"{_slug(path.name)}-{source_id}"
+    # by source alone: two sources can hold one file name, and a relink can change it
+    source_id = hashlib.sha1(src.name.encode("utf-8", "surrogateescape")).hexdigest()[:16]
+    slug = f"logical-{source_id}"
     stage = bool(getattr(src, "stage", False))
     max_bytes = src.max_bytes
     tally = _Tally()
@@ -3516,6 +3525,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                     read_error = _UNREAD_AT_INGEST
             else:
                 read_error = None
+                unread.pop(position, None)          # the full copy was read and verified
                 if mtime:
                     with contextlib.suppress(OSError):
                         os.utime(dest, (atime or mtime, mtime))
@@ -4621,8 +4631,10 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
     size, mtime = _source_stat(new)
     key = _meta_key(name)
     if fmt == FORMAT_LOGICAL:
-        case.db.set_meta(f"{key}:segments", str(segments))
-        case.db.set_meta(f"{key}:segment_stamps", json.dumps(stamps))
+        _set_meta_together(case, {
+            f"{key}:segments": str(segments), f"{key}:segment_stamps": json.dumps(stamps),
+            f"{key}:path": str(new), f"{key}:size": str(size), f"{key}:mtime": str(mtime),
+            f"{key}:format": fmt})
     if fmt == FORMAT_TAR:
         for r in case.db.iter_files("source = ?", (name,)):
             case.db.update_file(r["id"], member_offset=index[r["orig_path"]][2])

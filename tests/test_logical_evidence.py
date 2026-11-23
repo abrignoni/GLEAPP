@@ -929,6 +929,61 @@ def test_a_full_volume_still_audits_what_could_not_be_read(ingest, tmp_path, mon
     case.close()
 
 
+def test_a_relink_to_a_new_name_keeps_the_same_rows(ingest, tmp_path):
+    entry = _Entry("a.jpg")
+    case, evidence, image = ingest([entry], stage=True)
+    row = _rows(case)[0]
+    moved = tmp_path / "renamed.L01"
+    os.replace(evidence, moved)
+    image.paths = [str(moved)]
+    archive.relink_source(case, evidence.name, moved)
+    src = Source(name=evidence.name, path=str(moved), kind="archive", stage=True)
+    archive.ingest_archive(case, src)
+    rows = _rows(case)
+    assert len(rows) == 1 and rows[0]["id"] == row["id"] and rows[0]["path"] == row["path"]
+    case.close()
+
+
+def test_a_full_copy_clears_a_failed_first_read_from_the_audit(ingest):
+    entry = _Entry("a.jpg")
+    real_data, reads = entry.data, []
+
+    class Flaky(io.BytesIO):
+        def read(self, *args):
+            reads.append(1)
+            if len(reads) == 1:
+                raise OSError("bad")
+            return super().read(*args)
+    case_image = {}
+
+    def run():
+        return ingest([entry], stage=True)
+    entry.data = real_data
+    import_open = _Image.open_entry
+    _Image.open_entry = lambda self, item: Flaky(item.data)
+    try:
+        case_image["case"] = run()[0]
+    finally:
+        _Image.open_entry = import_open
+    logged = [str(tuple(r)) for r in case_image["case"].db.conn.execute(
+        "SELECT * FROM audit").fetchall()]
+    assert not any("logical-entries-not-read" in line for line in logged)
+    case_image["case"].close()
+
+
+def test_a_relink_publishes_its_values_in_one_commit(ingest, monkeypatch):
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    real, seen = archive._set_meta_together, []          # pylint: disable=protected-access
+
+    def spy(the_case, values):
+        seen.append(sorted(key.rsplit(":", 1)[1] for key in values))
+        return real(the_case, values)
+    monkeypatch.setattr(archive, "_set_meta_together", spy)
+    archive.relink_source(case, evidence.name, evidence)
+    assert seen == [["format", "mtime", "path", "segment_stamps", "segments", "size"]]
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)
