@@ -3229,11 +3229,13 @@ def _verify_logical(case, name: str, img, lock, limit: int = 20,
     """Every registered row must be at its recorded position with the same path, size and
     modification time. Each such entry is read in full, since a relink or an unstage then
     relies on it: its bytes must match the evidence's own hash, the hash the case recorded,
-    and any copy under the case. A row whose read already failed, with no hash and no copy,
+    and any copy under the case, and the hashes the evidence stores must be the ones it
+    stored at ingest. A row whose read already failed, with no hash and no copy,
     has nothing to compare and does not block the others. A row extracted from a container in the source has no
     entry of its own: a relink skips it (``skip_nested``), since it deletes nothing, and
     an unstage does not, since it would remove that row's only copy."""
     held = {position: (n, entry) for position, entry, n in _logical_files(img)}
+    recorded = json.loads(case.db.get_meta(f"{_meta_key(name)}:entry_hashes") or "{}")
     problems: list[str] = []
     for r in case.db.iter_files("source = ?", (name,)):
         if skip_nested and r["container_id"] is not None:
@@ -3246,6 +3248,8 @@ def _verify_logical(case, name: str, img, lock, limit: int = 20,
             problems.append(f"{member}: size {got[1].size} != {r['size']}")
         elif (r["mtime"] or None) != _logical_times(got[1])[0]:
             problems.append(f"{member}: modification time differs")
+        elif recorded.get(str(r["member_offset"]), _stored_hashes(got[1])) != _stored_hashes(got[1]):
+            problems.append(f"{member}: the evidence stores a different hash than at ingest")
         else:
             sha, why = _read_evidence(img, lock, got[1])
             if why and r["error"] and not r["sha256"] and not Path(r["path"]).exists():
@@ -3304,9 +3308,23 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
         raise ValueError(logical_carve_refusal(path.name))
     _drop_logical(path)
     try:
-        img, lock = _open_logical(path)
-    except ArchiveUnavailable as exc:
-        raise ValueError(str(exc)) from exc
+        img = ewfprobe.open_ewf(path)     # its own handle: a viewer's refresh cannot close it
+    except _LOGICAL_ERRORS as exc:
+        raise ValueError(f"cannot open the source ({exc}): {path}") from exc
+    try:
+        return _register_logical(case, src, path, img, threading.Lock(), count, progress)
+    finally:
+        with contextlib.suppress(Exception):
+            img.close()
+
+
+def _stored_hashes(entry) -> str:
+    """The hashes the evidence stores for an entry, as the case keeps them to compare."""
+    return f"{entry.md5 or ''}:{entry.sha1 or ''}".lower()
+
+
+def _register_logical(case, src, path: Path, img, lock, count: int, progress) -> int:
+    """The body of ``_ingest_logical``, reading through the handle it was given."""
     slug = _slug(path.name)                  # the stem alone is shared by an L01 and an AD1
     stage = bool(getattr(src, "stage", False))
     max_bytes = src.max_bytes
@@ -3354,7 +3372,9 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
         mtime, atime, created = _logical_times(entry)
         if stage:
             try:
-                _copy_logical(img, lock, entry, dest)
+                known = case.db.conn.execute("SELECT sha256 FROM files WHERE path = ?",
+                                             (str(dest),)).fetchone()
+                _copy_logical(img, lock, entry, dest, known[0] if known else None)
             except (*_LOGICAL_ERRORS, ArchiveUnavailable) as exc:
                 if _out_of_room(exc):
                     case.db.commit()
@@ -3402,6 +3422,11 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
     if unread:
         case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
             {"source": src.name, "entries": list(dict.fromkeys(unread))}))
+    key = _meta_key(src.name)
+    recorded = json.loads(case.db.get_meta(f"{key}:entry_hashes") or "{}")
+    recorded.update({str(item[0]): _stored_hashes(item[1]) for item in todo})
+    case.db.set_meta(f"{key}:entry_hashes", json.dumps(recorded))
+    case.db.commit()
     if not _only_documents(src):
         case.db.set_meta(f"{_meta_key(src.name)}:segments", str(len(img.paths)))
         case.db.commit()

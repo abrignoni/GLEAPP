@@ -243,6 +243,7 @@ def test_a_carve_request_is_refused_before_anything_is_registered(tmp_path):
 
 def test_closing_releases_the_handle(ingest):
     case, evidence, _img = ingest([_Entry("a.jpg")])
+    archive._open_logical(evidence)                      # pylint: disable=protected-access
     assert os.fspath(evidence) in archive._LOGICAL       # pylint: disable=protected-access
     archive.close_zips()
     assert os.fspath(evidence) not in archive._LOGICAL   # pylint: disable=protected-access
@@ -490,6 +491,46 @@ def test_a_staged_reingest_counts_room_for_the_replacement(ingest, monkeypatch):
     archive._drop_logical(evidence)                      # pylint: disable=protected-access
     archive.ingest_archive(case, src)
     assert needs == [len(JPEG)]
+    case.close()
+
+
+def test_relink_refuses_other_stored_hashes_with_no_processing(ingest):
+    entry = _Entry("a.jpg", JPEG + b"1")
+    entry.md5 = hashlib.md5(JPEG + b"1").hexdigest()
+    case, evidence, _image = ingest([entry])
+    entry.data = JPEG + b"2"
+    entry.md5 = hashlib.md5(JPEG + b"2").hexdigest()
+    archive._drop_logical(evidence)                      # pylint: disable=protected-access
+    with pytest.raises(ValueError, match="different hash"):
+        archive.relink_source(case, evidence.name, evidence)
+    case.close()
+
+
+def test_a_staged_reingest_keeps_a_copy_with_a_recorded_hash(ingest):
+    entry = _Entry("a.jpg", JPEG + b"1")
+    case, evidence, _image = ingest([entry], stage=True)
+    row = _rows(case)[0]
+    case.db.update_file(row["id"], sha256=hashlib.sha256(JPEG + b"1").hexdigest())
+    case.db.commit()
+    entry.data = JPEG + b"2"
+    entry.md5 = hashlib.md5(JPEG + b"2").hexdigest()
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive.ingest_archive(case, src)
+    assert Path(row["path"]).read_bytes() == JPEG + b"1"
+    assert archive.source_record(case, evidence.name)["mode"] == archive.MODE_REFERENCE
+    case.close()
+
+
+def test_ingest_reads_through_its_own_handle(ingest, tmp_path, monkeypatch):
+    evidence = tmp_path / "own.L01"
+    evidence.write_bytes(L01_SIGNATURE + bytes(4096))
+    image = _Image([_Entry("a.jpg")], archive.ewfprobe.FORMAT_L01, [str(evidence)])
+    closed = []
+    image.close = lambda: closed.append(True)
+    monkeypatch.setattr(archive.ewfprobe, "open_ewf", lambda *a, **k: image)
+    case = open_case(tmp_path / "own-case", create=True, examiner="test")
+    archive.ingest_archive(case, Source(name=evidence.name, path=str(evidence), kind="archive"))
+    assert closed == [True] and os.fspath(evidence) not in archive._LOGICAL  # pylint: disable=protected-access
     case.close()
 
 
