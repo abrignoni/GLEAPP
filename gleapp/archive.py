@@ -3118,6 +3118,12 @@ def _logical_name(names) -> str:
     return "/".join(parts)
 
 
+def _logical_display(entry, position: int) -> str:
+    """An entry's display path. One that holds content and no usable name is named for its
+    position, so it is not lost."""
+    return _logical_name(entry.names) or (f"entry-{position}" if entry.size else "")
+
+
 def _logical_files(img):
     """``(position, entry, name)`` for each entry that holds a file's content. Left out:
     an AD1's deleted entries and its slack, index and attribute records, and a folder with
@@ -3128,7 +3134,7 @@ def _logical_files(img):
             continue
         if entry.is_folder and (ad1 or not entry.size or not entry.content_collected):
             continue
-        name = _logical_name(entry.names)
+        name = _logical_display(entry, position)
         if name:
             yield position, entry, name
 
@@ -3151,7 +3157,8 @@ def _entry_hashes(entry) -> list:
             for kind, stored in (("md5", entry.md5), ("sha1", entry.sha1)) if stored]
 
 
-def _copy_logical(img, lock, entry, dest: Path, expect_sha256: str | None = None) -> None:
+def _copy_logical(img, lock, entry, dest: Path, expect_sha256: str | None = None,
+                  expect_stamps=None) -> None:
     """Write one entry to ``dest`` through a private temp name, and keep it only when it
     has the entry's size, the hash the evidence stores for it, and the SHA-256 the case
     recorded for the row when there is one, so a damaged or replaced read never takes the
@@ -3180,6 +3187,8 @@ def _copy_logical(img, lock, entry, dest: Path, expect_sha256: str | None = None
                                          "evidence stores for it")
         if not hashes and _reader_saw_damage(img, lock, entry):
             raise ArchiveUnavailable(f"{entry.path!r} holds a chunk that fails its checksum")
+        if expect_stamps and not _stamps_match(_logical_stamp(img), expect_stamps):
+            raise ArchiveUnavailable(f"the source changed while {entry.path!r} was being read")
         os.replace(part, dest)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -3196,7 +3205,7 @@ def _extract_logical_member(rec: dict, row, dest: Path) -> None:
         if position is None or not 0 <= int(position) < len(entries):
             raise ArchiveUnavailable(f"{row['orig_path']!r} is not in the source: {rec['path']}")
         entry = entries[int(position)]
-        if _logical_name(entry.names) != row["orig_path"] or entry.size != row["size"]:
+        if _logical_display(entry, int(position)) != row["orig_path"] or entry.size != row["size"]:
             raise ArchiveUnavailable(
                 f"the source no longer holds {row['orig_path']!r} where the case recorded it: "
                 f"{rec['path']}")
@@ -3205,7 +3214,8 @@ def _extract_logical_member(rec: dict, row, dest: Path) -> None:
                                                                rec["segment_stamps"]):
                 raise ArchiveUnavailable(f"the source has changed since the case recorded "
                                          f"it; relink it to read it again: {rec['path']}")
-            _copy_logical(img, lock, entry, dest, _row_get(row, "sha256"))
+            _copy_logical(img, lock, entry, dest, _row_get(row, "sha256"),
+                          rec.get("segment_stamps"))
             return
         except ValueError as exc:                   # the handle was closed as it changed
             if attempt == 2:
@@ -3411,7 +3421,12 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                       opened: tuple) -> int:
     """The body of ``_ingest_logical``, reading through the handle it was given. ``opened``
     is the set as it was opened and is what the case records, so a file changed during the
-    scan reads as changed afterward."""
+    scan reads as changed afterward. A set that already differs from what the case recorded
+    is refused: its rows may no longer be in it, and a relink is what checks them."""
+    before = source_record(case, src.name)
+    if before and before["segment_stamps"] and not _stamps_match(opened,
+                                                                 before["segment_stamps"]):
+        raise ValueError(f"{src.name} has changed since the case recorded it; relink it first")
     # the file name and the source: two sources can hold evidence files of one name
     source_id = hashlib.sha1(src.name.encode("utf-8", "surrogateescape")).hexdigest()[:10]
     slug = f"{_slug(path.name)}-{source_id}"
@@ -3479,7 +3494,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                     known = case.db.conn.execute("SELECT sha256 FROM files WHERE path = ?",
                                                  (str(dest),)).fetchone()
                 known_sha = known[0] if known else None
-                _copy_logical(img, lock, entry, dest, known_sha)
+                _copy_logical(img, lock, entry, dest, known_sha, opened)
             except (*_LOGICAL_ERRORS, ArchiveUnavailable) as exc:
                 if _out_of_room(exc):
                     case.db.commit()

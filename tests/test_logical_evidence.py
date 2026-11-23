@@ -871,18 +871,46 @@ def test_the_audit_names_each_failed_entry_by_position(ingest):
     case.close()
 
 
-def test_a_rejected_replacement_keeps_the_old_baseline(ingest):
+def test_a_changed_set_is_refused_at_reingest(ingest):
     entry = _Entry("a.jpg", JPEG + b"1")
     case, evidence, _image = ingest([entry], stage=True)
     key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
     before = case.db.get_meta(f"{key}:segment_stamps")
     os.utime(evidence, (1000, 1000))
-    entry.data = JPEG + b"2"
-    entry.md5 = hashlib.md5(JPEG + b"3").hexdigest()
     src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
-    archive.ingest_archive(case, src)
+    with pytest.raises(ValueError, match="relink it first"):
+        archive.ingest_archive(case, src)
     assert case.db.get_meta(f"{key}:segment_stamps") == before
     assert archive.source_status(case)[0]["status"] == "changed"
+    case.close()
+
+
+def test_a_set_changed_during_a_read_leaves_no_copy(ingest, tmp_path):
+    entry = _Entry("a.jpg")
+    case, evidence, image = ingest([entry])
+    real = image.open_entry
+
+    def changes(item):
+        os.utime(evidence, (1000, 1000))
+        return real(item)
+    image.open_entry = changes
+    dest = tmp_path / "copy.jpg"
+    with pytest.raises(archive.ArchiveUnavailable, match="changed while"):
+        archive._copy_logical(image, archive.threading.Lock(), entry, dest,  # pylint: disable=protected-access
+                              expect_stamps=archive._logical_stamp(image))   # pylint: disable=protected-access
+    assert not dest.exists()
+    case.close()
+
+
+def test_an_entry_with_content_and_no_name_is_kept(ingest):
+    nameless = _Entry("a.jpg")
+    nameless.names = ("/", ".")
+    empty = _Entry("b.jpg", b"")
+    empty.names = ("/",)
+    case, _evidence, _image = ingest([nameless, empty])
+    rows = _rows(case)
+    assert [r["orig_path"] for r in rows] == ["entry-0"]
+    assert _read(case, rows[0]) == JPEG
     case.close()
 
 
