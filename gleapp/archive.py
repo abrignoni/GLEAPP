@@ -1213,7 +1213,7 @@ def source_status(case) -> list[dict]:
                 if same and not locked and rec["segments"] and (
                         rec["format"] in IMAGE_FORMATS or rec["format"] == FORMAT_LOGICAL):
                     try:
-                        same = (_logical_set_same(case, name, rec)
+                        same = (_logical_set_same(rec)
                                 if rec["format"] == FORMAT_LOGICAL else
                                 _segment_count(rec["path"], rec["format"]) >= rec["segments"])
                     except (ArchiveUnavailable, *_IMAGE_ERRORS):
@@ -3023,11 +3023,11 @@ def _private_logical(path):
             img.close()
 
 
-def _logical_set_same(case, name: str, rec: dict) -> bool:
-    """True when every file of a logical set has the size and time the case recorded."""
+def _logical_set_same(rec: dict) -> bool:
+    """True when every file of a logical set has the size and time ``rec`` recorded."""
     img = _open_logical(rec["path"])[0]
     stamps = _logical_stamp(img)
-    recorded = json.loads(case.db.get_meta(f"{_meta_key(name)}:segment_stamps") or "null")
+    recorded = rec.get("segment_stamps")
     if recorded is None:
         return len(stamps) >= rec["segments"]
     return _stamps_match(stamps, recorded)
@@ -3418,12 +3418,24 @@ def _set_meta_together(case, values: dict) -> None:
         case.db.conn.commit()
 
 
+def _read_failure(exc: BaseException) -> str:
+    """What kind of failure a read was, in words that hold no path."""
+    text = str(exc)
+    for marker, label in (("does not match", "hash mismatch"),
+                          ("fails its checksum", "chunk checksum"),
+                          (" bytes of ", "short read"), ("changed while", "source changed")):
+        if marker in text:
+            return label
+    return type(exc).__name__
+
+
 def _audit_unread(case, name: str, unread: dict) -> None:
     """Name each entry that could not be read, by its position, since a path can repeat."""
     if unread:
         case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
-            {"source": name, "entries": [{"position": position, "path": entry_path}
-                                         for position, entry_path in unread.items()]}))
+            {"source": name, "entries": [
+                {"position": position, "path": entry_path, "reason": reason}
+                for position, (entry_path, reason) in unread.items()]}))
 
 
 def _register_logical(case, src, path: Path, img, lock, count: int, progress,
@@ -3448,13 +3460,13 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
         root = (source_record(case, src.name) or {}).get("root") or ""
     seen: set[str] = set()
     todo = []
-    unread: dict[int, str] = {}                     # by entry: a path can repeat
+    unread: dict[int, tuple] = {}                   # (path, why), by entry: a path can repeat
     for position, entry, name in files:
         member = name if name not in seen else f"entry-{position}\x00/{name}"
         seen.add(name)
         if not 0 <= entry.size < 2 ** 63:           # no size SQLite or a file can hold
             tally.failed += 1
-            unread[position] = name
+            unread[position] = (name, "size out of range")
             continue
         if max_bytes and entry.size > max_bytes:
             tally.skipped_size += 1
@@ -3463,9 +3475,9 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
             with lock, img.open_entry(entry) as fin:
                 head = fin.read(16)
             head_failed = False
-        except _LOGICAL_ERRORS:                     # the name can still say what it is
+        except _LOGICAL_ERRORS as exc:              # the name can still say what it is
             head, head_failed = b"", True
-            unread[position] = name
+            unread[position] = (name, _read_failure(exc))
         ext = PurePosixPath(name).suffix.lower()
         kind, _is_doc = _logical_kind(src, name, ext, head)
         if kind is None:
@@ -3513,7 +3525,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                         f"the case, after {tally.registered:,} files. Free some space and "
                         f"ingest it again, or read it on demand instead.") from exc
                 # the row stays, so the file is listed and its read error is shown
-                unread[position] = name
+                unread[position] = (name, _read_failure(exc))
                 if dest.exists() and not _copy_matches_entry(entry, dest, known_sha):
                     uncopied += 1                   # the row keeps describing its old copy
                     preserved += 1
@@ -3550,8 +3562,13 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
     if not _only_documents(src) and not preserved:
         case.db.set_meta(f"{key}:segments", str(len(img.paths)))
         case.db.set_meta(f"{key}:segment_stamps", json.dumps(opened))
-    reason = (f"{uncopied} files could not be copied, so the source is still read on demand"
-              if uncopied else "")
+    if stage and not uncopied:                      # rows this pass filtered out count too
+        with case.db.lock:
+            held = case.db.conn.execute("SELECT path FROM files WHERE source = ? "
+                                        "AND container_id IS NULL", (src.name,)).fetchall()
+        uncopied = sum(not Path(row[0]).exists() for row in held)
+    reason = (f"{uncopied} files have no copy under the case, so the source is still read on "
+              "demand" if uncopied else "")
     _finish(case, src, path, fmt=FORMAT_LOGICAL, root=root, stage=stage and not uncopied,
             reason=reason, tally=tally, timestamps=(f"modification time recorded by the evidence on {timed} "
                                      f"of {tally.registered} registered files"))

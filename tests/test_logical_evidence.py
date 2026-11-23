@@ -416,7 +416,7 @@ def test_a_staged_ingest_keeps_a_row_for_a_file_it_could_not_copy(ingest):
     case, evidence, _image = ingest([good, bad], stage=True)
     assert [r["orig_path"] for r in _rows(case)] == ["good.jpg", "bad.jpg"]
     rec = archive.source_record(case, evidence.name)
-    assert rec["mode"] == archive.MODE_REFERENCE and "could not be copied" in rec["mode_reason"]
+    assert rec["mode"] == archive.MODE_REFERENCE and "no copy" in rec["mode_reason"]
     with pytest.raises(archive.ArchiveUnavailable):
         _read(case, _rows(case)[1])
     case.close()
@@ -981,6 +981,34 @@ def test_a_relink_publishes_its_values_in_one_commit(ingest, monkeypatch):
     monkeypatch.setattr(archive, "_set_meta_together", spy)
     archive.relink_source(case, evidence.name, evidence)
     assert seen == [["format", "mtime", "path", "segment_stamps", "segments", "size"]]
+    case.close()
+
+
+def test_a_filtered_staged_reingest_does_not_claim_every_copy(ingest):
+    other = _Entry("notes.bin", b"plain bytes")
+    case, evidence, _image = ingest([_Entry("a.jpg"), other], include_other=True)
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive.ingest_archive(case, src)
+    rec = archive.source_record(case, evidence.name)
+    assert rec["mode"] == archive.MODE_REFERENCE and "no copy" in rec["mode_reason"]
+    case.close()
+
+
+def test_status_uses_the_baseline_of_the_record_it_read(ingest):
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    rec = archive.source_record(case, evidence.name)
+    key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
+    case.db.set_meta(f"{key}:segment_stamps", "[[1, 1]]")
+    assert archive._logical_set_same(rec)                # pylint: disable=protected-access
+    case.close()
+
+
+def test_the_audit_says_why_an_entry_failed(ingest):
+    bad = _Entry("bad.jpg", JPEG + b"1")
+    bad.md5 = hashlib.md5(JPEG + b"2").hexdigest()
+    case, _evidence, _image = ingest([bad], stage=True)
+    logged = [str(tuple(r)) for r in case.db.conn.execute("SELECT * FROM audit").fetchall()]
+    assert any("logical-entries-not-read" in line and "hash mismatch" in line for line in logged)
     case.close()
 
 
