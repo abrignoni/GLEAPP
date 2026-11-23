@@ -667,6 +667,32 @@ def test_hashes_are_saved_before_a_documents_pass_commits(ingest, monkeypatch):
     case.close()
 
 
+def test_unstage_refuses_a_set_whose_time_changed(ingest):
+    case, evidence, _image = ingest([_Entry("a.jpg")], stage=True)
+    row = _rows(case)[0]
+    os.utime(evidence, (1000, 1000))
+    with pytest.raises(ValueError, match="relink it first"):
+        archive.unstage_source(case, evidence.name)
+    assert Path(row["path"]).read_bytes() == JPEG
+    assert archive.relink_source(case, evidence.name, evidence)["status"] == "ok"
+    assert archive.unstage_source(case, evidence.name) == 1
+    case.close()
+
+
+def test_relink_refuses_a_set_that_changes_during_verification(ingest, monkeypatch):
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    real = archive._verify_logical                       # pylint: disable=protected-access
+
+    def changes(*args, **kwargs):
+        out = real(*args, **kwargs)
+        os.utime(evidence, (1000, 1000))
+        return out
+    monkeypatch.setattr(archive, "_verify_logical", changes)
+    with pytest.raises(ValueError, match="changed while"):
+        archive.relink_source(case, evidence.name, evidence)
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)

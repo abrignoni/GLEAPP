@@ -4511,9 +4511,14 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
             img, lock = _open_logical(str(new))
         except ArchiveUnavailable as exc:
             raise ValueError(str(exc)) from exc
-        problems = _verify_logical(case, name, img, lock, skip_nested=True)
+        try:
+            stamps = _logical_stamp(img)             # before the read that vouches for them
+            problems = _verify_logical(case, name, img, lock, skip_nested=True)
+            if not _stamps_match(_logical_stamp(img), stamps):
+                problems = ["a file of the set changed while it was being verified"]
+        except OSError as exc:
+            raise ValueError(f"cannot read {new}: {exc}") from exc
         segments = len(img.paths)
-        stamps = _logical_stamp(img)
     elif fmt == FORMAT_ZIP:
         try:
             zf = zipfile.ZipFile(new)
@@ -5200,7 +5205,14 @@ def unstage_source(case, name: str) -> int:
             # otherwise, so a weakly identified image is read back first
             problems = _verify_row_hashes(case, name, rec)
     elif rec["format"] == FORMAT_LOGICAL:
-        problems = _verify_logical(case, name, *_open_logical(rec["path"]))
+        img, lock = _open_logical(rec["path"])
+        try:
+            same = not rec["segment_stamps"] or _stamps_match(_logical_stamp(img),
+                                                              rec["segment_stamps"])
+        except OSError:
+            same = False
+        problems = (_verify_logical(case, name, img, lock) if same else
+                    ["a file of the set changed since the case recorded it; relink it first"])
     elif rec["format"] == FORMAT_ZIP:
         zf = _open_zip(rec["path"])
         problems = _verify_members(case, name, zf)
