@@ -1045,6 +1045,42 @@ def test_a_source_record_is_read_under_the_case_lock(ingest, monkeypatch):
     case.close()
 
 
+def test_an_orphan_copy_that_cannot_be_removed_is_not_registered(tmp_path, monkeypatch):
+    evidence = tmp_path / "evidence.L01"
+    evidence.write_bytes(L01_SIGNATURE + bytes(4096))
+    entry = _Entry("a.jpg", JPEG + b"1")
+    entry.md5 = hashlib.md5(JPEG + b"2").hexdigest()
+    image = _Image([entry], archive.ewfprobe.FORMAT_L01, [str(evidence)])
+    monkeypatch.setattr(archive.ewfprobe, "open_ewf", lambda *a, **k: image)
+    case = open_case(tmp_path / "case", create=True, examiner="test")
+    source_id = hashlib.sha1(evidence.name.encode()).hexdigest()[:16]
+    orphan = archive._staged_path(case.staged_dir, f"logical-{source_id}", "a.jpg")  # pylint: disable=protected-access
+    orphan.parent.mkdir(parents=True)
+    orphan.write_bytes(b"left by a stopped ingest")
+
+    def busy(_self, *_a, **_k):
+        raise PermissionError("in use")
+    monkeypatch.setattr(Path, "unlink", busy)
+    archive.ingest_archive(case, Source(name=evidence.name, path=str(evidence),
+                                        kind="archive", stage=True))
+    monkeypatch.undo()
+    assert _rows(case) == []
+    assert archive.source_record(case, evidence.name)["mode"] == archive.MODE_REFERENCE
+    archive.close_zips()
+    case.close()
+
+
+def test_a_good_first_read_does_not_clear_an_earlier_read_error(ingest):
+    entry = _Entry("a.jpg")
+    case, evidence, _image = ingest([entry])
+    row = _rows(case)[0]
+    case.db.update_file(row["id"], error=archive._UNREAD_AT_INGEST)  # pylint: disable=protected-access
+    case.db.commit()
+    archive.ingest_archive(case, Source(name=evidence.name, path=str(evidence), kind="archive"))
+    assert _rows(case)[0]["error"] == archive._UNREAD_AT_INGEST      # pylint: disable=protected-access
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)

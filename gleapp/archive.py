@@ -3514,6 +3514,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
     for position, entry, name, kind, ext, dest, head_failed in todo:
         mtime, atime, created = _logical_times(entry)
         known_sha = known = None
+        fully_read = False                          # only a verified full read clears a mark
         read_error = _UNREAD_AT_INGEST if head_failed else None
         if stage:
             try:
@@ -3532,20 +3533,27 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                         f"ingest it again, or read it on demand instead.") from exc
                 # the row stays, so the file is listed and its read error is shown
                 unread[position] = (name, _read_failure(exc))
-                if dest.exists() and not _copy_matches_entry(entry, dest, known_sha):
-                    if known is not None:
-                        uncopied += 1               # the row keeps describing its old copy
+                held_copy = dest.exists()
+                verified = held_copy and _copy_matches_entry(entry, dest, known_sha)
+                if held_copy and not verified:
+                    uncopied += 1
+                    if known is not None:           # the row keeps describing its old copy
                         preserved += 1
                         continue
-                    with contextlib.suppress(OSError):  # left by a stopped ingest, no row
+                    try:                            # left by a stopped ingest, with no row
                         dest.unlink()
-                if dest.exists():
-                    read_error = None               # the copy it holds was just verified
-                else:
+                    except OSError:
+                        tally.failed += 1
+                        unread[position] = (name, "unverified copy could not be removed")
+                        continue
+                elif not verified:
                     uncopied += 1
+                if verified:
+                    read_error, fully_read = None, True
+                else:
                     read_error = _UNREAD_AT_INGEST
             else:
-                read_error = None
+                read_error, fully_read = None, True
                 unread.pop(position, None)          # the full copy was read and verified
                 if mtime:
                     with contextlib.suppress(OSError):
@@ -3554,7 +3562,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
         with case.db.lock:                          # the row and its hashes commit together
             _register(case, src, dest, name, rel, kind, ext, entry.size, mtime, created, None,
                       position, atime=atime, error=read_error)
-            if not read_error:
+            if fully_read:
                 case.db.conn.execute("UPDATE files SET error = NULL WHERE path = ? AND error = ?",
                                      (str(dest), _UNREAD_AT_INGEST))
             _save_entry_hashes(case, src.name, {str(position): _stored_hashes(entry)})
