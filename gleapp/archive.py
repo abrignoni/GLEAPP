@@ -1051,7 +1051,13 @@ def _meta_key(name: str) -> str:
 
 
 def source_record(case, name: str) -> dict | None:
-    """What the case recorded about an archive source, or None if ``name`` is not one."""
+    """What the case recorded about an archive source, or None if ``name`` is not one.
+    Read under the case lock, so a relink is seen whole or not at all."""
+    with case.db.lock:
+        return _read_source_record(case, name)
+
+
+def _read_source_record(case, name: str) -> dict | None:
     key = _meta_key(name)
     path = case.db.get_meta(f"{key}:path")
     if path is None:
@@ -3507,7 +3513,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
     timed = uncopied = preserved = 0
     for position, entry, name, kind, ext, dest, head_failed in todo:
         mtime, atime, created = _logical_times(entry)
-        known_sha = None
+        known_sha = known = None
         read_error = _UNREAD_AT_INGEST if head_failed else None
         if stage:
             try:
@@ -3527,9 +3533,12 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                 # the row stays, so the file is listed and its read error is shown
                 unread[position] = (name, _read_failure(exc))
                 if dest.exists() and not _copy_matches_entry(entry, dest, known_sha):
-                    uncopied += 1                   # the row keeps describing its old copy
-                    preserved += 1
-                    continue
+                    if known is not None:
+                        uncopied += 1               # the row keeps describing its old copy
+                        preserved += 1
+                        continue
+                    with contextlib.suppress(OSError):  # left by a stopped ingest, no row
+                        dest.unlink()
                 if dest.exists():
                     read_error = None               # the copy it holds was just verified
                 else:
