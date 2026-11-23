@@ -839,6 +839,38 @@ def test_a_row_and_its_hashes_are_written_under_one_lock(ingest, monkeypatch):
     case.close()
 
 
+def test_rows_committed_early_have_a_source_record(ingest, monkeypatch):
+    seen = []
+    real = archive._register                             # pylint: disable=protected-access
+
+    def spy(case, src, *args, **kwargs):
+        seen.append(archive.source_record(case, src.name))
+        return real(case, src, *args, **kwargs)
+    monkeypatch.setattr(archive, "_register", spy)
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    assert seen[0]["format"] == archive.FORMAT_LOGICAL
+    assert seen[0]["path"] == str(evidence) and seen[0]["segment_stamps"]
+    case.close()
+
+
+def test_staging_a_changed_set_asks_for_a_relink(ingest):
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    os.utime(evidence, (1000, 1000))
+    with pytest.raises(ValueError, match="relink it first"):
+        archive.stage_source(case, evidence.name)
+    case.close()
+
+
+def test_the_audit_names_each_failed_entry_by_position(ingest):
+    one, two = _Entry("same.jpg", OSError("bad")), _Entry("same.jpg", OSError("bad"))
+    one.size = two.size = 8
+    case, _ev, _img = ingest([one, two])
+    logged = [str(tuple(r)) for r in case.db.conn.execute("SELECT * FROM audit").fetchall()]
+    line = next(item for item in logged if "logical-entries-not-read" in item)
+    assert '"position": 0' in line and '"position": 1' in line
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)
