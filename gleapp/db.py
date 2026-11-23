@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS files (
                                           -- directory entry is (cluster, size, is_dir).
     volume_base   INTEGER,                -- byte offset of the volume that file was walked from
     crc32         INTEGER,                -- the CRC-32 the source archive records for the member (zip)
-    member_offset INTEGER,                -- byte offset of the member's data in a plain tar source
+    member_offset INTEGER,                -- byte offset of the member's data in a plain tar; entry position in logical evidence
     alt_paths     TEXT,                   -- JSON: the other storage views this file was also under
     container_id  INTEGER,                -- files.id of the archive this file was extracted from
                                           -- (a .zip/.tar/.gz found inside a source); NULL otherwise

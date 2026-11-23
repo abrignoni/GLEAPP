@@ -437,16 +437,17 @@ def test_a_damaged_encrypted_header_is_reported_not_asked_about_again(tmp_path,
         archive.unlock_image(enc, PASSWORD)
 
 
-def test_logical_evidence_is_refused_with_the_reason(tmp_path):
+def test_logical_evidence_is_recognised_as_a_source(tmp_path):
     l01 = tmp_path / "evidence.L01"
     l01.write_bytes(b"LVF\t\r\n\xff\x00" + bytes(4096))
-    assert archive.archive_format(l01) is None
-    with pytest.raises(ValueError, match="logical evidence"):
-        parse_source_spec(l01)
+    assert archive.archive_format(l01) == archive.FORMAT_LOGICAL
+    assert archive.FORMAT_LOGICAL not in archive.IMAGE_FORMATS
+    sources, _meta = parse_source_spec(l01)
+    assert [s.kind for s in sources] == ["archive"]
     spec = tmp_path / "job.json"
     spec.write_text(json.dumps({"sources": [{"path": str(l01)}]}))
-    with pytest.raises(ValueError, match="logical evidence"):
-        parse_source_spec(spec)
+    sources, _meta = parse_source_spec(spec)
+    assert [s.kind for s in sources] == ["archive"]
 
 
 def test_carved_media_is_registered_at_the_offset_it_was_found(tmp_path):

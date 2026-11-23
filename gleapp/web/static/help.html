@@ -1533,12 +1533,16 @@ already give you.</p>
     above; GLEAPP asks for its password, or for one sealed to a certificate, its private
     key (&sect;1). A BitLocker volume, encrypted APFS volume or LUKS container inside an
     image is asked about the same way.</li>
-  <li><strong>Not accepted</strong>: logical evidence, EnCase's (<code>.L01</code>) and
-    FTK Imager's (<code>.ad1</code>), which holds copies of files rather than a disk and
-    is refused with that reason, including an AD-encrypted set that turns out to hold
-    one.</li>
+  <li><strong>Logical evidence</strong>: EnCase's <code>.L01</code> and <code>.Lx01</code>
+    and FTK Imager's <code>.ad1</code>. It holds copies of files rather than a disk, so its
+    files are listed and read directly, and there is nothing to carve. Deleted AD1 entries
+    are left out. Each file read is checked against the hash the evidence stores for it,
+    and one that fails is not used; a relink or an unstage first reads in full each
+    file the evidence holds directly. Encrypted logical evidence is refused with that reason, including an
+    AD-encrypted set that turns out to hold it.</li>
   <li>An acquisition is recognized by its own signature and a raw image by what it holds,
-    so the extension does not matter.</li>
+    so the extension does not decide the format. An Ex01, L01 or Lx01 still has to keep
+    its own extension to open.</li>
 </ul>
 
 <h3>How to carve</h3>

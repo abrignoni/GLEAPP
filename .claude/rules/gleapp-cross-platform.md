@@ -358,8 +358,9 @@ checks, so the extension is never consulted and the first segment of a set is en
 open the whole thing. An AFF4 is a ZIP container, so a kind missing from
 `_ACQUISITIONS` is not merely unread: before AFF4 was listed it registered as a zip.
 Logical evidence (EnCase's L01 and Lx01, FTK Imager's AD1) holds files, not a disk:
-`case.parse_source_spec` refuses it with that reason rather than registering one opaque
-file, and `_open_image_file` refuses an AD-encrypted set that decrypts to one. A raw
+it is `FORMAT_LOGICAL`, outside `IMAGE_FORMATS`, each row records its entry's position
+in `member_offset`, and `_open_image_file` refuses an AD-encrypted set that decrypts to
+one. A raw
 image has no signature, so it is recognized by what it holds: qnxprobe's own
 partition parsers and `identify_fs` find a volume it can name (`_is_raw_image`). That
 check runs BEFORE the tar check, and `_is_tar` now requires at least one member, for a
