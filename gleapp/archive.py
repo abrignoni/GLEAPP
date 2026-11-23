@@ -3399,6 +3399,14 @@ def _stored_hashes(entry) -> str:
     return f"{entry.md5 or ''}:{entry.sha1 or ''}".lower()
 
 
+def _audit_unread(case, name: str, unread: dict) -> None:
+    """Name each entry that could not be read, by its position, since a path can repeat."""
+    if unread:
+        case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
+            {"source": name, "entries": [{"position": position, "path": entry_path}
+                                         for position, entry_path in unread.items()]}))
+
+
 def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                       opened: tuple) -> int:
     """The body of ``_ingest_logical``, reading through the handle it was given. ``opened``
@@ -3460,7 +3468,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                              ("segment_stamps", json.dumps(opened)), ("path", path)):
             case.db.set_meta(f"{key}:{field}", str(value))
     n = count
-    timed = uncopied = 0
+    timed = uncopied = preserved = 0
     for position, entry, name, kind, ext, dest, head_failed in todo:
         mtime, atime, created = _logical_times(entry)
         known_sha = None
@@ -3475,6 +3483,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
             except (*_LOGICAL_ERRORS, ArchiveUnavailable) as exc:
                 if _out_of_room(exc):
                     case.db.commit()
+                    _audit_unread(case, src.name, unread)
                     raise ValueError(
                         f"the volume the case is on filled while copying {path.name} into "
                         f"the case, after {tally.registered:,} files. Free some space and "
@@ -3483,6 +3492,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                 unread[position] = name
                 if dest.exists() and not _copy_matches_entry(entry, dest, known_sha):
                     uncopied += 1                   # the row keeps describing its old copy
+                    preserved += 1
                     continue
                 if dest.exists():
                     read_error = None               # the copy it holds was just verified
@@ -3510,7 +3520,9 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
             if progress:
                 progress(n)
     key = _meta_key(src.name)
-    if not _only_documents(src):                    # before _finish publishes the source
+    # before _finish publishes the source; a row kept from an earlier version of the set
+    # keeps the baseline too, so the changed set still reads as changed
+    if not _only_documents(src) and not preserved:
         case.db.set_meta(f"{key}:segments", str(len(img.paths)))
         case.db.set_meta(f"{key}:segment_stamps", json.dumps(opened))
     reason = (f"{uncopied} files could not be copied, so the source is still read on demand"
@@ -3529,10 +3541,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
         case.db.set_meta(f"{key}:mode", MODE_REFERENCE)
         case.db.set_meta(f"{key}:mode_reason", reason)
         case.db.commit()
-    if unread:
-        case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
-            {"source": src.name, "entries": [{"position": position, "path": entry_path}
-                                             for position, entry_path in unread.items()]}))
+    _audit_unread(case, src.name, unread)
     if progress:
         progress(n)
     return n

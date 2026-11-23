@@ -871,6 +871,36 @@ def test_the_audit_names_each_failed_entry_by_position(ingest):
     case.close()
 
 
+def test_a_rejected_replacement_keeps_the_old_baseline(ingest):
+    entry = _Entry("a.jpg", JPEG + b"1")
+    case, evidence, _image = ingest([entry], stage=True)
+    key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
+    before = case.db.get_meta(f"{key}:segment_stamps")
+    os.utime(evidence, (1000, 1000))
+    entry.data = JPEG + b"2"
+    entry.md5 = hashlib.md5(JPEG + b"3").hexdigest()
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive.ingest_archive(case, src)
+    assert case.db.get_meta(f"{key}:segment_stamps") == before
+    assert archive.source_status(case)[0]["status"] == "changed"
+    case.close()
+
+
+def test_a_full_volume_still_audits_what_could_not_be_read(ingest, tmp_path, monkeypatch):
+    bad, good = _Entry("bad.bin", OSError("bad")), _Entry("good.jpg")
+    bad.size = 8
+
+    def full(*_a, **_k):
+        raise OSError(errno.ENOSPC, "no space")
+    monkeypatch.setattr(archive, "_copy_logical", full)
+    with pytest.raises(ValueError, match="filled"):
+        ingest([bad, good], stage=True)
+    case = open_case(tmp_path / "case")
+    logged = [str(tuple(r)) for r in case.db.conn.execute("SELECT * FROM audit").fetchall()]
+    assert any("logical-entries-not-read" in line and "bad.bin" in line for line in logged)
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)
