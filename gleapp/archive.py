@@ -1082,6 +1082,8 @@ def source_record(case, name: str) -> dict | None:
         "media_size": num("media_size", int, 0),
         "media_hash": case.db.get_meta(f"{key}:media_hash") or "",
         "segments": num("segments", int, 0),
+        # logical evidence: the size and time of each of its files, as last verified
+        "segment_stamps": json.loads(case.db.get_meta(f"{key}:segment_stamps") or "null"),
         # the volumes a walked image was read from, so a later read can rebuild
         # the walker for the one a given row came out of
         "volumes": case.db.get_meta(f"{key}:volumes") or "",
@@ -3012,8 +3014,13 @@ def _logical_set_same(case, name: str, rec: dict) -> bool:
     recorded = json.loads(case.db.get_meta(f"{_meta_key(name)}:segment_stamps") or "null")
     if recorded is None:
         return len(stamps) >= rec["segments"]
-    return len(stamps) == len(recorded) and all(
-        now[0] == then[0] and abs(now[1] - then[1]) < 2 for now, then in zip(stamps, recorded))
+    return _stamps_match(stamps, recorded)
+
+
+def _stamps_match(now, then) -> bool:
+    """True when two lists of (size, modification time) describe the same files."""
+    return len(now) == len(then) and all(
+        a[0] == b[0] and abs(a[1] - b[1]) < 2 for a, b in zip(now, then))
 
 
 def _close_logical(held) -> None:
@@ -3166,6 +3173,10 @@ def _extract_logical_member(rec: dict, row, dest: Path) -> None:
                 f"the source no longer holds {row['orig_path']!r} where the case recorded it: "
                 f"{rec['path']}")
         try:
+            if rec.get("segment_stamps") and not _stamps_match(_logical_stamp(img),
+                                                               rec["segment_stamps"]):
+                raise ArchiveUnavailable(f"the source has changed since the case recorded "
+                                         f"it; relink it to read it again: {rec['path']}")
             _copy_logical(img, lock, entry, dest, _row_get(row, "sha256"))
             return
         except ValueError as exc:                   # the handle was closed as it changed
@@ -3189,14 +3200,16 @@ def _copy_matches_entry(entry, path: Path, recorded_sha256: str | None = None) -
         return False
     if recorded_sha256:
         hashes.append(("sha256", hashlib.sha256(), recorded_sha256))
+    size = 0
     try:
         with open(path, "rb") as fin:
             while chunk := fin.read(_CHUNK):
+                size += len(chunk)
                 for _kind, digest, _stored in hashes:
                     digest.update(chunk)
     except OSError:
         return False
-    return all(digest.hexdigest() == stored.lower() for _kind, digest, stored in hashes)
+    return size == entry.size and all(digest.hexdigest() == stored.lower() for _kind, digest, stored in hashes)
 
 
 def _file_digest(fin, kind: str) -> str:
@@ -3439,6 +3452,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
             case.db.commit()
             if progress:
                 progress(n)
+    _save_entry_hashes(case, src.name, fresh)       # before _finish commits these rows
     reason = (f"{uncopied} files could not be copied, so the source is still read on demand"
               if uncopied else "")
     _finish(case, src, path, fmt=FORMAT_LOGICAL, root=root, stage=stage and not uncopied,
@@ -3460,8 +3474,6 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
         case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
             {"source": src.name, "entries": list(dict.fromkeys(unread))}))
     key = _meta_key(src.name)
-    _save_entry_hashes(case, src.name, fresh)
-    case.db.commit()
     if not _only_documents(src):
         case.db.set_meta(f"{key}:segments", str(len(img.paths)))
         case.db.set_meta(f"{key}:segment_stamps", json.dumps(_logical_stamp(img)))

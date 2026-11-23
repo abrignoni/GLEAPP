@@ -628,6 +628,45 @@ def test_a_copy_must_also_match_the_recorded_sha256(tmp_path):
     assert not match(entry, copy, hashlib.sha256(b"other").hexdigest())
 
 
+def test_a_read_is_refused_once_the_source_has_changed(ingest):
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    row = _rows(case)[0]
+    assert _read(case, row) == JPEG
+    evidence.write_bytes(L01_SIGNATURE + bytes(5000))
+    with pytest.raises(archive.ArchiveUnavailable, match="has changed"):
+        _read(case, row)
+    case.close()
+
+
+def test_a_fallback_copy_of_the_wrong_length_does_not_match(tmp_path):
+    entry = _Entry("a.jpg", JPEG)
+    entry.md5 = hashlib.md5(JPEG).hexdigest()
+    entry.size = len(JPEG) + 1
+    copy = tmp_path / "copy"
+    copy.write_bytes(JPEG)
+    assert not archive._copy_matches_entry(entry, copy)  # pylint: disable=protected-access
+
+
+def test_hashes_are_saved_before_a_documents_pass_commits(ingest, monkeypatch):
+    doc = _Entry("a.pdf", b"%PDF-1.7" + bytes(16))
+    doc.md5 = hashlib.md5(doc.data).hexdigest()
+    case, evidence, _image = ingest([_Entry("good.jpg")], stage=True)
+    _image.logical_entries.append(doc)
+    monkeypatch.setattr(archive, "is_document", lambda _name, _head: True)
+    monkeypatch.setattr(archive, "_only_documents", lambda _src: True)
+    real, seen = archive._finish, []                     # pylint: disable=protected-access
+    key = f"{archive._meta_key(evidence.name)}:entry_hashes"  # pylint: disable=protected-access
+
+    def spy(*args, **kwargs):
+        seen.append(doc.md5 in (case.db.get_meta(key) or ""))
+        return real(*args, **kwargs)
+    monkeypatch.setattr(archive, "_finish", spy)
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", documents=True)
+    archive.ingest_archive(case, src)
+    assert seen == [True]
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)
