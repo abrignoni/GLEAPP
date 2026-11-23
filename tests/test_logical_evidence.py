@@ -580,6 +580,54 @@ def test_a_skipped_row_keeps_the_hashes_it_was_ingested_with(ingest):
     case.close()
 
 
+def test_two_sources_with_one_file_name_keep_their_own_copies(tmp_path, monkeypatch):
+    first, second = tmp_path / "one" / "e.L01", tmp_path / "two" / "e.L01"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.write_bytes(L01_SIGNATURE + bytes(4096))
+    images = {str(first): _Image([_Entry("a.jpg", JPEG + b"1")], "EWF-L01", [str(first)]),
+              str(second): _Image([_Entry("a.jpg", JPEG + b"2")], "EWF-L01", [str(second)])}
+    monkeypatch.setattr(archive.ewfprobe, "open_ewf", lambda p, **_k: images[str(p)])
+    case = open_case(tmp_path / "case", create=True, examiner="test")
+    for name, path in (("first", first), ("second", second)):
+        archive.ingest_archive(case, Source(name=name, path=str(path), kind="archive",
+                                            stage=True))
+    held = {r["source"]: Path(r["path"]).read_bytes() for r in case.db.iter_files("1=1")}
+    assert held == {"first": JPEG + b"1", "second": JPEG + b"2"}
+    archive.close_zips()
+    case.close()
+
+
+def test_a_full_volume_keeps_the_hashes_of_rows_already_registered(ingest, tmp_path,
+                                                                   monkeypatch):
+    one, two = _Entry("a.jpg", JPEG + b"1"), _Entry("b.jpg", JPEG + b"2")
+    one.md5 = hashlib.md5(JPEG + b"1").hexdigest()
+    real, calls = archive._copy_logical, []              # pylint: disable=protected-access
+
+    def fills(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise OSError(errno.ENOSPC, "no space")
+        return real(*args, **kwargs)
+    monkeypatch.setattr(archive, "_copy_logical", fills)
+    with pytest.raises(ValueError, match="filled"):
+        ingest([one, two], stage=True)
+    case = open_case(tmp_path / "case")
+    key = archive._meta_key("evidence.L01")              # pylint: disable=protected-access
+    assert one.md5 in case.db.get_meta(f"{key}:entry_hashes")
+    case.close()
+
+
+def test_a_copy_must_also_match_the_recorded_sha256(tmp_path):
+    entry = _Entry("a.jpg", JPEG)
+    entry.md5 = hashlib.md5(JPEG).hexdigest()
+    copy = tmp_path / "copy"
+    copy.write_bytes(JPEG)
+    match = archive._copy_matches_entry                  # pylint: disable=protected-access
+    assert match(entry, copy, hashlib.sha256(JPEG).hexdigest())
+    assert not match(entry, copy, hashlib.sha256(b"other").hexdigest())
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)

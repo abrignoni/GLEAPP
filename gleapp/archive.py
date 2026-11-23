@@ -3181,11 +3181,14 @@ def _extract_logical_member(rec: dict, row, dest: Path) -> None:
                 f"{rec['path']}") from exc
 
 
-def _copy_matches_entry(entry, path: Path) -> bool:
-    """True when a copy under the case has every hash the evidence stores for ``entry``."""
+def _copy_matches_entry(entry, path: Path, recorded_sha256: str | None = None) -> bool:
+    """True when a copy under the case has every hash the evidence stores for ``entry``,
+    and the SHA-256 the case recorded for its row when there is one."""
     hashes = _entry_hashes(entry)
     if not hashes:
         return False
+    if recorded_sha256:
+        hashes.append(("sha256", hashlib.sha256(), recorded_sha256))
     try:
         with open(path, "rb") as fin:
             while chunk := fin.read(_CHUNK):
@@ -3334,6 +3337,15 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
             img.close()
 
 
+def _save_entry_hashes(case, name: str, fresh: dict) -> None:
+    """Add the stored hashes of rows just registered, in the transaction that holds them."""
+    key = f"{_meta_key(name)}:entry_hashes"
+    with case.db.lock:
+        recorded = json.loads(case.db.get_meta(key) or "{}")
+        recorded.update(fresh)
+        case.db.set_meta(key, json.dumps(recorded))
+
+
 def _stored_hashes(entry) -> str:
     """The hashes the evidence stores for an entry, as the case keeps them to compare."""
     return f"{entry.md5 or ''}:{entry.sha1 or ''}".lower()
@@ -3341,7 +3353,9 @@ def _stored_hashes(entry) -> str:
 
 def _register_logical(case, src, path: Path, img, lock, count: int, progress) -> int:
     """The body of ``_ingest_logical``, reading through the handle it was given."""
-    slug = _slug(path.name)                  # the stem alone is shared by an L01 and an AD1
+    # the file name and the source: two sources can hold evidence files of one name
+    source_id = hashlib.sha1(src.name.encode("utf-8", "surrogateescape")).hexdigest()[:10]
+    slug = f"{_slug(path.name)}-{source_id}"
     stage = bool(getattr(src, "stage", False))
     max_bytes = src.max_bytes
     tally = _Tally()
@@ -3387,13 +3401,17 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
     fresh: dict[str, str] = {}                      # only rows registered in this pass
     for position, entry, name, kind, ext, dest in todo:
         mtime, atime, created = _logical_times(entry)
+        known_sha = None
         if stage:
             try:
-                known = case.db.conn.execute("SELECT sha256 FROM files WHERE path = ?",
-                                             (str(dest),)).fetchone()
-                _copy_logical(img, lock, entry, dest, known[0] if known else None)
+                with case.db.lock:
+                    known = case.db.conn.execute("SELECT sha256 FROM files WHERE path = ?",
+                                                 (str(dest),)).fetchone()
+                known_sha = known[0] if known else None
+                _copy_logical(img, lock, entry, dest, known_sha)
             except (*_LOGICAL_ERRORS, ArchiveUnavailable) as exc:
                 if _out_of_room(exc):
+                    _save_entry_hashes(case, src.name, fresh)
                     case.db.commit()
                     raise ValueError(
                         f"the volume the case is on filled while copying {path.name} into "
@@ -3401,7 +3419,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
                         f"ingest it again, or read it on demand instead.") from exc
                 # the row stays, so the file is listed and its read error is shown
                 unread.append(name)
-                if dest.exists() and not _copy_matches_entry(entry, dest):
+                if dest.exists() and not _copy_matches_entry(entry, dest, known_sha):
                     uncopied += 1                   # the row keeps describing its old copy
                     continue
                 uncopied += not dest.exists()
@@ -3417,6 +3435,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
         tally.registered += 1
         n += 1
         if n % 200 == 0:
+            _save_entry_hashes(case, src.name, fresh)
             case.db.commit()
             if progress:
                 progress(n)
@@ -3441,9 +3460,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress) ->
         case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
             {"source": src.name, "entries": list(dict.fromkeys(unread))}))
     key = _meta_key(src.name)
-    recorded = json.loads(case.db.get_meta(f"{key}:entry_hashes") or "{}")
-    recorded.update(fresh)
-    case.db.set_meta(f"{key}:entry_hashes", json.dumps(recorded))
+    _save_entry_hashes(case, src.name, fresh)
     case.db.commit()
     if not _only_documents(src):
         case.db.set_meta(f"{key}:segments", str(len(img.paths)))
