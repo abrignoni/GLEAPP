@@ -806,6 +806,39 @@ def test_a_batch_writes_only_its_own_hashes(ingest):
     case.close()
 
 
+def test_a_failed_first_read_is_on_the_row_and_clears_on_success(ingest):
+    entry = _Entry("bad.jpg", OSError("bad"))
+    entry.size = len(JPEG)
+    case, evidence, _image = ingest([entry])
+    assert "could not be read" in _rows(case)[0]["error"]
+    entry.data = JPEG
+    src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
+    archive.ingest_archive(case, src)
+    assert _rows(case)[0]["error"] is None
+    case.close()
+
+
+def test_a_copy_with_only_a_recorded_sha256_can_be_verified(tmp_path):
+    entry = _Entry("a.jpg", JPEG)
+    copy = tmp_path / "copy"
+    copy.write_bytes(JPEG)
+    match = archive._copy_matches_entry                  # pylint: disable=protected-access
+    assert match(entry, copy, hashlib.sha256(JPEG).hexdigest())
+    assert not match(entry, copy)
+
+
+def test_a_row_and_its_hashes_are_written_under_one_lock(ingest, monkeypatch):
+    real, held = archive._save_entry_hashes, []          # pylint: disable=protected-access
+
+    def spy(case, name, fresh):
+        held.append(case.db.lock._is_owned())            # pylint: disable=protected-access
+        return real(case, name, fresh)
+    monkeypatch.setattr(archive, "_save_entry_hashes", spy)
+    case, _evidence, _image = ingest([_Entry("a.jpg")])
+    assert held == [True]
+    case.close()
+
+
 def test_carving_logical_evidence_is_refused(ingest):
     with pytest.raises(ValueError, match="no unclaimed space"):
         ingest([_Entry("a.jpg")], carve=True)

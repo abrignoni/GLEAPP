@@ -3211,10 +3211,10 @@ def _copy_matches_entry(entry, path: Path, recorded_sha256: str | None = None) -
     """True when a copy under the case has every hash the evidence stores for ``entry``,
     and the SHA-256 the case recorded for its row when there is one."""
     hashes = _entry_hashes(entry)
-    if not hashes:
-        return False
     if recorded_sha256:
         hashes.append(("sha256", hashlib.sha256(), recorded_sha256))
+    if not hashes:
+        return False
     size = 0
     try:
         with open(path, "rb") as fin:
@@ -3366,9 +3366,12 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
             img.close()
 
 
+_UNREAD_AT_INGEST = "could not be read from the evidence at ingest"
+
+
 def _save_entry_hashes(case, name: str, fresh: dict) -> None:
-    """Write the stored hashes of the rows just registered, one per entry, in the
-    transaction that holds those rows; the caller commits."""
+    """Write the stored hashes of rows just registered, one per entry, in the transaction
+    that holds those rows; the caller commits."""
     key = _meta_key(name)
     with case.db.lock:
         case.db.conn.executemany(
@@ -3424,7 +3427,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
             tally.failed += head_failed
         else:
             todo.append((position, entry, name, kind, ext,
-                         _staged_path(case.staged_dir, slug, member)))
+                         _staged_path(case.staged_dir, slug, member), head_failed))
     if stage:
         # new copies, what replaced copies grow by, and the largest replacement, which is
         # written beside the copy it replaces
@@ -3437,10 +3440,10 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                       path.name)
     n = count
     timed = uncopied = 0
-    fresh: dict[str, str] = {}                      # only rows registered in this pass
-    for position, entry, name, kind, ext, dest in todo:
+    for position, entry, name, kind, ext, dest, head_failed in todo:
         mtime, atime, created = _logical_times(entry)
-        known_sha = copy_error = None
+        known_sha = None
+        read_error = _UNREAD_AT_INGEST if head_failed else None
         if stage:
             try:
                 with case.db.lock:
@@ -3450,7 +3453,6 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                 _copy_logical(img, lock, entry, dest, known_sha)
             except (*_LOGICAL_ERRORS, ArchiveUnavailable) as exc:
                 if _out_of_room(exc):
-                    _save_entry_hashes(case, src.name, fresh)
                     case.db.commit()
                     raise ValueError(
                         f"the volume the case is on filled while copying {path.name} into "
@@ -3461,26 +3463,31 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                 if dest.exists() and not _copy_matches_entry(entry, dest, known_sha):
                     uncopied += 1                   # the row keeps describing its old copy
                     continue
-                if not dest.exists():
+                if dest.exists():
+                    read_error = None               # the copy it holds was just verified
+                else:
                     uncopied += 1
-                    copy_error = "could not be read from the evidence when it was staged"
+                    read_error = _UNREAD_AT_INGEST
             else:
+                read_error = None
                 if mtime:
                     with contextlib.suppress(OSError):
                         os.utime(dest, (atime or mtime, mtime))
         rel = name[len(root):] if root and name.startswith(root) else name
-        _register(case, src, dest, name, rel, kind, ext, entry.size, mtime, created, None,
-                  position, atime=atime, error=copy_error)
-        fresh[str(position)] = _stored_hashes(entry)
+        with case.db.lock:                          # the row and its hashes commit together
+            _register(case, src, dest, name, rel, kind, ext, entry.size, mtime, created, None,
+                      position, atime=atime, error=read_error)
+            if not read_error:
+                case.db.conn.execute("UPDATE files SET error = NULL WHERE path = ? AND error = ?",
+                                     (str(dest), _UNREAD_AT_INGEST))
+            _save_entry_hashes(case, src.name, {str(position): _stored_hashes(entry)})
         timed += bool(mtime)
         tally.registered += 1
         n += 1
         if n % 200 == 0:
-            _save_entry_hashes(case, src.name, fresh)
             case.db.commit()
             if progress:
                 progress(n)
-    _save_entry_hashes(case, src.name, fresh)       # before _finish commits these rows
     key = _meta_key(src.name)
     if not _only_documents(src):                    # before _finish publishes the source
         case.db.set_meta(f"{key}:segments", str(len(img.paths)))
