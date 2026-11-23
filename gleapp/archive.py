@@ -16,8 +16,9 @@ at. Everything after that is the same machinery, because an offset is what a tar
 member already registers. The acquisition and raw forms differ only in how the bytes
 are read: an acquisition carries the acquiring tool's own hash of the disk when the
 tool recorded one and a raw image does not, so a raw source is identified by its size
-and a hash of its first and last bytes. EnCase logical evidence (``.L01``) holds
-copies of files rather than a disk, and is refused.
+and a hash of its first and last bytes. Logical evidence (EnCase L01 and Lx01, FTK
+Imager AD1) holds copies of files rather than a disk, so its entries are registered
+as members and read back by their position in it.
 
 A zip is enumerated from its central directory in seconds. A tar has no directory, so
 enumerating it is one streaming read of the whole file (measured at about 13 minutes
@@ -135,6 +136,11 @@ _ACQUISITIONS = ("EWF", "EWF2", "AFF", "AFD", "AFF4", "UDIF", "ASIF", "SPARSEIMA
                  "VHD", "VHDX", "VMDK", "QCOW")
 FORMAT_RAW = "raw"            # a raw disk image: one file, or a numbered split set
 IMAGE_FORMATS = (FORMAT_EWF, FORMAT_RAW)   # a disk: walked, and carved on request
+FORMAT_LOGICAL = "logical"    # EnCase L01 or Lx01, or FTK Imager AD1: copies of files
+_LOGICAL_KINDS = ("L01", "Lx01", "AD1")    # qnxprobe.acquisition_format's labels for them
+# AD1 entry types that hold no file's content, as the LEAPP cores' raw_image.py. Type D, an
+# NTFS alternate data stream, holds content and is kept.
+_AD1_NOT_FILES = ("6", "F", "10", "61")
 CACHE_DIR = "cache"             # on-demand copies for the viewer; bounded, oldest evicted
 TMP_DIR = "tmp"                 # on-demand copies for processing; removed after use
 CACHE_MAX_BYTES = 2 * 1024 ** 3
@@ -626,8 +632,8 @@ def _source_stat(path: str | Path) -> tuple[int, float]:
 
 
 def archive_format(path: str | Path) -> str | None:
-    """``zip``, ``tar``, ``tar-compressed``, ``ewf``, ``raw`` or None, decided by the
-    file's own bytes.
+    """``zip``, ``tar``, ``tar-compressed``, ``ewf``, ``raw``, ``logical`` or None,
+    decided by the file's own bytes.
 
     A gzip, bzip2 or xz stream counts only if a tar is inside it; a gzipped single file
     is not an archive source. An acquisition ewfprobe reads (``ewf``: E01, s01, Ex01,
@@ -650,7 +656,10 @@ def archive_format(path: str | Path) -> str | None:
             head = fh.read(8)
     except OSError:
         return None
-    if qnxprobe.acquisition_format(os.fspath(p)) in _ACQUISITIONS:
+    kind = qnxprobe.acquisition_format(os.fspath(p))
+    if kind in _LOGICAL_KINDS:
+        return FORMAT_LOGICAL
+    if kind in _ACQUISITIONS:
         return FORMAT_EWF
     if head[:4] == b"PK\x03\x04" or p.suffix.lower() == ".zip":
         return FORMAT_ZIP if zipfile.is_zipfile(p) else None
@@ -1199,7 +1208,8 @@ def source_status(case) -> list[dict]:
                 # A segmented acquisition is several files and the record names one, so a
                 # later segment going missing leaves the first one untouched and the source
                 # reading fine until something asks for bytes that live in the missing part.
-                if same and not locked and rec["format"] in IMAGE_FORMATS and rec["segments"]:
+                if same and not locked and rec["segments"] and (
+                        rec["format"] in IMAGE_FORMATS or rec["format"] == FORMAT_LOGICAL):
                     try:
                         same = _segment_count(rec["path"], rec["format"]) >= rec["segments"]
                     except (ArchiveUnavailable, *_IMAGE_ERRORS):
@@ -1605,6 +1615,11 @@ def _layer(img, path, *, bitlocker: bool = True, apfs: bool = True,
 def _segment_count(path: str, fmt: str) -> int:
     """How many files hold the image at ``path`` now: what ``len(img.paths)`` gave
     at ingest, without indexing the image again."""
+    if fmt == FORMAT_LOGICAL:
+        try:
+            return len(_open_logical(path)[0].paths)
+        except ArchiveUnavailable:
+            return 0
     if fmt == FORMAT_EWF:
         kind = qnxprobe.acquisition_format(path)
         if kind == "AFD":
@@ -1629,24 +1644,23 @@ def _segment_count(path: str, fmt: str) -> int:
 
 
 def _logical_refusal(name: str, kind: str, encrypted: bool = False) -> str:
-    """Why logical evidence is not ingested, and how to reach its files."""
+    """Why this logical evidence cannot be used where it was given: it is encrypted,
+    or it was given as a member of a set of disk images."""
     maker = "FTK Imager" if kind == "AD1" else "EnCase"
-    locked = ", encrypted with AD encryption" if encrypted else ""
-    export = f" (for an {kind}, ewfprobe.py export --entry)"
-    return (f"{name} is {maker} logical evidence ({kind}){locked}: it holds copies of "
-            f"files, not a disk, and GLEAPP reads disk images. Export its "
-            f"files{export} and add them as a folder.")
+    if encrypted:
+        return (f"{name} is {maker} logical evidence ({kind}), encrypted with AD "
+                f"encryption, which GLEAPP does not read. Export its files (for an {kind}, "
+                f"ewfprobe.py export --entry) and add them as a folder.")
+    return (f"{name} is {maker} logical evidence ({kind}): it holds copies of files, not "
+            f"a disk, so it cannot be a member image of a set. Add it as its own source.")
 
 
-def container_refusal(path) -> str | None:
-    """Why GLEAPP does not ingest ``path``, when it is a container GLEAPP recognises
-    and cannot read, else None: EnCase logical evidence (L01 or Lx01) or FTK Imager's
-    (AD1), which holds copies of files rather than a disk. Registered as a single
-    file it would yield nothing without saying why. An encrypted acquisition is read,
-    with what opens it (``unlock_image``); one that turns out to hold logical evidence
-    is refused when it is opened."""
+def set_member_refusal(path) -> str | None:
+    """Why ``path`` cannot be a member image of a set, when it is logical evidence, else
+    None. An encrypted acquisition that turns out to hold logical evidence is refused
+    when it is opened."""
     kind = qnxprobe.acquisition_format(os.fspath(path))
-    if kind in ("L01", "Lx01", "AD1"):
+    if kind in _LOGICAL_KINDS:
         return _logical_refusal(Path(path).name, kind)
     return None
 
@@ -2230,6 +2244,7 @@ def _drop_zip(path: str) -> None:
 
 def close_zips() -> None:
     """Release every archive handle this process holds; a case is closing."""
+    _close_all_logical()
     with _ZIP_LOCK:
         handles = list(_ZIPS.values())
         _ZIPS.clear()
@@ -2521,6 +2536,8 @@ def _materialize(rec: dict, row, dest: Path) -> None:
     fmt = rec.get("format", FORMAT_ZIP)
     if fmt == FORMAT_ZIP:
         _extract_member(rec["path"], row["orig_path"], dest)
+    elif fmt == FORMAT_LOGICAL:
+        _extract_logical_member(rec, row, dest)
     elif fmt in IMAGE_FORMATS:
         # An image source holds both kinds once carving runs beside a walk: a
         # walked row names the node it came from, a carved row an offset.
@@ -2786,12 +2803,14 @@ def ingest_archive(case, src, *, count: int = 0, progress=None) -> int:
     path = Path(src.path)
     fmt = archive_format(path)
     if fmt is None:
-        raise ValueError(container_refusal(path)
-                         or f"{path.name} is not a zip, a tar, a disk acquisition "
-                            "(E01, s01, Ex01, AFF, AFF4, DMG), a virtual machine disk "
-                            "(VHD, VHDX, VMDK, QCOW) or a raw disk image")
+        raise ValueError(f"{path.name} is not a zip, a tar, a disk acquisition "
+                         "(E01, s01, Ex01, AFF, AFF4, DMG), logical evidence (L01, Lx01, "
+                         "AD1), a virtual machine disk (VHD, VHDX, VMDK, QCOW) or a raw "
+                         "disk image")
     if fmt == FORMAT_ZIP:
         return _ingest_zip(case, src, path, count=count, progress=progress)
+    if fmt == FORMAT_LOGICAL:
+        return _ingest_logical(case, src, path, count=count, progress=progress)
     if fmt in IMAGE_FORMATS:
         if _read_as_own_set(case, src, path):
             return _ingest_set(case, src, [os.fspath(path)], count=count, progress=progress)
@@ -2827,7 +2846,7 @@ def _ingest_set(case, src, members: list[str], *, count: int, progress) -> int:
     for p in members:
         fmt = archive_format(p)
         if fmt not in IMAGE_FORMATS:
-            raise ValueError(container_refusal(p)
+            raise ValueError(set_member_refusal(p)
                              or f"{Path(p).name} is not a disk image, and only disk images "
                                 "are read together as the member images of one source")
         fmts.append(fmt)
@@ -2963,6 +2982,405 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
             tally=tally, timestamps=(
                 f"extended field on {tally.ts_extended} of {tally.registered} registered "
                 f"members; DOS date on {tally.ts_dos}"))
+    if progress:
+        progress(n)
+    return n
+
+
+# ---- logical evidence (L01, Lx01, AD1) -------------------------------------
+# Logical evidence holds copies of files and no disk, so it has no volumes to walk and
+# no unclaimed space to carve. Each row records its entry's position in the evidence
+# in member_offset, and is read back through ewfprobe by that position.
+_LOGICAL: dict[str, tuple] = {}
+_LOGICAL_LOCK = threading.Lock()
+# what the reader raises on damaged structures, besides its own errors
+_LOGICAL_ERRORS = (*_IMAGE_ERRORS, ValueError, MemoryError, OverflowError, struct.error)
+
+
+def _logical_stamp(img) -> tuple:
+    """Size and modification time of every file of the set, so a segment lost or replaced
+    is noticed and not only a change to the first."""
+    return tuple(_source_stat(p) for p in img.paths)
+
+
+def _close_logical(held) -> None:
+    with held[1], contextlib.suppress(Exception):           # never under a running read
+        held[0].close()
+
+
+def _open_logical(path: str):
+    """``(image, lock)`` for the logical evidence at ``path``, kept open while no file of
+    it has changed. Reads of one image hold its lock."""
+    path = os.fspath(path)
+    stale = None
+    with _LOGICAL_LOCK:
+        held = _LOGICAL.get(path)
+        if held:
+            try:
+                if _logical_stamp(held[0]) == held[2]:
+                    return held[0], held[1]
+            except OSError:
+                pass
+            stale = _LOGICAL.pop(path)
+    if stale:
+        _close_logical(stale)
+    with _LOGICAL_LOCK:
+        held = _LOGICAL.get(path)
+        if held:
+            return held[0], held[1]
+        img = None
+        try:
+            img = ewfprobe.open_ewf(path)
+            stamp = _logical_stamp(img)
+        except _LOGICAL_ERRORS as exc:
+            if img is not None:
+                with contextlib.suppress(Exception):
+                    img.close()
+            raise ArchiveUnavailable(f"cannot open the source ({exc}): {path}") from exc
+        lock = threading.Lock()
+        _LOGICAL[path] = (img, lock, stamp)
+        return img, lock
+
+
+def _drop_logical(path) -> None:
+    with _LOGICAL_LOCK:
+        held = _LOGICAL.pop(os.fspath(path), None)
+    if held:
+        _close_logical(held)
+
+
+def _close_all_logical() -> None:
+    with _LOGICAL_LOCK:
+        handles = list(_LOGICAL.values())
+        _LOGICAL.clear()
+    for held in handles:
+        _close_logical(held)
+
+
+def _logical_name(names) -> str:
+    """An entry's stored names as one display path. A name can hold a separator, a parent
+    reference, or a character SQLite cannot store."""
+    parts = []
+    for name in names:
+        for part in re.split(r"[\\/]", name):
+            if part in ("", "."):
+                continue
+            part = re.sub("[\x00\ud800-\udfff]", "_", part)
+            parts.append("_" if not part.strip(" .") else part)
+    return "/".join(parts)
+
+
+def _logical_files(img):
+    """``(position, entry, name)`` for each entry that holds a file's content. Left out:
+    an AD1's deleted entries and its slack, index and attribute records, and a folder with
+    no content of its own."""
+    ad1 = img.format == ewfprobe.FORMAT_AD1
+    for position, entry in enumerate(img.logical_entries):
+        if ad1 and (entry.is_deleted or entry.type_code in _AD1_NOT_FILES):
+            continue
+        if entry.is_folder and (ad1 or not entry.size or not entry.content_collected):
+            continue
+        name = _logical_name(entry.names)
+        if name:
+            yield position, entry, name
+
+
+def _logical_times(entry) -> tuple:
+    """(modified, accessed, created) as POSIX times or None. An L01 stores them as wr, ac
+    and cr, and an AD1 as the records ewfprobe names modified, accessed and created. A
+    stored value past the year 9999 is no time the case can hold."""
+    t = entry.times or {}
+
+    def usable(value):
+        return value if value and abs(value) < 253402300800 else None
+    return (usable(t.get("wr", t.get("modified"))), usable(t.get("ac", t.get("accessed"))),
+            usable(t.get("cr", t.get("created"))))
+
+
+def _entry_hashes(entry) -> list:
+    """``(kind, running hash, stored value)`` for every hash the evidence stores."""
+    return [(kind, hashlib.new(kind, usedforsecurity=False), stored)
+            for kind, stored in (("md5", entry.md5), ("sha1", entry.sha1)) if stored]
+
+
+def _copy_logical(img, lock, entry, dest: Path) -> None:
+    """Write one entry to ``dest`` through a private temp name, and keep it only when it
+    has the entry's size and the hash the evidence stores for it, so a damaged read never
+    replaces a good copy or sits at the final path."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(f"{dest.name}.part-{os.getpid()}-{threading.get_ident()}")
+    hashes = _entry_hashes(entry)
+    try:
+        got = 0
+        with lock, img.open_entry(entry) as fin, open(part, "wb") as fout:
+            while chunk := fin.read(_CHUNK):
+                fout.write(chunk)
+                got += len(chunk)
+                for _kind, digest, _stored in hashes:
+                    digest.update(chunk)
+        if got != entry.size:
+            raise ArchiveUnavailable(f"read {got} of {entry.size} bytes of {entry.path!r}")
+        for kind, digest, stored in hashes:
+            if digest.hexdigest() != stored.lower():
+                raise ArchiveUnavailable(f"{entry.path!r} does not match the {kind} the "
+                                         "evidence stores for it")
+        if not hashes and _reader_saw_damage(img, lock, entry):
+            raise ArchiveUnavailable(f"{entry.path!r} holds a chunk that fails its checksum")
+        os.replace(part, dest)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            part.unlink()
+        raise
+
+
+def _extract_logical_member(rec: dict, row, dest: Path) -> None:
+    """Copy one row to ``dest`` from the entry at the position the case recorded."""
+    for attempt in (1, 2):
+        img, lock = _open_logical(rec["path"])
+        position = row["member_offset"]
+        entries = img.logical_entries
+        if position is None or not 0 <= int(position) < len(entries):
+            raise ArchiveUnavailable(f"{row['orig_path']!r} is not in the source: {rec['path']}")
+        entry = entries[int(position)]
+        if _logical_name(entry.names) != row["orig_path"] or entry.size != row["size"]:
+            raise ArchiveUnavailable(
+                f"the source no longer holds {row['orig_path']!r} where the case recorded it: "
+                f"{rec['path']}")
+        try:
+            _copy_logical(img, lock, entry, dest)
+            return
+        except ValueError as exc:                   # the handle was closed as it changed
+            if attempt == 2:
+                raise ArchiveUnavailable(
+                    f"could not read {row['orig_path']!r} from the source ({exc}): "
+                    f"{rec['path']}") from exc
+        except (OSError, ewfprobe.EwfError, MemoryError, OverflowError, struct.error) as exc:
+            if _out_of_room(exc):                   # the case's volume, not the evidence
+                raise
+            raise ArchiveUnavailable(
+                f"could not read {row['orig_path']!r} from the source ({exc}): "
+                f"{rec['path']}") from exc
+
+
+def _file_digest(fin, kind: str) -> str:
+    digest = hashlib.new(kind, usedforsecurity=False)
+    while chunk := fin.read(_CHUNK):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _reader_saw_damage(img, lock, entry) -> bool:
+    """For an entry with no stored hash: whether a chunk behind it failed its checksum. The
+    reader hands such a chunk back and records it once, as its own export checks after."""
+    check = getattr(img, "_entry_damage", None)
+    if check is None:
+        return False
+    try:
+        with lock:
+            return bool(check(entry))
+    except _LOGICAL_ERRORS:
+        return True
+
+
+def _read_evidence(img, lock, entry) -> tuple:
+    """``(sha256 of the entry's bytes, None)``, or ``(None, why they cannot be trusted)``."""
+    hashes = _entry_hashes(entry)
+    sha = hashlib.sha256()
+    got = 0
+    try:
+        with lock, img.open_entry(entry) as fin:
+            while chunk := fin.read(_CHUNK):
+                sha.update(chunk)
+                got += len(chunk)
+                for _kind, digest, _stored in hashes:
+                    digest.update(chunk)
+    except _LOGICAL_ERRORS:
+        return None, "cannot be read from the evidence"
+    if got != entry.size:
+        return None, f"the evidence gave {got} of {entry.size} bytes"
+    for kind, digest, stored in hashes:
+        if digest.hexdigest() != stored.lower():
+            return None, f"does not match the {kind} the evidence stores for it"
+    if not hashes and _reader_saw_damage(img, lock, entry):
+        return None, "holds a chunk that fails its checksum"
+    return sha.hexdigest(), None
+
+
+def _verify_logical(case, name: str, img, lock, limit: int = 20,
+                    skip_nested: bool = False) -> list[str]:
+    """Every registered row must be at its recorded position with the same path, size and
+    modification time. Each such entry is read in full, since a relink or an unstage then
+    relies on it: its bytes must match the evidence's own hash, the hash the case recorded,
+    and any copy under the case. A row whose read already failed, with no hash and no copy,
+    has nothing to compare and does not block the others. A row extracted from a container in the source has no
+    entry of its own: a relink skips it (``skip_nested``), since it deletes nothing, and
+    an unstage does not, since it would remove that row's only copy."""
+    held = {position: (n, entry) for position, entry, n in _logical_files(img)}
+    problems: list[str] = []
+    for r in case.db.iter_files("source = ?", (name,)):
+        if skip_nested and r["container_id"] is not None:
+            continue
+        member = r["orig_path"]
+        got = held.get(r["member_offset"])
+        if got is None or got[0] != member:
+            problems.append(f"{member}: not in the evidence")
+        elif got[1].size != r["size"]:
+            problems.append(f"{member}: size {got[1].size} != {r['size']}")
+        elif (r["mtime"] or None) != _logical_times(got[1])[0]:
+            problems.append(f"{member}: modification time differs")
+        else:
+            sha, why = _read_evidence(img, lock, got[1])
+            if why and r["error"] and not r["sha256"] and not Path(r["path"]).exists():
+                continue                            # it already failed here: nothing to lose
+            if why:
+                problems.append(f"{member}: {why}")
+            elif r["sha256"] and r["sha256"].lower() != sha:
+                problems.append(f"{member}: SHA-256 differs")
+            elif Path(r["path"]).exists():
+                with open(r["path"], "rb") as fin:
+                    if _file_digest(fin, "sha256") != sha:
+                        problems.append(f"{member}: the copy under the case differs")
+        if len(problems) >= limit:
+            break
+    return problems
+
+
+def _logical_kind(src, name: str, ext: str, head: bytes) -> tuple:
+    """``(kind, is_document)`` of an entry, or ``(None, False)`` when it is not kept, by
+    the rules a tar member is decided by."""
+    is_doc = False
+    if ext in IMAGE_EXTS:
+        kind = "image"
+    elif ext in VIDEO_EXTS:
+        kind = "video"
+    elif ext in ARCHIVE_EXTS:
+        kind = "archive"
+    else:
+        kind = "other"
+    if is_exoplayer_cache_name(name):
+        kind = "archive"
+    if kind != "other" and is_appledouble(name, head):
+        kind = "other"
+    if kind == "other":
+        kind = _kind_from_magic(head)
+        if kind == "other" and getattr(src, "documents", False) and is_document(name, head):
+            kind = "archive"
+            is_doc = True
+        if kind == "other" and not src.include_other and not is_search_index_name(name):
+            return None, False
+    if _only_documents(src) and not is_doc:
+        return None, False
+    return kind, is_doc
+
+
+def logical_carve_refusal(name: str) -> str:
+    """Why a logical source cannot be carved."""
+    return (f"{name} is logical evidence: it holds copies of files and no disk, so it has "
+            "no unclaimed space to carve. Add it without carving.")
+
+
+def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
+    """Register the files an L01, Lx01 or AD1 holds, copying them when asked. Entries that
+    share a path each keep a row, since the evidence holds both."""
+    if getattr(src, "carve", False):
+        raise ValueError(logical_carve_refusal(path.name))
+    _drop_logical(path)
+    try:
+        img, lock = _open_logical(path)
+    except ArchiveUnavailable as exc:
+        raise ValueError(str(exc)) from exc
+    slug = _slug(path.name)                  # the stem alone is shared by an L01 and an AD1
+    stage = bool(getattr(src, "stage", False))
+    max_bytes = src.max_bytes
+    tally = _Tally()
+    files = list(_logical_files(img))
+    root = common_root([name for _position, _entry, name in files])
+    if _only_documents(src):
+        root = (source_record(case, src.name) or {}).get("root") or ""
+    seen: set[str] = set()
+    todo = []
+    unread: list[str] = []
+    for position, entry, name in files:
+        member = name if name not in seen else f"entry-{position}\x00/{name}"
+        seen.add(name)
+        if not 0 <= entry.size < 2 ** 63:           # no size SQLite or a file can hold
+            tally.failed += 1
+            unread.append(name)
+            continue
+        if max_bytes and entry.size > max_bytes:
+            tally.skipped_size += 1
+            continue
+        try:
+            with lock, img.open_entry(entry) as fin:
+                head = fin.read(16)
+            head_failed = False
+        except _LOGICAL_ERRORS:                     # the name can still say what it is
+            head, head_failed = b"", True
+            unread.append(name)
+        ext = PurePosixPath(name).suffix.lower()
+        kind, _is_doc = _logical_kind(src, name, ext, head)
+        if kind is None:
+            tally.failed += head_failed
+        else:
+            todo.append((position, entry, name, kind, ext,
+                         _staged_path(case.staged_dir, slug, member)))
+    if stage:
+        _require_room(case.staged_dir, sum(item[1].size for item in todo
+                                           if not item[5].exists()), path.name)
+    n = count
+    timed = uncopied = 0
+    for position, entry, name, kind, ext, dest in todo:
+        mtime, atime, created = _logical_times(entry)
+        if stage:
+            try:
+                _copy_logical(img, lock, entry, dest)
+            except (*_LOGICAL_ERRORS, ArchiveUnavailable) as exc:
+                if _out_of_room(exc):
+                    case.db.commit()
+                    raise ValueError(
+                        f"the volume the case is on filled while copying {path.name} into "
+                        f"the case, after {tally.registered:,} files. Free some space and "
+                        f"ingest it again, or read it on demand instead.") from exc
+                # the row stays, so the file is listed and its read error is shown
+                unread.append(name)
+                uncopied += not dest.exists()
+            else:
+                if mtime:
+                    with contextlib.suppress(OSError):
+                        os.utime(dest, (atime or mtime, mtime))
+        rel = name[len(root):] if root and name.startswith(root) else name
+        _register(case, src, dest, name, rel, kind, ext, entry.size, mtime, created, None,
+                  position, atime=atime)
+        timed += bool(mtime)
+        tally.registered += 1
+        n += 1
+        if n % 200 == 0:
+            case.db.commit()
+            if progress:
+                progress(n)
+    reason = (f"{uncopied} files could not be copied, so the source is still read on demand"
+              if uncopied else "")
+    _finish(case, src, path, fmt=FORMAT_LOGICAL, root=root, stage=stage and not uncopied,
+            reason=reason, tally=tally, timestamps=(f"modification time recorded by the evidence on {timed} "
+                                     f"of {tally.registered} registered files"))
+    if img.format == ewfprobe.FORMAT_AD1 and not _only_documents(src):
+        deleted = sum(1 for e in img.logical_entries if e.is_deleted)
+        no_file = sum(1 for e in img.logical_entries
+                      if not e.is_deleted and e.type_code in _AD1_NOT_FILES)
+        if deleted or no_file:
+            case.db.audit_log(case.examiner, "logical-entries-left-out", json.dumps(
+                {"source": src.name, "deleted": deleted, "slack_index_attribute": no_file}))
+    if uncopied and _only_documents(src):           # _finish leaves the mode to a first ingest
+        key = _meta_key(src.name)
+        case.db.set_meta(f"{key}:mode", MODE_REFERENCE)
+        case.db.set_meta(f"{key}:mode_reason", reason)
+        case.db.commit()
+    if unread:
+        case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
+            {"source": src.name, "entries": list(dict.fromkeys(unread))}))
+    if not _only_documents(src):
+        case.db.set_meta(f"{_meta_key(src.name)}:segments", str(len(img.paths)))
+        case.db.commit()
     if progress:
         progress(n)
     return n
@@ -3972,7 +4390,8 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
     fmt = archive_format(new)
     if fmt is None:
         raise ValueError(f"cannot open {new}: not a zip, a tar, a disk acquisition "
-                         "(E01, s01, Ex01, AFF, DMG) or a raw disk image")
+                         "(E01, s01, Ex01, AFF, DMG), logical evidence (L01, Lx01, AD1) "
+                         "or a raw disk image")
     if _family(fmt) != _family(rec["format"]):
         raise ValueError(f"{new.name} is a {fmt} and the case registered {name!r} "
                          f"from a {rec['format']}")
@@ -3989,6 +4408,14 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
             problems = _verify_row_hashes(case, name, {**rec, "path": str(new),
                                                        "format": fmt})
             _drop_image(str(new))
+    elif fmt == FORMAT_LOGICAL:
+        _drop_logical(new)
+        try:
+            img, lock = _open_logical(str(new))
+        except ArchiveUnavailable as exc:
+            raise ValueError(str(exc)) from exc
+        problems = _verify_logical(case, name, img, lock, skip_nested=True)
+        segments = len(img.paths)
     elif fmt == FORMAT_ZIP:
         try:
             zf = zipfile.ZipFile(new)
@@ -4008,8 +4435,12 @@ def relink_source(case, name: str, new_path: str | Path) -> dict:
                          f"{name!r}: {shown}")
     _drop_zip(rec["path"])
     _drop_image(rec["path"])
+    if str(new) != rec["path"]:
+        _drop_logical(rec["path"])
     size, mtime = _source_stat(new)
     key = _meta_key(name)
+    if fmt == FORMAT_LOGICAL:
+        case.db.set_meta(f"{key}:segments", str(segments))
     if fmt == FORMAT_TAR:
         for r in case.db.iter_files("source = ?", (name,)):
             case.db.update_file(r["id"], member_offset=index[r["orig_path"]][2])
@@ -4281,6 +4712,8 @@ def stage_source(case, name: str, *, progress=None) -> int:
     reader cannot read is left without a copy and counted, since one such file must
     not stop the rest of the source being copied in."""
     rec = _require(case, name)
+    if rec["format"] == FORMAT_LOGICAL:
+        _open_logical(rec["path"])                   # a set missing a file copies nothing
     rows = case.db.iter_files("source = ?", (name,))
     walked = rec["format"] in IMAGE_FORMATS
     holes_kept = _keeps_holes(case.staged_dir)
@@ -4317,7 +4750,9 @@ def stage_source(case, name: str, *, progress=None) -> int:
             except ArchiveUnavailable:
                 # The image itself going away stops the pass. One file in it the
                 # reader declines (a compression it does not decode, say) does not.
-                if not (walked and _ref_exists(image_ref(rec))):
+                if rec["format"] == FORMAT_LOGICAL:
+                    _open_logical(rec["path"])       # raises when the set itself is gone
+                elif not (walked and _ref_exists(image_ref(rec))):
                     raise
                 unread += 1
                 copied = False
@@ -4330,6 +4765,14 @@ def stage_source(case, name: str, *, progress=None) -> int:
             written += 1
         if progress and (i % 100 == 0 or i == len(todo)):
             progress(i, len(todo))
+    if unread and rec["format"] == FORMAT_LOGICAL:
+        case.db.commit()
+        case.db.audit_log(case.examiner, "stage-source",
+                          f"{name}: {written} members copied, {unread} could not be read; "
+                          "still read on demand")
+        raise ValueError(f"{unread} of {len(todo)} files of {name} could not be read, so it is "
+                         f"not self-contained and still needs the evidence. {written} were "
+                         "copied.")
     key = _meta_key(name)
     case.db.set_meta(f"{key}:mode", MODE_STAGED)
     if placeholders:
@@ -4657,6 +5100,8 @@ def unstage_source(case, name: str) -> int:
             # the copies may be the only bytes left of a file the image now holds
             # otherwise, so a weakly identified image is read back first
             problems = _verify_row_hashes(case, name, rec)
+    elif rec["format"] == FORMAT_LOGICAL:
+        problems = _verify_logical(case, name, *_open_logical(rec["path"]))
     elif rec["format"] == FORMAT_ZIP:
         zf = _open_zip(rec["path"])
         problems = _verify_members(case, name, zf)

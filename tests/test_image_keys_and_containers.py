@@ -233,9 +233,8 @@ def test_an_ad1_is_refused_as_logical_evidence_even_once_decrypted(tmp_path):
         archive._open_image_file(ad1)                        # pylint: disable=protected-access
     plain = tmp_path / "ev" / "plain.ad1"
     plain.write_bytes(b"ADSEGMENTEDFILE\x00" + bytes(496))
-    assert "FTK Imager logical evidence (AD1)" in (archive.container_refusal(plain) or "")
-    with pytest.raises(ValueError, match="logical evidence"):
-        parse_source_spec(plain)
+    assert "FTK Imager logical evidence (AD1)" in (archive.set_member_refusal(plain) or "")
+    assert archive.archive_format(plain) == archive.FORMAT_LOGICAL
 
 
 def test_the_command_line_takes_a_private_key_or_refuses(tmp_path, monkeypatch, capsys):

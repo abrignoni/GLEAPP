@@ -154,20 +154,10 @@ def open_case(path: str | Path, *, create: bool = False, examiner: str | None = 
 def is_archive_file(p: Path) -> bool:
     """A zip, a tar (plain or compressed), a disk acquisition (E01, s01, Ex01, AFF, any
     .aff of an AFD folder, an Apple .dmg with any .dmgpart segments, a .sparseimage, or a
-    .sparsebundle folder) or a raw disk image (one file, or any segment of a numbered
-    split set), by its bytes; the file or folder must exist."""
+    .sparsebundle folder), logical evidence (L01, Lx01, AD1) or a raw disk image (one file,
+    or any segment of a numbered split set), by its bytes; the file or folder must exist."""
     from . import archive
     return archive.archive_format(p) is not None
-
-
-def _refuse_unreadable_container(p: Path) -> None:
-    """Raise when p is a container GLEAPP recognises and cannot read: EnCase logical
-    evidence, or an encrypted Apple disk image or sparse bundle."""
-    if p.is_file() or p.is_dir():
-        from . import archive
-        why = archive.container_refusal(p)
-        if why:
-            raise ValueError(why)
 
 
 def image_set_source(paths, found=(), name: str | None = None,
@@ -189,7 +179,9 @@ def image_set_source(paths, found=(), name: str | None = None,
         p = Path(raw).absolute()
         if not p.exists():
             raise ValueError(f"path does not exist: {raw}")
-        _refuse_unreadable_container(p)
+        why = archive.set_member_refusal(p) if p.is_file() else None
+        if why:
+            raise ValueError(why)
         if archive.archive_format(p) not in archive.IMAGE_FORMATS:
             raise ValueError(f"{p.name} is not a disk image, and only disk images are "
                              "read together as the member images of one source")
@@ -249,7 +241,9 @@ def carry_options(dst: Source, src: Source) -> Source:
 def _norm_source(entry: object, base: Path) -> Source | None:
     if isinstance(entry, str):
         p = (base / entry).resolve() if not Path(entry).is_absolute() else Path(entry)
-        _refuse_unreadable_container(p)
+        from . import archive
+        if p.is_file() and archive.archive_format(p) == archive.FORMAT_LOGICAL:
+            return Source(name=p.name, path=str(p), kind="archive")
         return Source(name=p.name or str(p), path=str(p))
     if isinstance(entry, dict):
         low = {k.lower(): v for k, v in entry.items()}
@@ -273,7 +267,10 @@ def _norm_source(entry: object, base: Path) -> Source | None:
         p = Path(raw)
         if not p.is_absolute():
             p = (base / raw).resolve()
-        _refuse_unreadable_container(p)
+        if low.get("carve") and p.is_file():
+            from . import archive
+            if archive.archive_format(p) == archive.FORMAT_LOGICAL:
+                raise ValueError(archive.logical_carve_refusal(p.name))
         return Source(
             name=str(low.get("name") or p.name or str(p)),
             path=str(p),
@@ -295,7 +292,6 @@ def parse_source_spec(spec: str | Path) -> tuple[list[Source], dict]:
     Returns (sources, meta) where meta may carry 'case'/'examiner'.
     """
     p = Path(spec)
-    _refuse_unreadable_container(p)
     # A full-file-system extraction is a zip, and a computer acquisition a disk image.
     # Check before the folder branch, which would otherwise register the archive
     # itself as one file, or walk a sparse bundle's band files as a folder.

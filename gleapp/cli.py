@@ -1008,7 +1008,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="ingest a folder, a full-file-system extraction archive "
                                       "(zip or tar), a disk image (E01, s01, Ex01, AFF, AFF4, "
                                       "DMG, VHD, VHDX, VMDK, QCOW, raw, or a split raw "
-                                      "set), or a JSON spec, then process")
+                                      "set), logical evidence (L01, Lx01, AD1), or a "
+                                      "JSON spec, then process")
     s.add_argument("source", nargs="+",
                    help="folder path, extraction .zip or .tar "
                                  "(plain, .gz, .bz2 or .xz), a disk image (.E01, .s01, "

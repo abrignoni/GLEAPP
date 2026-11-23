@@ -111,7 +111,7 @@ your user settings, not in any case.
         your choice to read the image alone, or that none was found. Two paths that
         open the same disk (the same file twice, a link to it, or two segments of one
         split or E01 set) are read once, and the case says which. Logical evidence
-        (L01, AD1) or a file that is not a disk image among them is refused before
+        (L01, Lx01, AD1) or a file that is not a disk image among them is refused before
         anything is read. A password, recovery password or passphrase is tried on
         the BitLocker, APFS and LUKS volumes inside each member and inside each array
         too. Each member
@@ -1671,11 +1671,16 @@ already give you.
   for its password, or for one sealed to a certificate, its private key (§1). A
   BitLocker volume, encrypted APFS volume or LUKS container inside an image is asked
   about the same way.
-- **Not accepted**: logical evidence, EnCase's (`.L01`) and FTK Imager's (`.ad1`),
-  which holds copies of files rather than a disk and is refused with that reason,
-  including an AD-encrypted set that turns out to hold one.
+- **Logical evidence**: EnCase's `.L01` and `.Lx01` and FTK Imager's `.ad1`. It holds
+  copies of files rather than a disk, so its files are listed and read directly, and
+  there is nothing to carve. Deleted AD1 entries are left out. Each file read is
+  checked against the hash the evidence stores for it, and one that fails is not
+  used; a relink or an unstage first reads in full each file the evidence holds directly. Encrypted logical
+  evidence is refused with that reason, including an AD-encrypted set that turns out
+  to hold it.
 - An acquisition is recognized by its own signature and a raw image by what it
-  holds, so the extension does not matter.
+  holds, so the extension does not decide the format. An Ex01, L01 or Lx01 still has
+  to keep its own extension to open.
 
 ### How to carve
 
