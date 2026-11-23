@@ -576,7 +576,7 @@ def test_a_skipped_row_keeps_the_hashes_it_was_ingested_with(ingest):
     src = Source(name=evidence.name, path=str(evidence), kind="archive", stage=True)
     archive.ingest_archive(case, src)
     key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
-    assert json.loads(case.db.get_meta(f"{key}:entry_hashes"))["0"].startswith(first)
+    assert case.db.get_meta(f"{key}:entry_hash:0").startswith(first)
     case.close()
 
 
@@ -614,7 +614,7 @@ def test_a_full_volume_keeps_the_hashes_of_rows_already_registered(ingest, tmp_p
         ingest([one, two], stage=True)
     case = open_case(tmp_path / "case")
     key = archive._meta_key("evidence.L01")              # pylint: disable=protected-access
-    assert one.md5 in case.db.get_meta(f"{key}:entry_hashes")
+    assert one.md5 in case.db.get_meta(f"{key}:entry_hash:0")
     case.close()
 
 
@@ -655,7 +655,7 @@ def test_hashes_are_saved_before_a_documents_pass_commits(ingest, monkeypatch):
     monkeypatch.setattr(archive, "is_document", lambda _name, _head: True)
     monkeypatch.setattr(archive, "_only_documents", lambda _src: True)
     real, seen = archive._finish, []                     # pylint: disable=protected-access
-    key = f"{archive._meta_key(evidence.name)}:entry_hashes"  # pylint: disable=protected-access
+    key = f"{archive._meta_key(evidence.name)}:entry_hash:1"  # pylint: disable=protected-access
 
     def spy(*args, **kwargs):
         seen.append(doc.md5 in (case.db.get_meta(key) or ""))
@@ -773,6 +773,37 @@ def test_relink_and_unstage_read_through_their_own_handle(ingest, monkeypatch):
 
 def _no_shared_handle(*_a, **_k):
     raise AssertionError("a full verification must not use the shared handle")
+
+
+def test_a_file_that_could_not_be_staged_says_so_on_its_row(ingest):
+    bad = _Entry("bad.jpg", JPEG + b"1")
+    bad.md5 = hashlib.md5(JPEG + b"2").hexdigest()
+    case, _evidence, _image = ingest([bad], stage=True)
+    assert "could not be read" in _rows(case)[0]["error"]
+    case.close()
+
+
+def test_the_segment_baseline_is_saved_before_the_source_is_published(ingest, monkeypatch):
+    real, seen = archive._finish, []                     # pylint: disable=protected-access
+
+    def spy(case, src, *args, **kwargs):
+        key = archive._meta_key(src.name)                # pylint: disable=protected-access
+        seen.append(case.db.get_meta(f"{key}:segment_stamps"))
+        return real(case, src, *args, **kwargs)
+    monkeypatch.setattr(archive, "_finish", spy)
+    case, _evidence, _image = ingest([_Entry("a.jpg")])
+    assert seen and seen[0]
+    case.close()
+
+
+def test_a_batch_writes_only_its_own_hashes(ingest):
+    case, evidence, _image = ingest([_Entry("a.jpg")])
+    fresh = {"7": "x:y"}
+    archive._save_entry_hashes(case, evidence.name, fresh)  # pylint: disable=protected-access
+    key = archive._meta_key(evidence.name)               # pylint: disable=protected-access
+    assert fresh == {} and case.db.get_meta(f"{key}:entry_hash:7") == "x:y"
+    assert case.db.get_meta(f"{key}:entry_hash:0") is not None
+    case.close()
 
 
 def test_carving_logical_evidence_is_refused(ingest):

@@ -3282,7 +3282,6 @@ def _verify_logical(case, name: str, img, lock, limit: int = 20,
     entry of its own: a relink skips it (``skip_nested``), since it deletes nothing, and
     an unstage does not, since it would remove that row's only copy."""
     held = {position: (n, entry) for position, entry, n in _logical_files(img)}
-    recorded = json.loads(case.db.get_meta(f"{_meta_key(name)}:entry_hashes") or "{}")
     problems: list[str] = []
     for r in case.db.iter_files("source = ?", (name,)):
         if skip_nested and r["container_id"] is not None:
@@ -3295,7 +3294,8 @@ def _verify_logical(case, name: str, img, lock, limit: int = 20,
             problems.append(f"{member}: size {got[1].size} != {r['size']}")
         elif (r["mtime"] or None) != _logical_times(got[1])[0]:
             problems.append(f"{member}: modification time differs")
-        elif recorded.get(str(r["member_offset"]), _stored_hashes(got[1])) != _stored_hashes(got[1]):
+        elif (case.db.get_meta(f"{_meta_key(name)}:entry_hash:{r['member_offset']}")
+              or _stored_hashes(got[1])) != _stored_hashes(got[1]):
             problems.append(f"{member}: the evidence stores a different hash than at ingest")
         else:
             sha, why = _read_evidence(img, lock, got[1])
@@ -3367,12 +3367,15 @@ def _ingest_logical(case, src, path: Path, *, count: int, progress) -> int:
 
 
 def _save_entry_hashes(case, name: str, fresh: dict) -> None:
-    """Add the stored hashes of rows just registered, in the transaction that holds them."""
-    key = f"{_meta_key(name)}:entry_hashes"
+    """Write the stored hashes of the rows just registered, one per entry, in the
+    transaction that holds those rows; the caller commits."""
+    key = _meta_key(name)
     with case.db.lock:
-        recorded = json.loads(case.db.get_meta(key) or "{}")
-        recorded.update(fresh)
-        case.db.set_meta(key, json.dumps(recorded))
+        case.db.conn.executemany(
+            "INSERT INTO meta(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [(f"{key}:entry_hash:{position}", value) for position, value in fresh.items()])
+    fresh.clear()
 
 
 def _stored_hashes(entry) -> str:
@@ -3437,7 +3440,7 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
     fresh: dict[str, str] = {}                      # only rows registered in this pass
     for position, entry, name, kind, ext, dest in todo:
         mtime, atime, created = _logical_times(entry)
-        known_sha = None
+        known_sha = copy_error = None
         if stage:
             try:
                 with case.db.lock:
@@ -3458,14 +3461,16 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                 if dest.exists() and not _copy_matches_entry(entry, dest, known_sha):
                     uncopied += 1                   # the row keeps describing its old copy
                     continue
-                uncopied += not dest.exists()
+                if not dest.exists():
+                    uncopied += 1
+                    copy_error = "could not be read from the evidence when it was staged"
             else:
                 if mtime:
                     with contextlib.suppress(OSError):
                         os.utime(dest, (atime or mtime, mtime))
         rel = name[len(root):] if root and name.startswith(root) else name
         _register(case, src, dest, name, rel, kind, ext, entry.size, mtime, created, None,
-                  position, atime=atime)
+                  position, atime=atime, error=copy_error)
         fresh[str(position)] = _stored_hashes(entry)
         timed += bool(mtime)
         tally.registered += 1
@@ -3476,6 +3481,10 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
             if progress:
                 progress(n)
     _save_entry_hashes(case, src.name, fresh)       # before _finish commits these rows
+    key = _meta_key(src.name)
+    if not _only_documents(src):                    # before _finish publishes the source
+        case.db.set_meta(f"{key}:segments", str(len(img.paths)))
+        case.db.set_meta(f"{key}:segment_stamps", json.dumps(opened))
     reason = (f"{uncopied} files could not be copied, so the source is still read on demand"
               if uncopied else "")
     _finish(case, src, path, fmt=FORMAT_LOGICAL, root=root, stage=stage and not uncopied,
@@ -3489,18 +3498,12 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
             case.db.audit_log(case.examiner, "logical-entries-left-out", json.dumps(
                 {"source": src.name, "deleted": deleted, "slack_index_attribute": no_file}))
     if uncopied and _only_documents(src):           # _finish leaves the mode to a first ingest
-        key = _meta_key(src.name)
         case.db.set_meta(f"{key}:mode", MODE_REFERENCE)
         case.db.set_meta(f"{key}:mode_reason", reason)
         case.db.commit()
     if unread:
         case.db.audit_log(case.examiner, "logical-entries-not-read", json.dumps(
             {"source": src.name, "entries": list(dict.fromkeys(unread))}))
-    key = _meta_key(src.name)
-    if not _only_documents(src):
-        case.db.set_meta(f"{key}:segments", str(len(img.paths)))
-        case.db.set_meta(f"{key}:segment_stamps", json.dumps(opened))
-        case.db.commit()
     if progress:
         progress(n)
     return n
