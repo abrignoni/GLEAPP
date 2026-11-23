@@ -521,7 +521,7 @@ def test_a_staged_reingest_keeps_a_copy_with_a_recorded_hash(ingest):
     case.close()
 
 
-def test_ingest_reads_through_its_own_handle(ingest, tmp_path, monkeypatch):
+def test_ingest_reads_through_its_own_handle(tmp_path, monkeypatch):
     evidence = tmp_path / "own.L01"
     evidence.write_bytes(L01_SIGNATURE + bytes(4096))
     image = _Image([_Entry("a.jpg")], archive.ewfprobe.FORMAT_L01, [str(evidence)])
