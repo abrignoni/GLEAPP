@@ -4186,8 +4186,8 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     if padded:
         case.db.set_meta(f"{key}:padded_chunks", json.dumps(padded))
     # An image that has not changed still holds the damage an earlier pass read, whatever
-    # this pass selected, so only a staged pass over a changed image replaces the list.
-    if stage and not _only_documents(src) and not _same_as_recorded(case, key, image_path):
+    # this pass selected. What was read from a changed image says nothing about this one.
+    if not _only_documents(src) and not _same_as_recorded(case, key, image_path):
         case.db.set_meta(f"{key}:checksum_chunks", json.dumps(damaged))
     elif damaged:
         earlier = _meta_list(case, f"{key}:checksum_chunks")

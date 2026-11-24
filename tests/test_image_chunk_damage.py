@@ -405,3 +405,20 @@ def test_a_narrower_staged_pass_keeps_the_damage_record(tmp_path):
         assert archive.source_record(case, name)["checksum_chunks"] == before
     finally:
         case.close()
+
+
+def test_a_reference_pass_over_a_changed_image_drops_the_old_record(tmp_path):
+    jpg = _jpeg(1)
+    image = _image(tmp_path, [("HOLIDAY", jpg)])
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image, stage=False)
+        key = archive._meta_key(name)                  # pylint: disable=protected-access
+        case.db.set_meta(f"{key}:checksum_chunks", '["a line about the earlier image"]')
+        later = image.stat().st_mtime + 5
+        os.utime(image, (later, later))
+        archive.close_zips()
+        _ingest(case, image, stage=False)
+        assert "checksum_chunks" not in archive.source_record(case, name)
+    finally:
+        case.close()
