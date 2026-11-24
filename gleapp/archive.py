@@ -4189,8 +4189,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     # An image that has not changed still holds the damage an earlier pass read, whatever
     # this pass selected. What was read from a changed image says nothing about this one.
     stamp = _files_stamp(files_read)
-    if not _only_documents(src) and (
-            stamp is None or stamp != case.db.get_meta(f"{key}:checksum_stamp")):
+    if stamp is None or stamp != case.db.get_meta(f"{key}:checksum_stamp"):
         case.db.set_meta(f"{key}:checksum_chunks", json.dumps(damaged))
         case.db.set_meta(f"{key}:checksum_stamp", stamp or "")
     elif damaged:

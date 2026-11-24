@@ -445,3 +445,23 @@ def test_a_changed_later_segment_starts_a_new_damage_record(tmp_path):
         assert "checksum_chunks" not in archive.source_record(case, name)
     finally:
         case.close()
+
+
+def test_a_documents_pass_over_a_changed_image_drops_the_old_record(tmp_path):
+    jpg = _jpeg(1)
+    image = _image(tmp_path, [("HOLIDAY", jpg)])
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image, stage=False)
+        key = archive._meta_key(name)                  # pylint: disable=protected-access
+        case.db.set_meta(f"{key}:checksum_chunks", '["a line about the earlier image"]')
+        later = image.stat().st_mtime + 5
+        os.utime(image, (later, later))
+        archive.close_zips()
+        sources, _ = parse_source_spec(image)
+        sources[0].documents = True
+        sources[0].only_documents = True
+        ingest_sources(case, sources)
+        assert "checksum_chunks" not in archive.source_record(case, name)
+    finally:
+        case.close()
