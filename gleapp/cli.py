@@ -481,7 +481,8 @@ def _padded_lines(case, src) -> list[str]:
         return []
     from . import archive
     rec = archive.source_record(case, src.name) or {}
-    return [str(line) for line in rec.get("padded_chunks") or []]
+    return [str(line) for key in ("padded_chunks", "checksum_chunks")
+            for line in rec.get(key) or []]
 
 
 def _run_process(case, args) -> None:

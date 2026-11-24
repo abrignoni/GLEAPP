@@ -5143,6 +5143,14 @@ function renderSourcePanel(list) {
           + ` the walk read are known.">read with zeros: `
           + padded.map(esc).join("; ") + `</div>`;
       }
+      // Chunks of the acquisition the walk read that failed their stored checksum.
+      const badChunks = s.checksum_chunks || [];
+      if (badChunks.length) {
+        vols += `<div style="font-size:11px;margin-top:2px;color:var(--danger)"`
+          + ` title="These chunks do not match the checksum the acquisition stores for`
+          + ` them. Only the chunks the walk read are known.">failed checksum: `
+          + badChunks.map(esc).join("; ") + `</div>`;
+      }
       // The member images of a RAID set, every one, each with its own state and
       // whether it was found beside the image picked, then what the reader
       // assembled from them, in its own words.
