@@ -210,51 +210,89 @@ def test_a_link_that_fails_keeps_the_copy_at_its_name(tmp_path, monkeypatch):
     assert dest.read_bytes() == b"earlier"
 
 
-def test_a_resident_ntfs_file_in_a_damaged_image_is_marked(tmp_path):
-    """Its bytes are inside an MFT record the walker read earlier, so reading the file
-    touches no chunk at all. Windows wrote this volume."""
+def _ntfs_image(tmp_path):
+    """An uncompressed E01 of a volume Windows wrote, with one resident file (read with
+    no chunk access once its record is held) and one file stored in clusters."""
     fixture = Path(__file__).parent / "fixtures" / "ntfs-windows.img.gz"
     media = gzip.decompress(fixture.read_bytes())
     folder = tmp_path / "ev"
     folder.mkdir()
     image = Path(write_ewf(folder, "acq", media, chunk_size=1 << 15, compress=False)[0])
-
+    resident = stored = None
     img = archive._open_image_file(str(image))         # pylint: disable=protected-access
-    found = None
     try:
         for base, size, kind, _label in archive._volumes(img):  # pylint: disable=protected-access
             walker = qnxprobe.walker_for(kind, img, base, size)
             if walker is None:
                 continue
             for path, node, fsize, _mtime in qnxprobe.collect(walker, walker.root):
-                if not fsize or fsize < 32:
+                if not fsize or fsize < 32 or not isinstance(node, int):
                     continue
-                with archive._chunk_watch() as seen:   # pylint: disable=protected-access
-                    data = b"".join(walker.read_file(node, fsize))
-                if not any(seen.values()) and media.count(data[:32]) == 1:
-                    found = (path, data)
-                    break
-            if found:
-                break
+                try:
+                    with archive._chunk_watch() as seen:  # pylint: disable=protected-access
+                        data = b"".join(walker.read_file(node, fsize))
+                except qnxprobe.NtfsUnreadable:        # a cloud placeholder holds no bytes
+                    continue
+                if len(data) < 32 or media.count(data[:32]) != 1:
+                    continue
+                if any(seen.values()):
+                    stored = stored or (path, data)
+                else:
+                    resident = resident or (path, data)
     finally:
         img.close()
         archive.close_zips()
-    assert found, "the fixture holds no resident file with unique content"
-    path, data = found
+    assert resident and stored, "the fixture lacks a resident or a stored file"
+    return image, resident, stored
 
+
+def _flip(image, data):
     raw = bytearray(image.read_bytes())
     at = raw.find(data[:32])
     assert at > 0
     raw[at + 8] ^= 0xFF
     image.write_bytes(raw)
 
+
+def _rows_for(case, name, path):
+    rows = [r for r in case.db.iter_files("source = ?", (name,))
+            if r["orig_path"].endswith(path)]
+    assert rows
+    return rows
+
+
+def test_a_resident_ntfs_file_in_a_damaged_chunk_is_marked(tmp_path):
+    """Its bytes are inside an MFT record the walker read earlier, so reading the file
+    touches no chunk at all. Windows wrote this volume."""
+    image, (path, data), _stored = _ntfs_image(tmp_path)
+    _flip(image, data)
     case = _case(tmp_path)
     try:
         name = _ingest(case, image, other=True)
-        rows = [r for r in case.db.iter_files("source = ?", (name,))
-                if r["orig_path"].endswith(path)]
-        assert rows
+        rows = _rows_for(case, name, path)
         assert all(archive.CHUNK_DAMAGE_ERROR in (r["error"] or "") for r in rows)
         assert not any(Path(r["path"]).exists() for r in rows)
     finally:
         case.close()
+
+
+def test_an_intact_resident_file_is_kept_when_another_chunk_is_damaged(tmp_path):
+    image, (path, data), (other, other_data) = _ntfs_image(tmp_path)
+    _flip(image, other_data)
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image, other=True)
+        assert all(r["error"] for r in _rows_for(case, name, other))
+        for row in _rows_for(case, name, path):
+            assert row["error"] is None
+            assert Path(row["path"]).read_bytes() == data
+    finally:
+        case.close()
+
+
+def test_relinking_a_name_already_linked_leaves_no_extra_name(tmp_path):
+    first, dest = tmp_path / "first", tmp_path / "dest"
+    first.write_bytes(b"first")
+    os.link(first, dest)
+    assert archive._link(first, dest) is True          # pylint: disable=protected-access
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["dest", "first"]

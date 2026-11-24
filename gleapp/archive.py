@@ -803,6 +803,9 @@ def placeholder_error(size: int, stored) -> str:
 
 # What a row says when its file was read through a chunk that fails its checksum.
 CHUNK_DAMAGE_ERROR = "read through an image chunk that fails its stored checksum"
+# and when the chunk that holds its bytes cannot be named, in an image with such a chunk
+CHUNK_UNPLACED_ERROR = ("not verified: the chunk holding this file is not known and the "
+                        "image holds a chunk that fails its stored checksum")
 
 
 def is_placeholder_error(text) -> bool:
@@ -1041,6 +1044,9 @@ def _link(first: Path, dest: Path) -> bool:
         dest.parent.mkdir(parents=True, exist_ok=True)
         os.link(first, part)                 # a copy already at dest stays if this fails
         os.replace(part, dest)
+        # renaming over another name of the same file does nothing and keeps both names
+        with contextlib.suppress(FileNotFoundError):
+            part.unlink()
         return True
     except OSError:
         with contextlib.suppress(OSError):
@@ -1613,8 +1619,8 @@ class _DamageChecked:
     Raised from inside the copy, so ``_write_stream`` drops its temp file and the final
     path is left as it was."""
 
-    def __init__(self, fin, seen: dict, bases) -> None:
-        self._fin, self._seen, self._bases = fin, seen, bases
+    def __init__(self, fin, seen: dict, bases, reread=None) -> None:
+        self._fin, self._seen, self._bases, self._reread = fin, seen, bases, reread
         self._got = False
 
     def read(self, n: int = -1) -> bytes:
@@ -1624,23 +1630,44 @@ class _DamageChecked:
         else:
             _refuse_damaged(self._seen)
             # Bytes with no chunk read for them came from a record the walker already
-            # holds (an NTFS resident file is inside its MFT record), so which chunk
-            # they sit in is not known here. With damage in the image they are not
-            # vouched for.
-            if self._got and not any(self._seen.values()) and any(
-                    getattr(b, "checksum_errors", None) for b in self._bases):
-                raise ChunkDamage(f"{CHUNK_DAMAGE_ERROR} (its content came from a "
-                                  "filesystem record read earlier, and the image holds "
-                                  "a damaged chunk)")
+            # holds (an NTFS resident file is inside its MFT record). Read that record
+            # again here so its own chunks answer. Where they cannot, and the image
+            # holds damage, the bytes are not vouched for.
+            if self._got and not any(self._seen.values()):
+                covered = False
+                if self._reread is not None:
+                    with contextlib.suppress(Exception):
+                        covered = bool(self._reread())
+                    _refuse_damaged(self._seen)
+                if not covered and any(getattr(b, "checksum_errors", None)
+                                       for b in self._bases):
+                    raise ChunkDamage(CHUNK_UNPLACED_ERROR)
         return data
 
 
-def _write_image_file(fin, dest: Path, bases=(), *, holes: bool = False) -> None:
+def _record_reread(walker, num):
+    """A call that reads NTFS record ``num`` again, true when that record alone holds
+    its attributes; None for a walker that keeps no such records."""
+    raw = getattr(walker, "_record_raw", None)
+    if raw is None:
+        return None
+
+    def reread() -> bool:
+        raw(num)
+        return not any(a.type == qnxprobe.NTFS_ATTRIBUTE_LIST
+                       for a in walker._record(num))  # pylint: disable=protected-access
+
+    return reread
+
+
+def _write_image_file(fin, dest: Path, bases=(), *, holes: bool = False,
+                      reread=None) -> None:
     """``_write_stream`` for a file read out of an image, refusing it, with nothing
     written to ``dest``, when it was read through a chunk that fails its checksum.
-    ``bases`` are the acquisitions the file's volume is read from."""
+    ``bases`` are the acquisitions the file's volume is read from, and ``reread``
+    (``_record_reread``) reads the record a file's bytes were cached from."""
     with _chunk_watch() as seen:
-        _write_stream(_DamageChecked(fin, seen, bases), dest, holes=holes)
+        _write_stream(_DamageChecked(fin, seen, bases, reread), dest, holes=holes)
 
 
 def _note_acquisition(img, path) -> None:
@@ -2610,7 +2637,8 @@ def _extract_walked_member(rec: dict, row, dest: Path) -> None:
     w, node = _row_walker(rec, row)
     try:
         _write_image_file(_walk_reader(w, node, size), dest,
-                          _IMAGE_BASES.get(_cache_key(path), ()), holes=True)
+                          _IMAGE_BASES.get(_cache_key(path), ()), holes=True,
+                          reread=_record_reread(w, getattr(node, "record", node)))
     except ChunkDamage:
         raise                                        # nothing was written to dest
     except Exception as exc:                         # pylint: disable=broad-except
@@ -4101,7 +4129,9 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                         # (A tar member is read through the one handle the sniff
                         # consumed, which is why that path does pass its head.)
                         _write_image_file(_walk_reader(walker, node, fsize), dest,
-                                          [b for _n, b in acquired], holes=True)
+                                          [b for _n, b in acquired], holes=True,
+                                          reread=_record_reread(
+                                              walker, getattr(node, "record", node)))
                         written.setdefault(same, dest)
                 except ChunkDamage as exc:
                     error, kept = _damage_note(exc, dest)
@@ -5296,7 +5326,8 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                 dest = _staged_path(staged_dir, slug, member)
                 try:
                     _write_image_file(_DeletedReader(walker, e), dest,
-                                      [b for _n, b in acquired])
+                                      [b for _n, b in acquired],
+                                      reread=_record_reread(walker, getattr(e, "record", None)))
                 except (*unreadable, OSError, ChunkDamage):
                     tally.failed += 1                # an earlier copy at dest stays
                     continue
