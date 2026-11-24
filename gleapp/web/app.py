@@ -46,7 +46,7 @@ FIELDS = (
     "hashset_hit, hashset_cat, hashset_kind, hashset_sources, hashset_mask, "
     "stack_id, vstack_id, cluster_id, thumb, error, "
     "media_id, orig_name, orig_path, mime, vic_flags, alt_paths, recorded_times, origin, "
-    "cache_info"
+    "content_unverified, cache_info"
 )
 
 # columns the details list-view may sort and filter on (must all be in FIELDS)

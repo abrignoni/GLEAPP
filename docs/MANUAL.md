@@ -1765,9 +1765,19 @@ still names it is recovered with its **real name**.
 - **Zone-less times are never turned into instants.** They are carried as
   recorded text (§3). A **walked** FAT32 or exFAT file, the ordinary case,
   works the same way.
-- **Overwritten bytes are never presented as the file.** On NTFS, FAT32 and
-  exFAT, a file is recovered only while its clusters are still free, and
-  refused once a later file has taken one. On flash, a file is recovered only
+- **A file a later one has taken a cluster from is refused.** On NTFS, FAT32
+  and exFAT, a file is recovered only while its clusters are still free. A
+  free cluster may since have held another file that was deleted in turn, and
+  when that file's own record has been overwritten too, nothing on the volume
+  shows it, so a recovery read from clusters is a candidate. The reader labels
+  FAT32 and exFAT recoveries: on those recovered with this version or later,
+  **How recovered** says *content unverified* in the report and in LAVA, the
+  list view's column adds *unverified*, and the details pane shows it under
+  *Recovered content*. An NTFS
+  recovery read from clusters has the same limit and no label. On a FAT32
+  volume with cluster numbers of 0x10000 or more, an entry marked deleted whose
+  stored high word is zero is refused unless its low word identifies exactly
+  one cluster. On flash, a file is recovered only
   while every page or block its size needs is still there; an erased block and
   a hole that was never written look alike, so either one refuses the file
   rather than filling it with zeros.

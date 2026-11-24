@@ -33,7 +33,8 @@ _CSV_FIELDS = [
     "category", "category_label", "triage", "flags_label",
     "hashset_hit", "hashset_cat", "hashset_kind", "hash_matches",
     "stack_id", "vstack_id", "cluster_id", "notes",
-    "media_id", "orig_name", "orig_path", "mime", "origin", "recorded_times", "cache_info",
+    "media_id", "orig_name", "orig_path", "mime", "origin", "content_unverified",
+    "recorded_times", "cache_info",
     "vic_record_media_id", "vic_series", "vic_flags", "vic_tags", "vic_exif",
     # Content Credentials (gleapp/provenance.py); "Not read" until a pass read the file
     "c2pa_credentials", "c2pa_ai", "c2pa_signer_stated", "c2pa_generator",
@@ -340,6 +341,11 @@ _ORIGIN_LABELS = {
     "carve": "carved from unclaimed space",
 }
 
+# Said after the phrase on a row whose recovered bytes the reader labels a candidate
+# (files.content_unverified). One string, for the same reason as the phrases.
+UNVERIFIED_NOTE = ("content unverified: FAT and exFAT cannot show that a free cluster "
+                   "was not reused by a later file, so these bytes can be another file's")
+
 
 def _origin_label(d) -> str:
     """How this row's file was recovered, in words.
@@ -348,10 +354,14 @@ def _origin_label(d) -> str:
     before the column existed and every row from a folder or archive source: the
     question only has an answer for an acquisition. An unrecognised value is
     passed through as stored rather than dropped, so a value this version does
-    not know about is still visible to whoever reads the report.
+    not know about is still visible to whoever reads the report. A FAT or exFAT
+    recovery the reader labels ``content_unverified`` says so after the phrase.
     """
     got = d.get("origin") or ""
-    return _ORIGIN_LABELS.get(got, got)
+    label = _ORIGIN_LABELS.get(got, got)
+    if label and d.get("content_unverified"):
+        label = f"{label}; {UNVERIFIED_NOTE}"
+    return label
 
 
 # key -> (label, value fn, is_monospace).  The report dialog offers exactly

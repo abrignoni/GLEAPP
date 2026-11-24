@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -92,3 +93,77 @@ def test_an_unflagged_compression_attribute_is_recorded_as_damage(tmp_path):
         assert "; object 69: " in notes[0]
     finally:
         case.close()
+
+
+# ---- EFS, JFFS2 and SquashFS, which record what they could not read since qnxprobe 1.88
+
+def _jffs2_cut() -> bytes:
+    """A JFFS2 region holding two files, cut inside the last node."""
+    import jffs2writer as jw                           # pylint: disable=import-error,import-outside-toplevel
+    jpg = _jpeg()
+    nodes = [jw.dirent(1, 1, 2, "a.jpg", 1700000000), jw.inode(2, 1, len(jpg), 1700000000, jpg),
+             jw.dirent(1, 1, 3, "b.jpg", 1700000000), jw.inode(3, 1, len(jpg), 1700000000, jpg)]
+    whole, offsets = jw.build(nodes, size=sum(len(jw._pad(n)) for n in nodes))  # pylint: disable=protected-access
+    return whole[:offsets[-1] + 20]
+
+
+def test_a_cut_jffs2_region_says_what_it_could_not_read(tmp_path):
+    image = _ev(tmp_path) / "cut-jffs2.img"
+    image.write_bytes(_jffs2_cut())
+    case, name = _ingest(tmp_path, image)
+    try:
+        notes = archive.source_record(case, name).get("volume_notes") or []
+        assert len(notes) == 1, notes
+        # the volume's note, as an export writes it, then its damage, each once
+        assert notes[0].startswith("lba0 (jffs2): 1 name leads to an inode with no readable "
+                                   "node in this region"), notes
+        assert "; 1 damaged record: the region ends inside a node" in notes[0]
+        assert notes[0].count("the region ends inside a node") == 1
+    finally:
+        case.close()
+
+
+def test_a_cut_squashfs_image_says_why_nothing_is_listed(tmp_path):
+    raw = gzip.decompress((FIXTURES / "squashfs-gzip.img.gz").read_bytes())
+    image = _ev(tmp_path) / "cut-squashfs.img"
+    image.write_bytes(raw[:int(len(raw) * 0.6)])
+    case, name = _ingest(tmp_path, image)
+    try:
+        record = archive.source_record(case, name)
+        refused = json.loads(record.get("volumes_not_read") or "[]")
+        assert len(refused) == 1, record
+        assert refused[0].startswith("lba0 (squashfs): nothing listed: 2 damaged records: "
+                                     "the superblock records"), refused
+        # the cut is one line of the damage; the note does not say it a second time
+        assert refused[0].count("the superblock records") == 1, refused
+    finally:
+        case.close()
+
+
+def test_a_whole_squashfs_or_jffs2_volume_records_nothing(tmp_path):
+    raw = gzip.decompress((FIXTURES / "squashfs-gzip.img.gz").read_bytes())
+    image = _ev(tmp_path) / "squashfs.img"
+    image.write_bytes(raw)
+    case, name = _ingest(tmp_path, image)
+    try:
+        record = archive.source_record(case, name)
+        assert not record.get("volume_notes") and not record.get("volumes_not_read"), record
+    finally:
+        case.close()
+
+
+def test_efs_jffs2_and_squashfs_are_said_with_the_note_an_export_writes():
+    """EFS has no real-data cut here, so its wiring is checked on the reader's own
+    attributes: its ``note`` is the cut line that is already in its damage, and
+    ``volume_note``, which an export writes, never repeats it."""
+    for kind in ("efs", "jffs2", "squashfs"):
+        assert kind in archive._SAYING_KINDS and kind in archive._VOLUME_NOTE_KINDS  # pylint: disable=protected-access
+
+    class _Efs:                                         # the shape EfsWalker has when cut
+        note = "cut short: the partition is not whole in the image"
+        volume_note = None
+        damage = [note]
+
+    said = archive._walker_says(_Efs(), "efs")           # pylint: disable=protected-access
+    assert said == "1 damaged record: cut short: the partition is not whole in the image"
+    assert hasattr(archive.qnxprobe.EfsWalker, "volume_note")

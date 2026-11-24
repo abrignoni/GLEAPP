@@ -18,6 +18,7 @@ and those must not be registered as media.
 
 import gzip
 import hashlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -57,7 +58,7 @@ def _case(tmp_path, image):
     return case, sources[0].name
 
 
-@pytest.mark.parametrize("stem", ["fat32-deleted", "exfat-deleted"])
+@pytest.mark.parametrize("stem", ["exfat-deleted"])
 def test_deleted_files_come_back_with_their_name_and_content(tmp_path, stem):
     case, name = _case(tmp_path, _e01(tmp_path, stem))
     added, _offsets = archive.recover_deleted(case, name)
@@ -88,7 +89,7 @@ def test_a_zone_less_wall_clock_is_kept_as_text_not_an_instant(tmp_path, stem):
             assert any("utc offset" in k for k in said)
 
 
-@pytest.mark.parametrize("stem", ["fat32-deleted", "exfat-deleted"])
+@pytest.mark.parametrize("stem", ["exfat-deleted"])
 def test_a_carve_alongside_does_not_add_a_nameless_twin(tmp_path, stem):
     case, name = _case(tmp_path, _e01(tmp_path, stem))
     _added, offsets = archive.recover_deleted(case, name)
@@ -97,6 +98,46 @@ def test_a_carve_alongside_does_not_add_a_nameless_twin(tmp_path, stem):
     twin = [r for r in case.db.iter_files("origin='carve'")
             if r["member_offset"] and int(r["member_offset"]) in offsets]
     assert twin == [], "the carve added a nameless copy of a file recovered by name"
+
+
+def test_an_ambiguous_fat32_first_cluster_is_refused_not_guessed(tmp_path):
+    """The fat32-deleted volume has cluster numbers of 0x10000 and more, and the
+    macOS driver that wrote it left each deleted entry's high word at zero. Since
+    qnxprobe 1.88 such an entry is refused when its low word fits more than one
+    cluster, because the low word alone returned another file's bytes on Windows
+    volumes. Nothing is recovered from it by name, and the audit line says so."""
+    case, name = _case(tmp_path, _e01(tmp_path, "fat32-deleted"))
+    added, offsets = archive.recover_deleted(case, name)
+    assert added == 0 and offsets == set()
+    said = case.db.conn.execute(
+        "SELECT detail FROM audit WHERE action='recover-deleted'").fetchall()[-1][0]
+    assert "deleted file record(s) of any type the reader refused, first: " in said, said
+    assert "its first cluster is ambiguous" in said, said
+    raw = gzip.decompress((FIXTURES / "fat32-deleted.img.gz").read_bytes())
+    walker = archive.qnxprobe.walker_for("fat32", io.BytesIO(raw), 0, len(raw))
+    named = [e for e in walker.deleted_files() if not e.is_dir and e.size]
+    assert named and all(not e.recoverable and "ambiguous" in e.reason for e in named)
+
+
+def test_a_fat_or_exfat_recovery_says_its_content_is_unverified(tmp_path):
+    """exFAT cannot show that a free cluster was not reused by a later file, so the
+    reader labels every recovery content_unverified, and the row and every surface
+    that says how it was recovered carry that."""
+    from gleapp import report                           # pylint: disable=import-outside-toplevel
+    case, name = _case(tmp_path, _e01(tmp_path, "exfat-deleted"))
+    added, _offsets = archive.recover_deleted(case, name)
+    rows = list(case.db.iter_files("origin='deleted'"))
+    assert added and len(rows) == added
+    for r in rows:
+        assert r["content_unverified"] == 1
+        assert report._origin_label(dict(r)).endswith(report.UNVERIFIED_NOTE)  # pylint: disable=protected-access
+    # a row the reader did not label says nothing more than its phrase
+    assert report._origin_label({"origin": "deleted", "content_unverified": 0}) == \
+        "recovered from a deleted record"                 # pylint: disable=protected-access
+    out = tmp_path / "out"
+    out.mkdir()
+    lines = report.export_csv(case, out / "r.csv").read_text(encoding="utf-8").splitlines()
+    assert "content_unverified" in lines[0].split(",")
 
 
 def test_recover_deleted_finds_nothing_when_no_files_were_deleted(tmp_path):

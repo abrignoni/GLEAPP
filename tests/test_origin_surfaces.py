@@ -149,14 +149,17 @@ def three_origins(tmp_path_factory):
     """A case whose rows cover all three origins.
 
     No single committed fixture carries them, so this uses two sources: the
-    fat32-deleted image, which really does hold deleted directory entries, with a
+    exfat-deleted image, which really does hold deleted directory entries, with a
     JPEG planted in the tail no cluster claims for the carve to find, and a fresh
     FAT32 volume of live files for the walk. The filter is case-wide, so one case
     with two sources is the thing under test.
     """
     tmp = tmp_path_factory.mktemp("three-origins")
     (tmp / "ev").mkdir()
-    vol = bytearray(gzip.decompress((FIXTURES / "fat32-deleted.img.gz").read_bytes()))
+    # exFAT, not the fat32-deleted image: since qnxprobe 1.88 the deleted entries of
+    # that macOS-written FAT32 volume have a first cluster that fits more than one
+    # cluster, so none of them is recovered
+    vol = bytearray(gzip.decompress((FIXTURES / "exfat-deleted.img.gz").read_bytes()))
     planted = _jpeg((10, 20, 240))
     at = len(vol) - 64 * 1024
     vol[at:at + len(planted)] = planted
@@ -250,7 +253,10 @@ def test_every_report_surface_says_how_a_row_was_recovered(three_origins, tmp_pa
         # header: headers and row tuples are co-indexed, so an off-by-one would
         # put a source name or a media reference in this column
         got = {r[0] for r in conn.execute("SELECT how_recovered FROM media_files")}
-        assert got == set(report._ORIGIN_LABELS.values())  # pylint: disable=protected-access
+        labels = report._ORIGIN_LABELS                      # pylint: disable=protected-access
+        # every exFAT recovery is a candidate, and says so after its phrase
+        assert got == {labels["walk"], labels["carve"],
+                       f"{labels['deleted']}; {report.UNVERIFIED_NOTE}"}, got
     finally:
         conn.close()
 

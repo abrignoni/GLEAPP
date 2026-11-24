@@ -684,7 +684,8 @@ const LIST_DEFS = [
     options: () => state.sources.map(s => ({ value: s, label: s })) },
   // How the row was recovered. Only an acquisition has more than one answer, so
   // this is off by default and turned on from the column picker.
-  { key: "origin", label: "How recovered", type: "enum", get: f => ORIGIN_SHORT[f.origin] || "",
+  { key: "origin", label: "How recovered", type: "enum",
+    get: f => (ORIGIN_SHORT[f.origin] || "") + (f.content_unverified ? ", unverified" : ""),
     options: () => Object.entries(ORIGIN_SHORT).map(([value, label]) => ({ value, label })) },
   { key: "kind", label: "Type", type: "enum", get: f => f.kind || "",
     options: [{ value: "image", label: "image" }, { value: "video", label: "video" },
@@ -1592,6 +1593,10 @@ async function showMeta(id) {
     ["FS written", fmtEpoch(f.mtime)],
     ["FS accessed", fmtEpoch(f.atime)],
     ["Recorded (as stored, no zone)", fmtRecorded(f)],
+    // a FAT or exFAT recovery: the volume cannot show its clusters were not reused
+    ["Recovered content", f.content_unverified ? "Unverified: FAT and exFAT cannot show "
+      + "that a free cluster was not reused by a later file, so these bytes can be another "
+      + "file's" : ""],
     ["Camera", f.camera || ""],
     ["Faces", f.faces || 0], ["Skin ratio", f.skin_ratio ?? ""],
     ["Matched in", matchedInText(f)],
