@@ -167,3 +167,75 @@ def test_efs_jffs2_and_squashfs_are_said_with_the_note_an_export_writes():
     said = archive._walker_says(_Efs(), "efs")           # pylint: disable=protected-access
     assert said == "1 damaged record: cut short: the partition is not whole in the image"
     assert hasattr(archive.qnxprobe.EfsWalker, "volume_note")
+
+
+# ---- the walkers whose damage qnxprobe 1.88 records, said since GLEAPP #347
+
+_WALKED_WITH_DAMAGE = {"ext2", "ext3", "ext4", "f2fs", "fat12", "fat16", "fat32", "exfat",
+                       "ntfs", "qnx4", "ubi", "ubifs", "yaffs1", "yaffs2"}
+
+
+def test_every_walker_that_records_damage_is_said():
+    kinds = set(archive._DAMAGE_KINDS) | set(archive._SAYING_KINDS)  # pylint: disable=protected-access
+    assert _WALKED_WITH_DAMAGE <= kinds, sorted(_WALKED_WITH_DAMAGE - kinds)
+
+    class _Ntfs:                                         # the shape a walker has when damaged
+        damage = ["MFT record 40: failed its fixup check"]
+
+    said = archive._walker_says(_Ntfs(), "ntfs")         # pylint: disable=protected-access
+    assert said == "1 damaged record: MFT record 40: failed its fixup check"
+
+
+def test_a_line_the_reader_marks_note_is_not_counted_as_damage():
+    """The UBI walker keeps "note: ..." lines in its damage, for an empty volume among
+    others (measured on qnxprobe's empty1 and empty2 known-data images). They are said
+    as the reader's notes, apart from the damage."""
+    class _Ubi:
+        damage = ["note: the volume table lists 1 volume(s) and no eraseblock of any of them "
+                  "is here", "eraseblock 3: its header fails its CRC"]
+
+    said = archive._walker_says(_Ubi(), "ubi")           # pylint: disable=protected-access
+    assert said == ("1 damaged record: eraseblock 3: its header fails its CRC; 1 reader note: "
+                    "the volume table lists 1 volume(s) and no eraseblock of any of them is here")
+
+    class _Empty:
+        damage = ["note: the volume table lists 2 volume(s) and no eraseblock of any of them "
+                  "is here"]
+
+    said = archive._walker_says(_Empty(), "ubi")         # pylint: disable=protected-access
+    assert said.startswith("1 reader note: ") and "damaged" not in said
+    # a volume with only notes was read, so listing nothing does not make it "not read"
+    assert archive._only_reader_notes(_Empty(), "ubi")   # pylint: disable=protected-access
+    assert not archive._only_reader_notes(_Ubi(), "ubi")  # pylint: disable=protected-access
+    assert not archive._only_reader_notes(_Empty(), "btrfs")  # pylint: disable=protected-access
+
+
+def _fat32_volume() -> bytes:
+    return build_fat32([("HOLIDAY", "JPG", _jpeg(), (2023, 6, 1, 12, 30, 0))])
+
+
+def test_a_fat32_volume_cut_before_its_root_folder_says_why_nothing_is_listed(tmp_path):
+    volume = _fat32_volume()
+    fh = io.BytesIO(volume)
+    data_start = archive.qnxprobe.walker_for("fat32", fh, 0, len(volume)).data_start
+    image = _ev(tmp_path) / "cut-fat32.img"
+    image.write_bytes(volume[:data_start])
+    case, name = _ingest(tmp_path, image)
+    try:
+        refused = json.loads(archive.source_record(case, name).get("volumes_not_read") or "[]")
+        assert len(refused) == 1, refused
+        assert refused[0].startswith("lba0 (fat32): nothing listed: 2 damaged records: "
+                                     "the root folder at cluster 0x2: "), refused
+    finally:
+        case.close()
+
+
+def test_a_whole_fat32_volume_records_nothing(tmp_path):
+    image = _ev(tmp_path) / "fat32.img"
+    image.write_bytes(_fat32_volume())
+    case, name = _ingest(tmp_path, image)
+    try:
+        record = archive.source_record(case, name)
+        assert not record.get("volume_notes") and not record.get("volumes_not_read"), record
+    finally:
+        case.close()

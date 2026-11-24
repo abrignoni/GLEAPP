@@ -218,7 +218,8 @@ def test_stage_and_unstage_round_trip(tmp_path):
         assert archive.stage_source(c, SRC) == 3
         rows = _rows(c)
         assert all(Path(r["path"]).is_file() for r in rows.values())
-        assert abs(Path(rows[IMG]["path"]).stat().st_mtime - rows[IMG]["mtime"]) < 2
+        # its zip date is a DOS date with no zone: kept as stored, so no instant to set
+        assert rows[IMG]["mtime"] is None and rows[IMG]["recorded_times"]
         assert c.db.get_meta(f"archive:{SRC}:mode") == "staged"
         assert archive.stage_source(c, SRC) == 0                          # nothing left to copy
 

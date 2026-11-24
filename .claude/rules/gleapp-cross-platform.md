@@ -251,7 +251,9 @@ name and `os.replace`, so a partial copy never sits at a final path. One `ZipFil
 per archive per process is shared across threads (zipfile serializes reads on its own
 lock), since opening a 14 GiB zip re-reads its central directory. Timestamps come from
 the zip's extended field when present (every member on one Android image, none of the
-media on one iOS image) and the DOS date otherwise; the case's `meta` table records
+media on one iOS image) and the DOS date otherwise. A DOS date carries no zone (writers
+usually store their own local clock), so it is kept as stored in `recorded_times` and no instant is made
+from it (until #347 it was read in the examiner's zone); the case's `meta` table records
 which, per source, along with the archive's own hash when a UFED `.ufd` sidecar sits
 beside it.
 
