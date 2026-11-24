@@ -2940,8 +2940,9 @@ def _finish(case, src, path: Path, *, fmt: str, root: str, stage: bool, reason: 
                 f"registered with no copy and no hash because the image does not "
                 f"hold their content")
     if tally.damaged:
-        how += (f"; {tally.damaged} read through a chunk that fails its checksum, "
-                f"registered with that error and no new copy")
+        how += (f"; {tally.damaged} refused a new copy because a chunk failed its stored "
+                f"checksum or the chunk holding the file could not be checked, and "
+                f"registered with that error")
     if tally.linked:
         how += (f"; {tally.linked} written as hard links to a copy already made, "
                 f"as the volume held them")
@@ -4103,6 +4104,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                                     _copy_bytes(fsize, alloc, holes_kept))
             _require_room(staged_dir, sum(once.values()), image_path.name)
         written: dict = {}                           # (volume, node) -> the copy made of it
+        noted = _damage_noted(case, src.name) if stage else {}
         for base, walker, name, node, fsize, mtime, kind, ext, said, alloc in plan:
             dest = _staged_path(staged_dir, slug, name)
             # collect() carries only the modified time. NTFS holds created and
@@ -4162,6 +4164,8 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                       origin="walk", member_node=node_json(node),
                       volume_base=int(base), atime=accessed or None, error=error,
                       keep_hashes=kept)
+            if stage and not error and str(dest) in noted:
+                case.db.update_file(noted[str(dest)], error=None)
             tally.registered += 1
             n += 1
             if n % 200 == 0:
@@ -4182,7 +4186,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     key = _meta_key(src.name)
     if padded:
         case.db.set_meta(f"{key}:padded_chunks", json.dumps(padded))
-    if damaged:
+    if damaged or (stage and not _only_documents(src)):
         case.db.set_meta(f"{key}:checksum_chunks", json.dumps(damaged))
     if ref is not None:
         _record_set(case, src, ref, set_members, getattr(img, "raid_lines", []),
@@ -4213,6 +4217,16 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
             tally=tally,
             timestamps="from the filesystem the file was walked from")
     return n
+
+
+def _damage_noted(case, source: str) -> dict:
+    """{path: row id} of the rows of ``source`` whose error is a chunk damage note, so a
+    pass that writes a good copy over one can take the note off. Any other error stays."""
+    rows = case.db.conn.execute(
+        "SELECT id, path FROM files WHERE source = ? AND (instr(error, ?) > 0 "
+        "OR instr(error, ?) > 0)",
+        (source, CHUNK_DAMAGE_ERROR, CHUNK_UNPLACED_ERROR)).fetchall()
+    return {r["path"]: r["id"] for r in rows}
 
 
 def _damage_note(exc: ChunkDamage, dest: Path) -> tuple[str, bool]:
@@ -4425,6 +4439,7 @@ def _ingest_ewf(case, src, image_path: Path, fmt: str, *, count: int, progress,
             scan = img.set_spans
         else:
             scan = spans
+        noted = _damage_noted(case, src.name) if stage else {}
         hits = (mediacarve.carve(img, kinds=CARVE_KINDS, progress=scan_progress)
                 if scan is None
                 else itertools.chain.from_iterable(
@@ -4461,6 +4476,8 @@ def _ingest_ewf(case, src, image_path: Path, fmt: str, *, count: int, progress,
             _register(case, src, dest, name, name, kind, hit.ext, hit.length,
                       None, None, None, hit.offset, origin="carve", error=error,
                       keep_hashes=kept)
+            if stage and not error and str(dest) in noted:
+                case.db.update_file(noted[str(dest)], error=None)
             tally.registered += 1
             state["n"] += 1
             if state["n"] % 200 == 0:

@@ -296,3 +296,44 @@ def test_relinking_a_name_already_linked_leaves_no_extra_name(tmp_path):
     os.link(first, dest)
     assert archive._link(first, dest) is True          # pylint: disable=protected-access
     assert sorted(f.name for f in tmp_path.iterdir()) == ["dest", "first"]
+
+
+def test_a_clean_reingest_takes_the_damage_marks_off(tmp_path):
+    jpg = _jpeg(1)
+    image = _image(tmp_path, [("HOLIDAY", jpg)])
+    clean = image.read_bytes()
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image)
+        process(case, workers=1, screen=False, similar=False)
+
+        raw = bytearray(clean)
+        raw[raw.find(jpg[64:96])] ^= 0xFF
+        image.write_bytes(raw)
+        archive.close_zips()
+        _ingest(case, image)
+        assert _row(case, name, "HOLIDAY")["error"]
+        assert archive.source_record(case, name).get("checksum_chunks")
+
+        image.write_bytes(clean)
+        archive.close_zips()
+        _ingest(case, image)
+        assert _row(case, name, "HOLIDAY")["error"] is None
+        assert "checksum_chunks" not in archive.source_record(case, name)
+    finally:
+        case.close()
+
+
+def test_a_reference_pass_does_not_clear_the_damage_record(tmp_path):
+    """It reads only what it needs to sniff, so finding nothing proves nothing."""
+    jpg = _jpeg(1)
+    image = _image(tmp_path, [("HOLIDAY", jpg)], flip=jpg)
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image)
+        assert archive.source_record(case, name).get("checksum_chunks")
+        archive.close_zips()
+        _ingest(case, image, stage=False)
+        assert archive.source_record(case, name).get("checksum_chunks")
+    finally:
+        case.close()
