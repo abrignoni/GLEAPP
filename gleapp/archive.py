@@ -160,6 +160,10 @@ class ArchiveUnavailable(Exception):
     """The archive a reference-mode row points at cannot be read where the case recorded it."""
 
 
+class ChunkDamage(ArchiveUnavailable):
+    """A file was read through an acquisition chunk that fails its stored checksum."""
+
+
 class ImagePasswordNeeded(ArchiveUnavailable):
     """An encrypted image was opened with nothing that opens it this session: its
     password, or for an image sealed only to a certificate, that certificate's
@@ -797,6 +801,10 @@ def placeholder_error(size: int, stored) -> str:
             f"and stores {held} of them, so its content is not in the image")
 
 
+# What a row says when its file was read through a chunk that fails its checksum.
+CHUNK_DAMAGE_ERROR = "read through an image chunk that fails its stored checksum"
+
+
 def is_placeholder_error(text) -> bool:
     """True when ``text`` is what the walk wrote on a cloud placeholder's row."""
     return bool(text) and str(text).startswith(PLACEHOLDER_ERROR)
@@ -1028,13 +1036,15 @@ def _link(first: Path, dest: Path) -> bool:
     filesystem will not (FAT and exFAT have no hard links), so the caller writes it."""
     if first == dest:
         return True
+    part = dest.with_name(f"{dest.name}.link-{os.getpid()}-{threading.get_ident()}")
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib.suppress(FileNotFoundError):
-            dest.unlink()
-        os.link(first, dest)
+        os.link(first, part)                 # a copy already at dest stays if this fails
+        os.replace(part, dest)
         return True
     except OSError:
+        with contextlib.suppress(OSError):
+            part.unlink()
         return False
 
 
@@ -1138,6 +1148,10 @@ def _read_source_record(case, name: str) -> dict | None:
     padded = _meta_list(case, f"{key}:padded_chunks")
     if padded:
         out["padded_chunks"] = padded
+    # and the chunks it read that failed their stored checksum
+    damaged = _meta_list(case, f"{key}:checksum_chunks")
+    if damaged:
+        out["checksum_chunks"] = damaged
     try:
         found = json.loads(case.db.get_meta(f"{key}:discovery") or "null")
     except ValueError:
@@ -1547,9 +1561,78 @@ def _open_base(path: str):
 _ACQUIRED = threading.local()
 
 
+# The chunks read on this thread while one file is copied (_chunk_watch). ewfprobe
+# records a chunk that fails its checksum once, the first time it decodes it, and hands
+# the bytes back, so a file read later from the cached chunk adds nothing to that list.
+# Which file a damaged chunk belongs to is known only by watching each file's reads,
+# which also holds through BitLocker, LUKS, LVM2 and member sets, since they all end in
+# the acquisition's own chunk reads.
+_CHUNKS_READ = threading.local()
+
+
+def _track_chunks(img) -> None:
+    """Have ``img`` report each chunk it serves to the watch running on this thread."""
+    if not isinstance(getattr(img, "checksum_errors", None), list) or "_chunk" in vars(img):
+        return
+    plain = img._chunk                               # pylint: disable=protected-access
+
+    def _chunk(n):
+        seen = getattr(_CHUNKS_READ, "seen", None)
+        if seen is not None:
+            seen.setdefault(img, set()).add(n)
+        return plain(n)
+
+    img._chunk = _chunk                              # pylint: disable=protected-access
+
+
+@contextlib.contextmanager
+def _chunk_watch():
+    """Collect ``{image: chunks}`` for what this thread reads inside the block."""
+    before = getattr(_CHUNKS_READ, "seen", None)
+    _CHUNKS_READ.seen = seen = {}
+    try:
+        yield seen
+    finally:
+        _CHUNKS_READ.seen = before
+
+
+def _refuse_damaged(seen: dict) -> None:
+    """Raise ``ChunkDamage`` when a chunk in ``seen`` failed its stored checksum."""
+    bad = sorted(n for img, chunks in seen.items()
+                 for n in chunks.intersection(img.checksum_errors))
+    if bad:
+        which = ", ".join(f"{n:,}" for n in bad[:5])
+        more = f" and {len(bad) - 5:,} more" if len(bad) > 5 else ""
+        raise ChunkDamage(f"{CHUNK_DAMAGE_ERROR} (chunk{'' if len(bad) == 1 else 's'} "
+                          f"{which}{more})")
+
+
+class _DamageChecked:
+    """``fin``, raising ``ChunkDamage`` at its end if a chunk read for it was damaged.
+    Raised from inside the copy, so ``_write_stream`` drops its temp file and the final
+    path is left as it was."""
+
+    def __init__(self, fin, seen: dict) -> None:
+        self._fin, self._seen = fin, seen
+
+    def read(self, n: int = -1) -> bytes:
+        data = self._fin.read(n)
+        if not data:
+            _refuse_damaged(self._seen)
+        return data
+
+
+def _write_image_file(fin, dest: Path, *, holes: bool = False) -> None:
+    """``_write_stream`` for a file read out of an image, refusing it, with nothing
+    written to ``dest``, when it was read through a chunk that fails its checksum."""
+    with _chunk_watch() as seen:
+        _write_stream(_DamageChecked(fin, seen), dest, holes=holes)
+
+
 def _note_acquisition(img, path) -> None:
     """Keep ``img`` for the walk in progress on this thread, with its file name, when
     it is an ewfprobe image that records padded units (0.14.0 or later)."""
+    _track_chunks(img)
     kept = getattr(_ACQUIRED, "images", None)
     if kept is not None and getattr(type(img), "padded_chunks", None) is not None:
         kept.append((Path(path).name, img))
@@ -1591,6 +1674,22 @@ def padded_lines(acquired) -> list[str]:
                    f" ({cut:,} with a compressed stream cut before its end), so the reader "
                    f"read {zeros:,} zero bytes in place of data that is not there, and a file "
                    f"read from them can hold those zeros ({first}{more})")
+    return out
+
+
+def checksum_lines(acquired) -> list[str]:
+    """One line per acquisition in ``acquired`` [(file name, ewfprobe image)] with chunks
+    that failed their stored checksum. Only the chunks the walk read are known."""
+    out = []
+    for name, img in acquired:
+        bad = sorted(getattr(img, "checksum_errors", None) or ())
+        if not bad:
+            continue
+        first = ", ".join(f"{n:,}" for n in bad[:5])
+        more = f" and {len(bad) - 5:,} more" if len(bad) > 5 else ""
+        out.append(f"{name}: {len(bad):,} chunk{'' if len(bad) == 1 else 's'} read during "
+                   f"the ingest failed the stored checksum ({first}{more}). A file read "
+                   f"through one is marked and gets no new copy or hash")
     return out
 
 
@@ -2493,7 +2592,9 @@ def _extract_walked_member(rec: dict, row, dest: Path) -> None:
     size = int(row["size"] or 0)
     w, node = _row_walker(rec, row)
     try:
-        _write_stream(_walk_reader(w, node, size), dest, holes=True)
+        _write_image_file(_walk_reader(w, node, size), dest, holes=True)
+    except ChunkDamage:
+        raise                                        # nothing was written to dest
     except Exception as exc:                         # pylint: disable=broad-except
         with contextlib.suppress(OSError):
             dest.unlink()
@@ -2526,7 +2627,7 @@ def _extract_ewf_member(rec: dict, row, dest: Path) -> None:
             raise ArchiveUnavailable(f"{why}: {path}")
     view = _ImageRange(img, lock, int(offset), size)
     try:
-        _write_stream(view, dest)
+        _write_image_file(view, dest)
     except _IMAGE_ERRORS as exc:
         if not _ref_exists(path):
             _drop_image(path)
@@ -2696,6 +2797,7 @@ class _Tally:
         self.views_differ = 0           # mirrored groups registered in full, copies disagree
         self.placeholders = 0           # walked rows whose content is with a cloud provider
         self.linked = 0                 # staged as a hard link to a copy already written
+        self.damaged = 0                # read through a chunk that fails its checksum
 
 
 def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, size: int,
@@ -2704,14 +2806,15 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
               origin: str | None = None, member_node: int | None = None,
               volume_base: int | None = None,
               recorded_times: str | None = None, atime: float | None = None,
-              error: str | None = None) -> None:
+              error: str | None = None, keep_hashes: bool = False) -> None:
     # Only a row that has something to say sets the error column: a later ingest of
     # the same source must not blank what processing wrote there. The one thing said
     # here is that the row is a cloud placeholder, and such a row has no content to
     # have a hash of, so a hash an earlier version recorded for it (of the zeros it
-    # read in place of the content) goes with it.
-    said = ({"error": error, "md5": None, "sha1": None, "sha256": None}
-            if error else {})
+    # read in place of the content) goes with it. ``keep_hashes`` is for a row whose
+    # earlier copy stays under the case, which those hashes still describe.
+    said = {"error": error} if error and keep_hashes else (
+        {"error": error, "md5": None, "sha1": None, "sha256": None} if error else {})
     case.db.upsert_file(
         str(dest),
         rel_path=rel,
@@ -2790,6 +2893,9 @@ def _finish(case, src, path: Path, *, fmt: str, root: str, stage: bool, reason: 
         how += (f"; {tally.placeholders} of them online-only cloud placeholders, "
                 f"registered with no copy and no hash because the image does not "
                 f"hold their content")
+    if tally.damaged:
+        how += (f"; {tally.damaged} read through a chunk that fails its checksum, "
+                f"registered with that error and no new copy")
     if tally.linked:
         how += (f"; {tally.linked} written as hard links to a copy already made, "
                 f"as the volume held them")
@@ -3961,6 +4067,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
             if hasattr(walker, "stamps"):
                 created, _modified, accessed = walker.stamps(node)
             error = None
+            kept = False
             if alloc and alloc.get("placeholder"):
                 error = placeholder_error(fsize, alloc.get("stored"))
                 tally.placeholders += 1
@@ -3975,11 +4082,15 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                         # again from offset 0; passing them would write them twice.
                         # (A tar member is read through the one handle the sniff
                         # consumed, which is why that path does pass its head.)
-                        _write_stream(_walk_reader(walker, node, fsize), dest, holes=True)
+                        _write_image_file(_walk_reader(walker, node, fsize), dest,
+                                          holes=True)
                         written.setdefault(same, dest)
+                except ChunkDamage as exc:
+                    error, kept = _damage_note(exc, dest)
+                    tally.damaged += 1
                 except Exception as exc:             # pylint: disable=broad-except
-                    with contextlib.suppress(OSError):
-                        dest.unlink()
+                    # _write_stream leaves dest alone when it fails, so a good copy
+                    # from an earlier ingest of this source is still there.
                     if _out_of_room(exc):
                         # Not a file the reader could not read: every file after it
                         # would fail the same way and be counted as unreadable.
@@ -3992,7 +4103,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                             f"it") from exc
                     tally.failed += 1
                     continue
-                if mtime:
+                if mtime and not error:
                     with contextlib.suppress(OSError):
                         os.utime(dest, (accessed or mtime, mtime))
             # A walked row is read back through its volume's walker, so it
@@ -4001,7 +4112,8 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                       mtime or None, created or None, None, None,
                       recorded_times=json.dumps(said) if said else None,
                       origin="walk", member_node=node_json(node),
-                      volume_base=int(base), atime=accessed or None, error=error)
+                      volume_base=int(base), atime=accessed or None, error=error,
+                      keep_hashes=kept)
             tally.registered += 1
             n += 1
             if n % 200 == 0:
@@ -4012,6 +4124,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
         # what the walk read with zeros in place of missing data, before the
         # image is let go
         padded = padded_lines(acquired)
+        damaged = checksum_lines(acquired)
         if ref is None:
             _drop_image(str(image_path))
         else:
@@ -4021,6 +4134,8 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     key = _meta_key(src.name)
     if padded:
         case.db.set_meta(f"{key}:padded_chunks", json.dumps(padded))
+    if damaged:
+        case.db.set_meta(f"{key}:checksum_chunks", json.dumps(damaged))
     if ref is not None:
         _record_set(case, src, ref, set_members, getattr(img, "raid_lines", []),
                     img.layout_record(), img.copy_notes)
@@ -4050,6 +4165,14 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
             tally=tally,
             timestamps="from the filesystem the file was walked from")
     return n
+
+
+def _damage_note(exc: ChunkDamage, dest: Path) -> tuple[str, bool]:
+    """``(what the row's error column says, whether an earlier copy stays)`` for a file
+    this pass refused because it was read through a damaged chunk."""
+    if dest.exists():
+        return f"{exc}; the copy from an earlier ingest is kept", True
+    return str(exc), False
 
 
 def _merged_volumes(recorded, seen: list[dict], walked: set) -> list[dict]:
@@ -4276,13 +4399,20 @@ def _ingest_ewf(case, src, image_path: Path, fmt: str, *, count: int, progress,
             kind = "image" if hit.kind in mediacarve.IMAGE_KINDS else "video"
             name = _carved_name(hit)
             dest = _staged_path(staged_dir, slug, name)
+            error, kept = None, False
             if stage:
-                _write_stream(_ImageRange(img, _NO_LOCK, hit.offset, hit.length), dest)
+                try:
+                    _write_image_file(_ImageRange(img, _NO_LOCK, hit.offset, hit.length),
+                                      dest)
+                except ChunkDamage as exc:
+                    error, kept = _damage_note(exc, dest)
+                    tally.damaged += 1
             # No date is recorded rather than the image file's own, which is a
             # property of the copy on this machine and would read as the carved
             # file's date in every report column that shows it.
             _register(case, src, dest, name, name, kind, hit.ext, hit.length,
-                      None, None, None, hit.offset, origin="carve")
+                      None, None, None, hit.offset, origin="carve", error=error,
+                      keep_hashes=kept)
             tally.registered += 1
             state["n"] += 1
             if state["n"] % 200 == 0:
@@ -5146,11 +5276,9 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                     member = f"{ident}_{e.name}"
                 dest = _staged_path(staged_dir, slug, member)
                 try:
-                    _write_stream(_DeletedReader(walker, e), dest)
-                except (*unreadable, OSError):
-                    with contextlib.suppress(OSError):
-                        dest.unlink()
-                    tally.failed += 1
+                    _write_image_file(_DeletedReader(walker, e), dest)
+                except (*unreadable, OSError, ChunkDamage):
+                    tally.failed += 1                # an earlier copy at dest stays
                     continue
                 # NTFS times are real instants; FAT and exFAT store a zone-less
                 # wall clock, so those are kept as text and no instant is set.
