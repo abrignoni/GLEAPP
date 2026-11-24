@@ -1568,6 +1568,7 @@ _ACQUIRED = threading.local()
 # which also holds through BitLocker, LUKS, LVM2 and member sets, since they all end in
 # the acquisition's own chunk reads.
 _CHUNKS_READ = threading.local()
+_IMAGE_BASES: dict = {}                              # cache key -> its acquisitions
 
 
 def _track_chunks(img) -> None:
@@ -1612,21 +1613,34 @@ class _DamageChecked:
     Raised from inside the copy, so ``_write_stream`` drops its temp file and the final
     path is left as it was."""
 
-    def __init__(self, fin, seen: dict) -> None:
-        self._fin, self._seen = fin, seen
+    def __init__(self, fin, seen: dict, bases) -> None:
+        self._fin, self._seen, self._bases = fin, seen, bases
+        self._got = False
 
     def read(self, n: int = -1) -> bytes:
         data = self._fin.read(n)
-        if not data:
+        if data:
+            self._got = True
+        else:
             _refuse_damaged(self._seen)
+            # Bytes with no chunk read for them came from a record the walker already
+            # holds (an NTFS resident file is inside its MFT record), so which chunk
+            # they sit in is not known here. With damage in the image they are not
+            # vouched for.
+            if self._got and not any(self._seen.values()) and any(
+                    getattr(b, "checksum_errors", None) for b in self._bases):
+                raise ChunkDamage(f"{CHUNK_DAMAGE_ERROR} (its content came from a "
+                                  "filesystem record read earlier, and the image holds "
+                                  "a damaged chunk)")
         return data
 
 
-def _write_image_file(fin, dest: Path, *, holes: bool = False) -> None:
+def _write_image_file(fin, dest: Path, bases=(), *, holes: bool = False) -> None:
     """``_write_stream`` for a file read out of an image, refusing it, with nothing
-    written to ``dest``, when it was read through a chunk that fails its checksum."""
+    written to ``dest``, when it was read through a chunk that fails its checksum.
+    ``bases`` are the acquisitions the file's volume is read from."""
     with _chunk_watch() as seen:
-        _write_stream(_DamageChecked(fin, seen), dest, holes=holes)
+        _write_stream(_DamageChecked(fin, seen, bases), dest, holes=holes)
 
 
 def _note_acquisition(img, path) -> None:
@@ -1688,8 +1702,7 @@ def checksum_lines(acquired) -> list[str]:
         first = ", ".join(f"{n:,}" for n in bad[:5])
         more = f" and {len(bad) - 5:,} more" if len(bad) > 5 else ""
         out.append(f"{name}: {len(bad):,} chunk{'' if len(bad) == 1 else 's'} read during "
-                   f"the ingest failed the stored checksum ({first}{more}). A file read "
-                   f"through one is marked and gets no new copy or hash")
+                   f"the ingest failed the stored checksum ({first}{more})")
     return out
 
 
@@ -2303,11 +2316,13 @@ def _open_image(path: str):
         img = _IMAGES.get(ck)
         if img is None:
             try:
-                img = _open_image_file(path)
+                with _watching_acquisitions() as acquired:
+                    img = _open_image_file(path)
             except _IMAGE_ERRORS as exc:
                 raise ArchiveUnavailable(
                     f"cannot open the source image ({exc}): {path}") from exc
             _IMAGES[ck] = img
+            _IMAGE_BASES[ck] = [base for _name, base in acquired]
             _IMAGE_READ[ck] = threading.Lock()
         return img, _IMAGE_READ[ck]
 
@@ -2323,6 +2338,7 @@ def _drop_image(path) -> None:
         with _IMAGE_LOCK:
             img = _IMAGES.pop(ck, None)
             _IMAGE_READ.pop(ck, None)
+            _IMAGE_BASES.pop(ck, None)
             for key in [k for k in _WALKERS if k[0] == ck]:
                 _WALKERS.pop(key, None)
         if img is not None:
@@ -2364,6 +2380,7 @@ def close_zips() -> None:
         images = list(_IMAGES.values())
         _IMAGES.clear()
         _IMAGE_READ.clear()
+        _IMAGE_BASES.clear()
         # a walker reads through its image, so one kept past its image being closed
         # fails the next read of that source ("seek of closed file")
         _WALKERS.clear()
@@ -2592,7 +2609,8 @@ def _extract_walked_member(rec: dict, row, dest: Path) -> None:
     size = int(row["size"] or 0)
     w, node = _row_walker(rec, row)
     try:
-        _write_image_file(_walk_reader(w, node, size), dest, holes=True)
+        _write_image_file(_walk_reader(w, node, size), dest,
+                          _IMAGE_BASES.get(_cache_key(path), ()), holes=True)
     except ChunkDamage:
         raise                                        # nothing was written to dest
     except Exception as exc:                         # pylint: disable=broad-except
@@ -4083,7 +4101,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                         # (A tar member is read through the one handle the sniff
                         # consumed, which is why that path does pass its head.)
                         _write_image_file(_walk_reader(walker, node, fsize), dest,
-                                          holes=True)
+                                          [b for _n, b in acquired], holes=True)
                         written.setdefault(same, dest)
                 except ChunkDamage as exc:
                     error, kept = _damage_note(exc, dest)
@@ -5215,7 +5233,8 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     recovered_offsets: set = set()
     n = len(case.db.iter_files("source = ?", (name,)))
 
-    img = _open_image_file(image_ref(rec))
+    with _watching_acquisitions() as acquired:
+        img = _open_image_file(image_ref(rec))
     try:
         ss = qnxprobe.disk_sector_size(img)
         for base, size, fskind, label in _volumes(img):
@@ -5276,7 +5295,8 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                     member = f"{ident}_{e.name}"
                 dest = _staged_path(staged_dir, slug, member)
                 try:
-                    _write_image_file(_DeletedReader(walker, e), dest)
+                    _write_image_file(_DeletedReader(walker, e), dest,
+                                      [b for _n, b in acquired])
                 except (*unreadable, OSError, ChunkDamage):
                     tally.failed += 1                # an earlier copy at dest stays
                     continue

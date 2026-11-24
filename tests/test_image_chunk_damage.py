@@ -4,6 +4,7 @@ replace a staged copy leaves the earlier one in place."""
 
 from __future__ import annotations
 
+import gzip
 import io
 import os
 import sys
@@ -14,6 +15,7 @@ import pytest
 from gleapp import archive
 from gleapp.case import open_case, parse_source_spec
 from gleapp.pipeline import ingest_sources, process
+from gleapp.vendor import qnxprobe
 
 sys.path.insert(0, str(Path(__file__).parent))
 from ewfwriter import write_ewf                        # pylint: disable=import-error,wrong-import-position
@@ -48,10 +50,11 @@ def _image(tmp_path, files, *, chunk_size=CHUNK, flip=None) -> Path:
     return image
 
 
-def _ingest(case, image, *, stage=True, carve=False):
+def _ingest(case, image, *, stage=True, carve=False, other=False):
     sources, _ = parse_source_spec(image)
     sources[0].stage = stage
     sources[0].carve = carve
+    sources[0].include_other = other
     ingest_sources(case, sources)
     return sources[0].name
 
@@ -205,3 +208,53 @@ def test_a_link_that_fails_keeps_the_copy_at_its_name(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "link", no_links)
     assert archive._link(first, dest) is False         # pylint: disable=protected-access
     assert dest.read_bytes() == b"earlier"
+
+
+def test_a_resident_ntfs_file_in_a_damaged_image_is_marked(tmp_path):
+    """Its bytes are inside an MFT record the walker read earlier, so reading the file
+    touches no chunk at all. Windows wrote this volume."""
+    fixture = Path(__file__).parent / "fixtures" / "ntfs-windows.img.gz"
+    media = gzip.decompress(fixture.read_bytes())
+    folder = tmp_path / "ev"
+    folder.mkdir()
+    image = Path(write_ewf(folder, "acq", media, chunk_size=1 << 15, compress=False)[0])
+
+    img = archive._open_image_file(str(image))         # pylint: disable=protected-access
+    found = None
+    try:
+        for base, size, kind, _label in archive._volumes(img):  # pylint: disable=protected-access
+            walker = qnxprobe.walker_for(kind, img, base, size)
+            if walker is None:
+                continue
+            for path, node, fsize, _mtime in qnxprobe.collect(walker, walker.root):
+                if not fsize or fsize < 32:
+                    continue
+                with archive._chunk_watch() as seen:   # pylint: disable=protected-access
+                    data = b"".join(walker.read_file(node, fsize))
+                if not any(seen.values()) and media.count(data[:32]) == 1:
+                    found = (path, data)
+                    break
+            if found:
+                break
+    finally:
+        img.close()
+        archive.close_zips()
+    assert found, "the fixture holds no resident file with unique content"
+    path, data = found
+
+    raw = bytearray(image.read_bytes())
+    at = raw.find(data[:32])
+    assert at > 0
+    raw[at + 8] ^= 0xFF
+    image.write_bytes(raw)
+
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image, other=True)
+        rows = [r for r in case.db.iter_files("source = ?", (name,))
+                if r["orig_path"].endswith(path)]
+        assert rows
+        assert all(archive.CHUNK_DAMAGE_ERROR in (r["error"] or "") for r in rows)
+        assert not any(Path(r["path"]).exists() for r in rows)
+    finally:
+        case.close()
