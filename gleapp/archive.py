@@ -3943,6 +3943,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     try:
         media_size = img.media_size
         segments = len(img.paths)
+        files_read = list(img.paths)                 # every segment of every member
         stored = _stored_hash(img)
         vols = _volumes(img)
         mirror_note = ""
@@ -4187,8 +4188,11 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
         case.db.set_meta(f"{key}:padded_chunks", json.dumps(padded))
     # An image that has not changed still holds the damage an earlier pass read, whatever
     # this pass selected. What was read from a changed image says nothing about this one.
-    if not _only_documents(src) and not _same_as_recorded(case, key, image_path):
+    stamp = _files_stamp(files_read)
+    if not _only_documents(src) and (
+            stamp is None or stamp != case.db.get_meta(f"{key}:checksum_stamp")):
         case.db.set_meta(f"{key}:checksum_chunks", json.dumps(damaged))
+        case.db.set_meta(f"{key}:checksum_stamp", stamp or "")
     elif damaged:
         earlier = _meta_list(case, f"{key}:checksum_chunks")
         case.db.set_meta(f"{key}:checksum_chunks",
@@ -4260,15 +4264,14 @@ def _mark_kept_copy(case, dest: Path, note: str) -> bool:
     return True
 
 
-def _same_as_recorded(case, key: str, path: Path) -> bool:
-    """True when ``path`` has the size and time the case recorded for this source."""
-    size, mtime = case.db.get_meta(f"{key}:size"), case.db.get_meta(f"{key}:mtime")
-    if not size or not mtime:
-        return False
+def _files_stamp(paths) -> str | None:
+    """The size and time of each file an image is read from, segments and members
+    alike, to tell a later pass whether any of them changed. None when one cannot be
+    read."""
     try:
-        return _source_stat(path) == (int(size), float(mtime))
-    except (OSError, ValueError):
-        return False
+        return json.dumps([[os.fspath(f), *_source_stat(f)] for f in paths])
+    except OSError:
+        return None
 
 
 def _damage_note(exc: ChunkDamage, dest: Path) -> tuple[str, bool]:

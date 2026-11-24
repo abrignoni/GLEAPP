@@ -422,3 +422,26 @@ def test_a_reference_pass_over_a_changed_image_drops_the_old_record(tmp_path):
         assert "checksum_chunks" not in archive.source_record(case, name)
     finally:
         case.close()
+
+
+def test_a_changed_later_segment_starts_a_new_damage_record(tmp_path):
+    """Only the first segment's time is the source's own; the others change too."""
+    jpg = _jpeg(1)
+    folder = tmp_path / "ev"
+    folder.mkdir()
+    volume = build_fat32([("HOLIDAY", "JPG", jpg, WHEN)])
+    paths = [Path(f) for f in write_ewf(folder, "acq", volume, chunk_size=CHUNK,
+                                        compress=False, chunks_per_segment=256)]
+    assert len(paths) > 1
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, paths[0], stage=False)
+        key = archive._meta_key(name)                  # pylint: disable=protected-access
+        case.db.set_meta(f"{key}:checksum_chunks", '["a line about the earlier image"]')
+        later = paths[-1].stat().st_mtime + 5
+        os.utime(paths[-1], (later, later))
+        archive.close_zips()
+        _ingest(case, paths[0], stage=False)
+        assert "checksum_chunks" not in archive.source_record(case, name)
+    finally:
+        case.close()
