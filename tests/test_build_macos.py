@@ -102,7 +102,10 @@ def test_dmg_carries_the_background_and_the_applications_link(tmp_path, monkeypa
     subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen",
                     "-mountpoint", str(mnt), str(dmg)], check=True, capture_output=True)
     try:
-        assert (mnt / ".background.png").is_file()
+        # dmgbuild joins dmg_background.png and its @2x into one TIFF holding both sizes
+        from PIL import Image  # pylint: disable=import-outside-toplevel
+        with Image.open(mnt / ".background.tiff") as img:
+            assert img.n_frames == 2
         assert (mnt / ".DS_Store").is_file()
         assert (mnt / "Applications").is_symlink()
         assert (mnt / "GLEAPP.app").is_dir()
