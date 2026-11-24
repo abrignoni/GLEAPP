@@ -90,8 +90,11 @@ def is_empty_file_hash(algo: str, value: object) -> bool:
 #            whatever dates the filesystem holds.
 #   deleted  read from a deleted directory or MFT record that still named it, so
 #            it comes back with its real name, and with the times that record
-#            kept. Refused once a later file has taken a cluster it needs, so
-#            overwritten bytes are never presented as the file.
+#            kept. Refused once a later file has taken a cluster it needs. A free
+#            cluster may since have held another file that was deleted in turn,
+#            and when that file's own record is gone too nothing shows it, so the
+#            bytes are a candidate. The reader labels FAT and exFAT recoveries
+#            so (files.content_unverified); NTFS has the same limit and no label.
 #   carve    found by signature in space no volume claims. No name, path or date
 #            of its own: it is filed under the byte offset it was found at.
 #
@@ -187,10 +190,16 @@ CREATE TABLE IF NOT EXISTS files (
                                           -- Python when the row is written, see exo_cache_flag();
                                           -- NULL only on a row a build without the column wrote,
                                           -- and opening the case fills those.
-    expanded      INTEGER                 -- on a container that an expansion pass opened and got
+    expanded      INTEGER,                -- on a container that an expansion pass opened and got
                                           -- nothing from: what that pass was (bits, see
                                           -- gleapp/nested.py), so a later pass that could add
                                           -- nothing either leaves it alone. NULL otherwise.
+    content_unverified INTEGER            -- 1 on a row recovered from a deleted record whose
+                                          -- bytes the reader labels a candidate: FAT and exFAT
+                                          -- cannot show a free cluster was not reused by a later
+                                          -- file. 0 on any other deleted recovery this version
+                                          -- writes. NULL on every other row, and on a recovery
+                                          -- an earlier build wrote.
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_md5      ON files(md5);
@@ -509,6 +518,7 @@ class CaseDB:
             ("hashset_sources", "TEXT"), ("hashset_mask", "INTEGER"),
             ("grp_head", "INTEGER NOT NULL DEFAULT 1"), ("cache_info", "TEXT"),
             ("exo_cache", "INTEGER"), ("expanded", "INTEGER"),
+            ("content_unverified", "INTEGER"),
         ):
             if col not in have:
                 self.conn.execute(f"ALTER TABLE files ADD COLUMN {col} {decl}")

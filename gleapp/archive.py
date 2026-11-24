@@ -76,6 +76,7 @@ from __future__ import annotations
 import bisect
 import collections
 import contextlib
+import csv
 import errno
 import hashlib
 import io
@@ -715,6 +716,66 @@ def _timestamps(info: zipfile.ZipInfo) -> tuple[float, float | None, str]:
     return dos, None, "dos"
 
 
+# The kinds a qnxprobe export writes with a <volume>.times.tsv (its _ZIP_FAT_KINDS).
+_EXPORT_ZONELESS_KINDS = ("fat12", "fat16", "fat32", "exfat")
+_DATE_ONLY = re.compile(r"\d{4}-\d\d-\d\d")
+
+
+def _export_times(zf: zipfile.ZipFile, root: str) -> tuple[tuple[str, ...], dict]:
+    """For a zip the vendored qnxprobe exported, the member prefixes of its FAT and
+    exFAT volumes and, from each one's ``<volume>.times.tsv``, every member's
+    readings as stored: ``(prefixes, {member: readings})``. ``((), {})`` for any
+    other zip.
+
+    FAT and exFAT store a wall clock and no zone. Since qnxprobe 1.88 an export
+    writes that reading as the member's zip date, which has no zone either, so it is
+    not an instant, and an exFAT file whose UTC offset is valid also gets the UTC it
+    yields in the extended timestamp. The table keeps every time and offset as
+    stored, and the readings built here are the ones a walk of the same volume
+    records (qnxprobe's listdir_records), so both reach the case alike.
+    """
+    try:
+        manifest = json.loads(zf.read(f"{root}volumes.json"))
+    except (KeyError, ValueError, OSError, zipfile.BadZipFile):
+        return (), {}
+    if not (isinstance(manifest, dict)
+            and str(manifest.get("written_by") or "").startswith("qnxprobe ")):
+        return (), {}
+    prefixes, readings = [], {}
+    for vol in manifest.get("volumes") or []:
+        if not isinstance(vol, dict) or vol.get("filesystem") not in _EXPORT_ZONELESS_KINDS:
+            continue
+        if vol.get("volume"):
+            prefixes.append(f"{root}{vol['volume']}/")
+        table = vol.get("times_table")
+        if not table:
+            continue
+        try:
+            text = zf.read(f"{root}{table}").decode("utf-8")
+        except (KeyError, OSError, UnicodeDecodeError, zipfile.BadZipFile):
+            continue
+        for row in csv.DictReader(io.StringIO(text, newline=""), delimiter="\t"):
+            if not row.get("zip_member"):
+                continue                             # a folder, or a file left out
+            got = {}
+            for label in ("modified", "created", "accessed"):
+                value = row.get(label) or ""
+                if value:
+                    dated = label == "accessed" and _DATE_ONLY.fullmatch(value)
+                    got[f"{label} date" if dated else label] = value
+            for label in ("modified", "created", "accessed"):
+                raw = row.get(f"{label}_utc_offset_byte") or ""
+                try:
+                    shown = qnxprobe._exfat_offset(int(raw, 16)) if raw else ""  # pylint: disable=protected-access
+                except ValueError:
+                    shown = ""
+                if shown:
+                    got[f"{label} utc offset"] = shown
+            if got:
+                readings[f"{root}{row['zip_member']}"] = got
+    return tuple(prefixes), readings
+
+
 def _is_macosx_junk(name: str) -> bool:
     return name.startswith("__MACOSX/") or "/__MACOSX/" in name
 
@@ -1146,7 +1207,7 @@ def _read_source_record(case, name: str) -> dict | None:
     notes = _meta_list(case, f"{key}:set_notes")
     if notes:
         out["set_notes"] = notes
-    # what the reader said about a volume it read (xfs, btrfs, refs)
+    # what the reader said about a volume it read (_SAYING_KINDS and _DAMAGE_KINDS)
     said = _meta_list(case, f"{key}:volume_notes")
     if said:
         out["volume_notes"] = said
@@ -2839,7 +2900,9 @@ class _Tally:
         self.failed = 0                 # walked files the reader could not read
         self.ts_extended = 0
         self.ts_dos = 0
-        self.mirrored = 0               # members that were another storage view of a kept one
+        self.ts_zoneless = 0            # FAT/exFAT members of a qnxprobe export: no instant
+        self.ts_read = 0                # ... of which the export's times table gave readings
+        self.mirrored = 0              # members that were another storage view of a kept one
         self.views_differ = 0           # mirrored groups registered in full, copies disagree
         self.placeholders = 0           # walked rows whose content is with a cloud provider
         self.linked = 0                 # staged as a hard link to a copy already written
@@ -2852,7 +2915,7 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
               origin: str | None = None, member_node: int | None = None,
               volume_base: int | None = None,
               recorded_times: str | None = None, atime: float | None = None,
-              error: str | None = None) -> None:
+              error: str | None = None, content_unverified: bool | None = None) -> None:
     # Only a row that has something to say sets the error column: a later ingest of
     # the same source must not blank what processing wrote there. The one thing said
     # here is that the row is a cloud placeholder, and such a row has no content to
@@ -2860,6 +2923,9 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
     # read in place of the content) goes with it.
     said = ({"error": error, "md5": None, "sha1": None, "sha256": None}
             if error else {})
+    # Set only by recover_deleted, which knows; every other writer leaves it alone.
+    if content_unverified is not None:
+        said["content_unverified"] = 1 if content_unverified else 0
     case.db.upsert_file(
         str(dest),
         rel_path=rel,
@@ -3077,6 +3143,7 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
         # file are known before anything is copied or registered.
         alts, drop, tally.views_differ = storage_views.plan(
             (i.filename, i.file_size, i.CRC) for i in infos)
+        zoneless, readings = _export_times(zf, root)
         n = count
         for info in infos:
             name = info.filename
@@ -3123,17 +3190,27 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
                 continue
             dest = _staged_path(staged_dir, slug, name)
             mtime, ctime, which = _timestamps(info)
+            said = readings.get(name)
             if which == "extended":
                 tally.ts_extended += 1
+            elif name.startswith(zoneless):
+                # a FAT or exFAT member of a qnxprobe export: its zip date is the
+                # volume's zone-less reading, so no instant is made from it, and
+                # the readings come from the export's times table instead
+                mtime = None
+                tally.ts_zoneless += 1
+                tally.ts_read += bool(said)
             else:
                 tally.ts_dos += 1
             if stage:
                 _write_member(zf, info, dest)
-                with contextlib.suppress(OSError):
-                    os.utime(dest, (mtime, mtime))
+                if mtime is not None:
+                    with contextlib.suppress(OSError):
+                        os.utime(dest, (mtime, mtime))
             rel = name[len(root):] if root and name.startswith(root) else name
             _register(case, src, dest, name, rel, kind, ext, info.file_size, mtime, ctime,
-                      info.CRC, None, alts.get(name))
+                      info.CRC, None, alts.get(name),
+                      recorded_times=json.dumps(said) if said else None)
             tally.registered += 1
             n += 1
             if n % 200 == 0:
@@ -3143,7 +3220,10 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
     _finish(case, src, zip_path, fmt=FORMAT_ZIP, root=root, stage=stage, reason="",
             tally=tally, timestamps=(
                 f"extended field on {tally.ts_extended} of {tally.registered} registered "
-                f"members; DOS date on {tally.ts_dos}"))
+                f"members; DOS date on {tally.ts_dos}"
+                + (f"; no instant made from the zip date on {tally.ts_zoneless} FAT or "
+                   f"exFAT members of a qnxprobe export, stored readings recorded for "
+                   f"{tally.ts_read} of them" if tally.ts_zoneless else "")))
     if progress:
         progress(n)
     return n
@@ -3854,8 +3934,14 @@ def _not_walked(img, base: int, size, luks_tried=None, bitlocker_tried=None) -> 
 
 # The filesystems whose walkers say, as they read, what the walk cannot show (a log
 # not replayed, a device missing, damage met). Kept to the readers qnxprobe 1.68
-# added, so the record of every kind GLEAPP walked before is unchanged.
-_SAYING_KINDS = ("xfs", "btrfs", "refs")
+# added, so the record of every kind GLEAPP walked before is unchanged. EFS, JFFS2
+# and SquashFS joined in qnxprobe 1.88, which made them record a cut region and the
+# structures they could not read.
+_SAYING_KINDS = ("xfs", "btrfs", "refs", "efs", "jffs2", "squashfs")
+
+# For these the note read is the one an export writes to volumes.json
+# (``volume_note``): their ``note`` repeats a line that is already in the damage.
+_VOLUME_NOTE_KINDS = ("efs", "jffs2", "squashfs")
 
 
 # The filesystems whose walkers record damage and no note: since qnxprobe 1.74, an
@@ -3874,7 +3960,8 @@ def _walker_says(walker, fskind: str) -> str:
                 if count else "")
     if fskind not in _SAYING_KINDS:
         return ""
-    note = getattr(walker, "note", None) or ""
+    note = getattr(walker, "volume_note" if fskind in _VOLUME_NOTE_KINDS else "note",
+                   None) or ""
     count, lines = qnxprobe.damage_lines(walker)
     parts = [str(note)] if note else []
     if count:
@@ -5282,8 +5369,15 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     directory entry, which keeps the name, the first cluster and the size, so a
     file whose clusters are still free is recovered by its real name.
 
-    A file is refused once a later file has taken a cluster it needs, so
-    overwritten bytes are never presented as the file. FAT32 zeroes the cluster
+    A file is refused once a later file has taken a cluster it needs. That is all
+    FAT and exFAT can show: a free cluster may since have held another file that
+    was deleted in turn, with its entry overwritten, and the volume records that
+    nowhere. So every FAT and exFAT recovery is a candidate, and the reader labels
+    it ``content_unverified``; the row keeps that label (``content_unverified``),
+    and How recovered says so in the report, in LAVA and in the gallery. NTFS has
+    the same limit and the reader gives it no label. On a FAT32 volume with
+    cluster numbers of 0x10000 or more, an entry marked deleted whose high word is
+    zero is refused unless its low word identifies exactly one cluster. FAT32 zeroes the cluster
     chain on delete, so a multi-cluster FAT32 recovery assumes the file lay in
     one run, which qnxprobe checks is still free before reading. exFAT needs no
     such assumption: a file written in one run says so in its entry, and a
@@ -5321,6 +5415,8 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     src_obj = _CarveSource(name, rec["path"], case)
     max_bytes = None
     tally = _Tally()
+    unverified = 0                                   # recoveries the reader labels candidates
+    refused, first_refusal = 0, ""                   # deleted entries the reader would not read
     recovered_offsets: set = set()
     n = len(case.db.iter_files("source = ?", (name,)))
 
@@ -5339,7 +5435,14 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
             unreadable = _FLASH_UNREADABLE if flash else (qnxprobe.NtfsUnreadable,)
             copies: collections.Counter = collections.Counter()
             for e in (walker.recover_deleted() if flash else walker.deleted_files()):
-                if e.is_dir or not e.recoverable or not e.size:
+                if e.is_dir or not e.size:
+                    continue
+                if not e.recoverable:
+                    # named by a deleted record and refused by the reader, with
+                    # its reason: counted, so the audit line says what was not read
+                    refused += 1
+                    first_refusal = (first_refusal
+                                     or f"{e.name} on {vol}: {getattr(e, 'reason', '') or 'no reason given'}")
                     continue
                 ext = PurePosixPath(e.name).suffix.lower()
                 if ext in IMAGE_EXTS:
@@ -5427,8 +5530,10 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                 _register(case, src_obj, dest, shown, shown, kind, ext, e.size,
                           mtime, ctime, None, None,
                           origin="deleted", volume_base=int(base),
-                          recorded_times=recorded, atime=atime)
+                          recorded_times=recorded, atime=atime,
+                          content_unverified=bool(getattr(e, "content_unverified", False)))
                 tally.registered += 1
+                unverified += bool(getattr(e, "content_unverified", False))
                 n += 1
                 if n % 100 == 0:
                     case.db.commit()
@@ -5439,7 +5544,11 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     case.db.commit()
     case.db.audit_log(case.examiner, "recover-deleted",
                       f"{name}: {tally.registered} deleted file(s) recovered from deleted "
-                      f"records ({tally.failed} unreadable, {tally.skipped_size} over the size limit)")
+                      f"records ({tally.failed} unreadable, {tally.skipped_size} over the size limit"
+                      + (f"; {unverified} content unverified: FAT or exFAT cannot show their "
+                         "clusters were not reused" if unverified else "")
+                      + (f"; {refused} deleted file record(s) of any type the reader refused, first: "
+                         f"{first_refusal}" if refused else "") + ")")
     if progress:
         progress(n)
     return tally.registered, recovered_offsets
