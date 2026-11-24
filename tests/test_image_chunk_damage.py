@@ -316,6 +316,8 @@ def test_a_clean_reingest_takes_the_damage_marks_off(tmp_path):
         assert archive.source_record(case, name).get("checksum_chunks")
 
         image.write_bytes(clean)
+        later = image.stat().st_mtime + 5
+        os.utime(image, (later, later))
         archive.close_zips()
         _ingest(case, image)
         assert _row(case, name, "HOLIDAY")["error"] is None
@@ -380,5 +382,26 @@ def test_a_partial_pass_adds_to_the_damage_record(tmp_path):
         _ingest(case, image, stage=False)
         lines = archive.source_record(case, name)["checksum_chunks"]
         assert lines[0] == "an earlier line"
+    finally:
+        case.close()
+
+
+def test_a_narrower_staged_pass_keeps_the_damage_record(tmp_path):
+    """The evidence has not changed, and this pass skipped the file that showed it."""
+    jpg = _jpeg(1)
+    image = _image(tmp_path, [("HOLIDAY", jpg)])
+    raw = bytearray(image.read_bytes())
+    raw[raw.find(jpg[-64:-32])] ^= 0xFF                # a chunk only this file's data is in
+    image.write_bytes(raw)
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image)
+        before = archive.source_record(case, name)["checksum_chunks"]
+        archive.close_zips()
+        sources, _ = parse_source_spec(image)
+        sources[0].stage = True
+        sources[0].max_mb = 0.001              # under the size of the file
+        ingest_sources(case, sources)
+        assert archive.source_record(case, name)["checksum_chunks"] == before
     finally:
         case.close()

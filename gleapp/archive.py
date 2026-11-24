@@ -4185,9 +4185,11 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     key = _meta_key(src.name)
     if padded:
         case.db.set_meta(f"{key}:padded_chunks", json.dumps(padded))
-    if stage and not _only_documents(src):           # read every file it registered
+    # An image that has not changed still holds the damage an earlier pass read, whatever
+    # this pass selected, so only a staged pass over a changed image replaces the list.
+    if stage and not _only_documents(src) and not _same_as_recorded(case, key, image_path):
         case.db.set_meta(f"{key}:checksum_chunks", json.dumps(damaged))
-    elif damaged:                                    # read some: what it did not revisit stands
+    elif damaged:
         earlier = _meta_list(case, f"{key}:checksum_chunks")
         case.db.set_meta(f"{key}:checksum_chunks",
                          json.dumps(earlier + [ln for ln in damaged if ln not in earlier]))
@@ -4256,6 +4258,17 @@ def _mark_kept_copy(case, dest: Path, note: str) -> bool:
         had = had.split(_NOTE_AFTER)[0] if _NOTE_AFTER in had else None
     case.db.update_file(row["id"], error=f"{had}{_NOTE_AFTER}{note}" if had else note)
     return True
+
+
+def _same_as_recorded(case, key: str, path: Path) -> bool:
+    """True when ``path`` has the size and time the case recorded for this source."""
+    size, mtime = case.db.get_meta(f"{key}:size"), case.db.get_meta(f"{key}:mtime")
+    if not size or not mtime:
+        return False
+    try:
+        return _source_stat(path) == (int(size), float(mtime))
+    except (OSError, ValueError):
+        return False
 
 
 def _damage_note(exc: ChunkDamage, dest: Path) -> tuple[str, bool]:
