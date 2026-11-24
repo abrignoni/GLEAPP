@@ -2852,15 +2852,14 @@ def _register(case, src, dest: Path, name: str, rel: str, kind: str, ext: str, s
               origin: str | None = None, member_node: int | None = None,
               volume_base: int | None = None,
               recorded_times: str | None = None, atime: float | None = None,
-              error: str | None = None, keep_hashes: bool = False) -> None:
+              error: str | None = None) -> None:
     # Only a row that has something to say sets the error column: a later ingest of
     # the same source must not blank what processing wrote there. The one thing said
     # here is that the row is a cloud placeholder, and such a row has no content to
     # have a hash of, so a hash an earlier version recorded for it (of the zeros it
-    # read in place of the content) goes with it. ``keep_hashes`` is for a row whose
-    # earlier copy stays under the case, which those hashes still describe.
-    said = {"error": error} if error and keep_hashes else (
-        {"error": error, "md5": None, "sha1": None, "sha256": None} if error else {})
+    # read in place of the content) goes with it.
+    said = ({"error": error, "md5": None, "sha1": None, "sha256": None}
+            if error else {})
     case.db.upsert_file(
         str(dest),
         rel_path=rel,
@@ -4158,14 +4157,14 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                         os.utime(dest, (accessed or mtime, mtime))
             # A walked row is read back through its volume's walker, so it
             # records the node and the volume rather than a byte offset.
-            _register(case, src, dest, name, name, kind, ext, fsize,
-                      mtime or None, created or None, None, None,
-                      recorded_times=json.dumps(said) if said else None,
-                      origin="walk", member_node=node_json(node),
-                      volume_base=int(base), atime=accessed or None, error=error,
-                      keep_hashes=kept)
-            if stage and not error and str(dest) in noted:
-                case.db.update_file(noted[str(dest)], error=None)
+            if not (kept and _mark_kept_copy(case, dest, error)):
+                _register(case, src, dest, name, name, kind, ext, fsize,
+                          mtime or None, created or None, None, None,
+                          recorded_times=json.dumps(said) if said else None,
+                          origin="walk", member_node=node_json(node),
+                          volume_base=int(base), atime=accessed or None, error=error)
+            if stage and not error:
+                _clear_damage_note(case, noted, dest)
             tally.registered += 1
             n += 1
             if n % 200 == 0:
@@ -4186,8 +4185,12 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     key = _meta_key(src.name)
     if padded:
         case.db.set_meta(f"{key}:padded_chunks", json.dumps(padded))
-    if damaged or (stage and not _only_documents(src)):
+    if stage and not _only_documents(src):           # read every file it registered
         case.db.set_meta(f"{key}:checksum_chunks", json.dumps(damaged))
+    elif damaged:                                    # read some: what it did not revisit stands
+        earlier = _meta_list(case, f"{key}:checksum_chunks")
+        case.db.set_meta(f"{key}:checksum_chunks",
+                         json.dumps(earlier + [ln for ln in damaged if ln not in earlier]))
     if ref is not None:
         _record_set(case, src, ref, set_members, getattr(img, "raid_lines", []),
                     img.layout_record(), img.copy_notes)
@@ -4219,14 +4222,40 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
     return n
 
 
+# Between an error a row already had and the damage note added after it.
+_NOTE_AFTER = " | "
+
+
 def _damage_noted(case, source: str) -> dict:
-    """{path: row id} of the rows of ``source`` whose error is a chunk damage note, so a
-    pass that writes a good copy over one can take the note off. Any other error stays."""
+    """{path: (row id, error)} of the rows of ``source`` carrying a chunk damage note, so
+    a pass that writes a good copy over one can take the note off."""
     rows = case.db.conn.execute(
-        "SELECT id, path FROM files WHERE source = ? AND (instr(error, ?) > 0 "
+        "SELECT id, path, error FROM files WHERE source = ? AND (instr(error, ?) > 0 "
         "OR instr(error, ?) > 0)",
         (source, CHUNK_DAMAGE_ERROR, CHUNK_UNPLACED_ERROR)).fetchall()
-    return {r["path"]: r["id"] for r in rows}
+    return {r["path"]: (r["id"], r["error"]) for r in rows}
+
+
+def _clear_damage_note(case, noted: dict, dest: Path) -> None:
+    """Take the damage note off the row at ``dest``, leaving any error it had before."""
+    got = noted.get(str(dest))
+    if got is not None:
+        before = got[1].split(_NOTE_AFTER)[0] if _NOTE_AFTER in got[1] else None
+        case.db.update_file(got[0], error=before)
+
+
+def _mark_kept_copy(case, dest: Path, note: str) -> bool:
+    """Add ``note`` to the row of the earlier copy at ``dest``. Its size, dates and hashes
+    describe that copy, so they stay. False when no row holds that path."""
+    row = case.db.conn.execute("SELECT id, error FROM files WHERE path = ?",
+                               (str(dest),)).fetchone()
+    if row is None:
+        return False
+    had = row["error"]
+    if had and (CHUNK_DAMAGE_ERROR in had or CHUNK_UNPLACED_ERROR in had):
+        had = had.split(_NOTE_AFTER)[0] if _NOTE_AFTER in had else None
+    case.db.update_file(row["id"], error=f"{had}{_NOTE_AFTER}{note}" if had else note)
+    return True
 
 
 def _damage_note(exc: ChunkDamage, dest: Path) -> tuple[str, bool]:
@@ -4473,11 +4502,11 @@ def _ingest_ewf(case, src, image_path: Path, fmt: str, *, count: int, progress,
             # No date is recorded rather than the image file's own, which is a
             # property of the copy on this machine and would read as the carved
             # file's date in every report column that shows it.
-            _register(case, src, dest, name, name, kind, hit.ext, hit.length,
-                      None, None, None, hit.offset, origin="carve", error=error,
-                      keep_hashes=kept)
-            if stage and not error and str(dest) in noted:
-                case.db.update_file(noted[str(dest)], error=None)
+            if not (kept and _mark_kept_copy(case, dest, error)):
+                _register(case, src, dest, name, name, kind, hit.ext, hit.length,
+                          None, None, None, hit.offset, origin="carve", error=error)
+            if stage and not error:
+                _clear_damage_note(case, noted, dest)
             tally.registered += 1
             state["n"] += 1
             if state["n"] % 200 == 0:

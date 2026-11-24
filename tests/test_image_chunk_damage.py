@@ -337,3 +337,48 @@ def test_a_reference_pass_does_not_clear_the_damage_record(tmp_path):
         assert archive.source_record(case, name).get("checksum_chunks")
     finally:
         case.close()
+
+
+def test_a_kept_copy_keeps_its_row_and_its_earlier_error(tmp_path):
+    jpg = _jpeg(1)
+    image = _image(tmp_path, [("HOLIDAY", jpg)])
+    clean = image.read_bytes()
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image)
+        row = _row(case, name, "HOLIDAY")
+        case.db.update_file(row["id"], error="an earlier error", size=row["size"] + 1)
+        case.db.commit()
+
+        raw = bytearray(clean)
+        raw[raw.find(jpg[64:96])] ^= 0xFF
+        image.write_bytes(raw)
+        archive.close_zips()
+        _ingest(case, image)
+        marked = _row(case, name, "HOLIDAY")
+        assert marked["size"] == row["size"] + 1       # describes the copy still there
+        assert marked["error"].startswith("an earlier error")
+        assert archive.CHUNK_DAMAGE_ERROR in marked["error"]
+
+        image.write_bytes(clean)
+        archive.close_zips()
+        _ingest(case, image)
+        assert _row(case, name, "HOLIDAY")["error"] == "an earlier error"
+    finally:
+        case.close()
+
+
+def test_a_partial_pass_adds_to_the_damage_record(tmp_path):
+    first, second = _jpeg(1), _jpeg(2)
+    image = _image(tmp_path, [("FIRST", first), ("SECOND", second)], flip=first)
+    case = _case(tmp_path)
+    try:
+        name = _ingest(case, image)
+        key = archive._meta_key(name)                  # pylint: disable=protected-access
+        case.db.set_meta(f"{key}:checksum_chunks", '["an earlier line"]')
+        archive.close_zips()
+        _ingest(case, image, stage=False)
+        lines = archive.source_record(case, name)["checksum_chunks"]
+        assert lines[0] == "an earlier line"
+    finally:
+        case.close()
