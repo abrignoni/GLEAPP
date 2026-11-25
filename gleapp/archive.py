@@ -165,6 +165,16 @@ class ChunkDamage(ArchiveUnavailable):
     """A file was read through an acquisition chunk that fails its stored checksum."""
 
 
+class _LogicalReadError(ArchiveUnavailable):
+    """A logical entry's copy failed one of ``_copy_logical``'s checks. ``reason`` names
+    the check, so the audit line never has to read it back out of the message, which
+    holds the entry's path."""
+
+    def __init__(self, message, reason):
+        super().__init__(message)
+        self.reason = reason
+
+
 class ImagePasswordNeeded(ArchiveUnavailable):
     """An encrypted image was opened with nothing that opens it this session: its
     password, or for an image sealed only to a certificate, that certificate's
@@ -737,10 +747,12 @@ _EXPORT_ZONELESS_KINDS = ("fat12", "fat16", "fat32", "exfat")
 _DATE_ONLY = re.compile(r"\d{4}-\d\d-\d\d")
 
 
-def _export_times(zf: zipfile.ZipFile, root: str) -> tuple[tuple[str, ...], dict]:
+def _export_times(zf: zipfile.ZipFile, root: str) -> tuple[tuple[str, ...], dict, list]:
     """For a zip the vendored qnxprobe exported, the member prefixes of its FAT and
     exFAT volumes and, from each one's ``<volume>.times.tsv``, every member's
-    readings as stored: ``(prefixes, {member: readings})``. ``((), {})`` for any
+    readings as stored: ``(prefixes, {member: readings}, not_read)``, where
+    ``not_read`` says, by table name, each times table that could not be read, so the
+    source record can say its members have no readings. ``((), {}, [])`` for any
     other zip.
 
     FAT and exFAT store a wall clock and no zone. Since qnxprobe 1.88 an export
@@ -749,47 +761,77 @@ def _export_times(zf: zipfile.ZipFile, root: str) -> tuple[tuple[str, ...], dict
     yields in the extended timestamp. The table keeps every time and offset as
     stored, and the readings built here are the ones a walk of the same volume
     records (qnxprobe's listdir_records), so both reach the case alike.
+
+    The table is read as a stream, row by row, so its text is never held whole. A
+    table that fails part way gives none of its readings, and a row naming a member
+    outside its own volume is not taken, since qnxprobe writes each volume's members
+    under that volume.
     """
     try:
         manifest = json.loads(zf.read(f"{root}volumes.json"))
     except (KeyError, ValueError, OSError, zipfile.BadZipFile):
-        return (), {}
+        return (), {}, []
     if not (isinstance(manifest, dict)
             and str(manifest.get("written_by") or "").startswith("qnxprobe ")):
-        return (), {}
-    prefixes, readings = [], {}
-    for vol in manifest.get("volumes") or []:
+        return (), {}, []
+    volumes = manifest.get("volumes") or []
+    if not isinstance(volumes, list):
+        return (), {}, ["volumes.json: its volume list is not a list"]
+    prefixes, readings, not_read = [], {}, []
+    for vol in volumes:
         if not isinstance(vol, dict) or vol.get("filesystem") not in _EXPORT_ZONELESS_KINDS:
             continue
-        if vol.get("volume"):
-            prefixes.append(f"{root}{vol['volume']}/")
-        table = vol.get("times_table")
+        volume, table = vol.get("volume"), vol.get("times_table")
+        if not isinstance(volume, str) or not volume:
+            continue
+        prefix = f"{root}{volume}/"
+        prefixes.append(prefix)
         if not table:
             continue
-        try:
-            text = zf.read(f"{root}{table}").decode("utf-8")
-        except (KeyError, OSError, UnicodeDecodeError, zipfile.BadZipFile):
+        if not isinstance(table, str):
+            not_read.append(f"{volume}: its times table is not named as a file")
             continue
-        for row in csv.DictReader(io.StringIO(text, newline=""), delimiter="\t"):
-            if not row.get("zip_member"):
-                continue                             # a folder, or a file left out
-            got = {}
-            for label in ("modified", "created", "accessed"):
-                value = row.get(label) or ""
-                if value:
-                    dated = label == "accessed" and _DATE_ONLY.fullmatch(value)
-                    got[f"{label} date" if dated else label] = value
-            for label in ("modified", "created", "accessed"):
-                raw = row.get(f"{label}_utc_offset_byte") or ""
-                try:
-                    shown = qnxprobe._exfat_offset(int(raw, 16)) if raw else ""  # pylint: disable=protected-access
-                except ValueError:
-                    shown = ""
-                if shown:
-                    got[f"{label} utc offset"] = shown
-            if got:
-                readings[f"{root}{row['zip_member']}"] = got
-    return tuple(prefixes), readings
+        got_table = {}
+        try:
+            with zf.open(f"{root}{table}") as raw, \
+                    io.TextIOWrapper(raw, encoding="utf-8", newline="") as text:
+                for row in csv.DictReader(text, delimiter="\t"):
+                    member = row.get("zip_member")
+                    if not member:
+                        continue                     # a folder, or a file left out
+                    key = f"{root}{member}"
+                    if not key.startswith(prefix):
+                        continue                     # not a member of this volume
+                    got = _export_readings(row)
+                    if got:
+                        got_table[key] = got
+        except KeyError:
+            not_read.append(f"{table}: not in the zip")
+            continue
+        except (OSError, UnicodeDecodeError, csv.Error, zipfile.BadZipFile) as exc:
+            not_read.append(f"{table}: could not be read ({type(exc).__name__})")
+            continue
+        readings.update(got_table)
+    return tuple(prefixes), readings, not_read
+
+
+def _export_readings(row: dict) -> dict:
+    """One times-table row's readings, as a walk of the volume records them."""
+    got = {}
+    for label in ("modified", "created", "accessed"):
+        value = row.get(label) or ""
+        if value:
+            dated = label == "accessed" and _DATE_ONLY.fullmatch(value)
+            got[f"{label} date" if dated else label] = value
+    for label in ("modified", "created", "accessed"):
+        raw = row.get(f"{label}_utc_offset_byte") or ""
+        try:
+            shown = qnxprobe._exfat_offset(int(raw, 16)) if raw else ""  # pylint: disable=protected-access
+        except ValueError:
+            shown = ""
+        if shown:
+            got[f"{label} utc offset"] = shown
+    return got
 
 
 def _is_macosx_junk(name: str) -> bool:
@@ -3160,7 +3202,7 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
         # file are known before anything is copied or registered.
         alts, drop, tally.views_differ = storage_views.plan(
             (i.filename, i.file_size, i.CRC) for i in infos)
-        zoneless, readings = _export_times(zf, root)
+        zoneless, readings, times_not_read = _export_times(zf, root)
         n = count
         for info in infos:
             name = info.filename
@@ -3245,7 +3287,9 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
                 f"is set"
                 + (f"; no instant made from the zip date on {tally.ts_zoneless} FAT or "
                    f"exFAT members of a qnxprobe export, stored readings recorded for "
-                   f"{tally.ts_read} of them" if tally.ts_zoneless else "")))
+                   f"{tally.ts_read} of them" if tally.ts_zoneless else "")
+                + ("; qnxprobe export times not read, so their members have no "
+                   "readings: " + "; ".join(times_not_read) if times_not_read else "")))
     if progress:
         progress(n)
     return n
@@ -3437,18 +3481,21 @@ def _copy_logical(img, lock, entry, dest: Path, expect_sha256: str | None = None
                 for _kind, digest, _stored in hashes:
                     digest.update(chunk)
         if got != entry.size:
-            raise ArchiveUnavailable(f"read {got} of {entry.size} bytes of {entry.path!r}")
+            raise _LogicalReadError(f"read {got} of {entry.size} bytes of {entry.path!r}",
+                                    "short read")
         if expect_sha256 and recorded.hexdigest() != expect_sha256.lower():
-            raise ArchiveUnavailable(f"{entry.path!r} does not match the SHA-256 the case "
-                                     "recorded for it")
+            raise _LogicalReadError(f"{entry.path!r} does not match the SHA-256 the case "
+                                    "recorded for it", "hash mismatch")
         for kind, digest, stored in hashes:
             if digest.hexdigest() != stored.lower():
-                raise ArchiveUnavailable(f"{entry.path!r} does not match the {kind} the "
-                                         "evidence stores for it")
+                raise _LogicalReadError(f"{entry.path!r} does not match the {kind} the "
+                                        "evidence stores for it", "hash mismatch")
         if not hashes and _reader_saw_damage(img, lock, entry):
-            raise ArchiveUnavailable(f"{entry.path!r} holds a chunk that fails its checksum")
+            raise _LogicalReadError(f"{entry.path!r} holds a chunk that fails its checksum",
+                                    "chunk checksum")
         if expect_stamps and not _stamps_match(_logical_stamp(img), expect_stamps):
-            raise ArchiveUnavailable(f"the source changed while {entry.path!r} was being read")
+            raise _LogicalReadError(f"the source changed while {entry.path!r} was being read",
+                                    "source changed")
         os.replace(part, dest)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -3679,13 +3726,23 @@ def _set_meta_together(case, values: dict) -> None:
 
 
 def _read_failure(exc: BaseException) -> str:
-    """What kind of failure a read was, in words that hold no path."""
-    text = str(exc)
-    for marker, label in (("does not match", "hash mismatch"),
-                          ("fails its checksum", "chunk checksum"),
-                          (" bytes of ", "short read"), ("changed while", "source changed")):
-        if marker in text:
-            return label
+    """What kind of failure a read was, in words that hold no path.
+
+    A check of GLEAPP's own says which it was (``reason``), since its message holds the
+    entry's path and a path can hold any of the words searched for below. Only the
+    reader's own errors, whose messages name chunks and segments, are searched."""
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, str) and reason:
+        return reason
+    if isinstance(exc, ChunkDamage):
+        return "chunk checksum"
+    if isinstance(exc, ewfprobe.EwfError):
+        text = str(exc)
+        for marker, label in (("does not match", "hash mismatch"),
+                              ("fails its checksum", "chunk checksum"),
+                              (" bytes of ", "short read"), ("changed while", "source changed")):
+            if marker in text:
+                return label
     return type(exc).__name__
 
 
@@ -3698,6 +3755,17 @@ def _audit_unread(case, name: str, unread: dict) -> None:
                 for position, (entry_path, reason) in unread.items()]}))
 
 
+def _same_set_location(recorded, img) -> bool:
+    """True when the path the case recorded for a logical source is one of the files of
+    the set ``img`` opened, after links are resolved, so a set given by another of its
+    files, or by another spelling of the same path, is the same set."""
+    try:
+        want = Path(recorded).resolve()
+        return any(Path(p).resolve() == want for p in getattr(img, "paths", ()) or ())
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                       opened: tuple) -> int:
     """The body of ``_ingest_logical``, reading through the handle it was given. ``opened``
@@ -3708,6 +3776,11 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
     if before and before["segment_stamps"] and not _stamps_match(opened,
                                                                  before["segment_stamps"]):
         raise ValueError(f"{src.name} has changed since the case recorded it; relink it first")
+    if before and before.get("path") and not _same_set_location(before["path"], img):
+        # Same sizes and times prove nothing about another copy's entries, and this pass
+        # would save its entry hashes over the recorded ones. A relink checks them first.
+        raise ValueError(f"{src.name} was recorded at another location; relink it to this "
+                         f"one first, so its entries are checked against the case")
     # by source alone: two sources can hold one file name, and a relink can change it
     source_id = hashlib.sha1(src.name.encode("utf-8", "surrogateescape")).hexdigest()[:16]
     slug = f"logical-{source_id}"
@@ -3737,7 +3810,9 @@ def _register_logical(case, src, path: Path, img, lock, count: int, progress,
                 while len(head) < want and (chunk := fin.read(want - len(head))):
                     head += chunk
             if len(head) < want:
-                raise OSError(f"read {len(head)} of {want} bytes of the header")
+                short = OSError(f"read {len(head)} of {want} bytes of the header")
+                short.reason = "short read"
+                raise short
             head_failed = False
         except _LOGICAL_ERRORS as exc:              # the name can still say what it is
             head, head_failed = b"", True
@@ -4384,12 +4459,25 @@ def _damage_noted(case, source: str) -> dict:
     return {r["path"]: (r["id"], r["error"]) for r in rows}
 
 
+def _without_damage_note(error: str | None) -> str | None:
+    """``error`` with the chunk damage note taken off its end, or None when the note is
+    all it held. The note is always added last (``_mark_kept_copy``), so only the last
+    separator is split at: an earlier error can hold the separator itself."""
+    if not error:
+        return None
+    head, sep, tail = error.rpartition(_NOTE_AFTER)
+    if sep and (CHUNK_DAMAGE_ERROR in tail or CHUNK_UNPLACED_ERROR in tail):
+        return head or None
+    if CHUNK_DAMAGE_ERROR in error or CHUNK_UNPLACED_ERROR in error:
+        return None
+    return error
+
+
 def _clear_damage_note(case, noted: dict, dest: Path) -> None:
     """Take the damage note off the row at ``dest``, leaving any error it had before."""
     got = noted.get(str(dest))
     if got is not None:
-        before = got[1].split(_NOTE_AFTER)[0] if _NOTE_AFTER in got[1] else None
-        case.db.update_file(got[0], error=before)
+        case.db.update_file(got[0], error=_without_damage_note(got[1]))
 
 
 def _mark_kept_copy(case, dest: Path, note: str) -> bool:
@@ -4399,9 +4487,7 @@ def _mark_kept_copy(case, dest: Path, note: str) -> bool:
                                (str(dest),)).fetchone()
     if row is None:
         return False
-    had = row["error"]
-    if had and (CHUNK_DAMAGE_ERROR in had or CHUNK_UNPLACED_ERROR in had):
-        had = had.split(_NOTE_AFTER)[0] if _NOTE_AFTER in had else None
+    had = _without_damage_note(row["error"])
     case.db.update_file(row["id"], error=f"{had}{_NOTE_AFTER}{note}" if had else note)
     return True
 

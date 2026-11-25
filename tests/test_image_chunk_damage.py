@@ -465,3 +465,15 @@ def test_a_documents_pass_over_a_changed_image_drops_the_old_record(tmp_path):
         assert "checksum_chunks" not in archive.source_record(case, name)
     finally:
         case.close()
+
+
+def test_taking_a_damage_note_off_keeps_all_of_an_earlier_error():
+    """Issue 344: the note is added last, so only the last separator is split at."""
+    # pylint: disable=protected-access
+    note = f"{archive.CHUNK_DAMAGE_ERROR} (chunk 3 at byte 12,288)"
+    sep = archive._NOTE_AFTER
+    earlier = f"first part{sep}second part"
+    assert archive._without_damage_note(f"{earlier}{sep}{note}") == earlier
+    assert archive._without_damage_note(note) is None
+    assert archive._without_damage_note(earlier) == earlier
+    assert archive._without_damage_note(None) is None
