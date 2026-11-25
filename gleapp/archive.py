@@ -5455,9 +5455,10 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     and JFFS2 on NAND through the spare-stripped view, so their bytes do not sit
     at one image offset a carve would start from.
 
-    Returns (rows added, the set of image byte offsets recovered), the second so
-    a carve run alongside can skip the nameless twin of a file recovered here
-    with its name.
+    Returns (files recovered with a copy, the set of image byte offsets
+    recovered), the second so a carve run alongside can skip the nameless twin of
+    a file recovered here with its name. A file registered with a damage error and
+    no copy is not counted as recovered.
 
     Recovered files are always copied into the case: a deleted file is not one
     contiguous run the way a carved hit is (a resident one is not on the disk at
@@ -5609,19 +5610,21 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     finally:
         img.close()
     case.db.commit()
+    recovered = tally.registered - tally.damaged     # rows with a copy of the file
     case.db.audit_log(case.examiner, "recover-deleted",
-                      f"{name}: {tally.registered} deleted file(s) recovered from deleted "
+                      f"{name}: {recovered} deleted file(s) recovered from deleted "
                       f"records ({tally.failed} unreadable, {tally.skipped_size} over the size limit"
-                      + (f"; {tally.damaged} of them refused a new copy because a chunk failed "
-                         "its stored checksum or the chunk holding the file could not be "
-                         "checked, and registered with that error" if tally.damaged else "")
+                      + (f"; {tally.damaged} more registered with that error and no copy, "
+                         "because a chunk they were read through failed its stored checksum "
+                         "or the chunk holding the file could not be checked"
+                         if tally.damaged else "")
                       + (f"; {unverified} content unverified: FAT or exFAT cannot show their "
                          "clusters were not reused" if unverified else "")
                       + (f"; {refused} deleted file record(s) of any type the reader refused, first: "
                          f"{first_refusal}" if refused else "") + ")")
     if progress:
         progress(n)
-    return tally.registered, recovered_offsets
+    return recovered, recovered_offsets
 
 
 def _flash_first_offset(walker, entry) -> int | None:

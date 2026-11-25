@@ -190,7 +190,8 @@ def test_a_deleted_file_read_through_a_damaged_chunk_is_registered_with_the_erro
         ingest_sources(case, sources)
         added, _offsets = archive.recover_deleted(case, sources[0].name)
         rows = {r["orig_path"]: r for r in case.db.iter_files("origin='deleted'")}
-        assert added == len(before) and set(rows) == set(before)
+        # every file is named; the damaged one is not counted as recovered
+        assert set(rows) == set(before) and added == len(before) - 1
         hit = rows[target]
         assert archive.CHUNK_DAMAGE_ERROR in (hit["error"] or "")
         assert not hit["md5"] and not hit["sha256"]
@@ -199,7 +200,9 @@ def test_a_deleted_file_read_through_a_damaged_chunk_is_registered_with_the_erro
             if path != target:
                 assert row["error"] is None and Path(row["path"]).read_bytes() == before[path]
         said = [a["detail"] for a in case.db.iter_audit() if a["action"] == "recover-deleted"]
-        assert said and "(0 unreadable" in said[0]
-        assert "; 1 of them refused a new copy because a chunk failed its stored checksum" in said[0]
+        assert said and said[0].startswith(f"{sources[0].name}: {len(before) - 1} deleted file(s) "
+                                           "recovered") and "(0 unreadable" in said[0]
+        assert ("; 1 more registered with that error and no copy, because a chunk they were "
+                "read through failed its stored checksum") in said[0]
     finally:
         case.close()
