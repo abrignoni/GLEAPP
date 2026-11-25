@@ -13,7 +13,9 @@ whatever zone the test runs in. A zip qnxprobe did not write has its DOS dates k
 as stored too, since a DOS date has no zone wherever the zip came from.
 """
 
+import csv
 import gzip
+import io
 import json
 import subprocess
 import sys
@@ -141,3 +143,113 @@ def test_a_member_with_the_extended_field_keeps_its_utc(tmp_path):
         zf.writestr(info, b"y" * 64)
     row = _rows(tmp_path, src, "ext")["dcim/b.bin"]
     assert row["mtime"] == 1714557600.0 and row["recorded_times"] is None
+
+
+# ---- the times-table reader on shapes qnxprobe does not write (issue 347) -----------
+
+def _rewritten(src, dest, change):
+    """A copy of the export at ``src`` with ``change(name, data)`` applied to each member."""
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dest, "w") as zout:
+        for info in zin.infolist():
+            data = change(info.filename, zin.read(info))
+            if data is not None:
+                zout.writestr(info, data)
+    return dest
+
+
+def _times_said(tmp_path, evidence, label):
+    case = open_case(tmp_path / f"case-{label}", create=True, examiner="t")
+    try:
+        sources, _ = parse_source_spec(evidence)
+        sources[0].include_other = True
+        ingest_sources(case, sources)
+        rows = {r["orig_path"]: dict(r) for r in case.db.iter_files("1=1")}
+        return rows, case.db.get_meta(f"archive:{sources[0].name}:timestamps") or ""
+    finally:
+        case.close()
+
+
+def _export_of(tmp_path):
+    return _export(tmp_path, _raw(tmp_path, "fat32-deleted"))
+
+
+def test_a_volume_list_that_is_not_a_list_does_not_stop_the_ingest(tmp_path):
+    def change(name, data):
+        if name.endswith("volumes.json"):
+            manifest = json.loads(data)
+            manifest["volumes"] = {"not": "a list"}
+            return json.dumps(manifest).encode()
+        return data
+    zipped = _rewritten(_export_of(tmp_path), tmp_path / "ev" / "dict.zip", change)
+    rows, said = _times_said(tmp_path, zipped, "dict")
+    assert rows, "the ingest registered nothing"
+    assert "its volume list is not a list" in said, said
+
+
+def test_a_times_table_field_over_the_csv_limit_is_said_not_read(tmp_path):
+    def change(name, data):
+        if name.endswith(".times.tsv"):
+            lines = data.decode().split("\n")
+            lines.insert(2, "\t".join(["x" * 200_000] + [""] * (lines[0].count("\t"))))
+            return "\n".join(lines).encode()
+        return data
+    zipped = _rewritten(_export_of(tmp_path), tmp_path / "ev" / "big.zip", change)
+    rows, said = _times_said(tmp_path, zipped, "big")
+    assert rows, "the ingest registered nothing"
+    assert "qnxprobe export times not read" in said and "could not be read (Error)" in said, said
+    # a table that failed part way gives none of its readings
+    assert not any(r["recorded_times"] for r in rows.values() if r["orig_path"].endswith(
+        (".jpg", ".JPG", ".png", ".PNG"))), "a partly read table gave readings"
+
+
+def test_a_row_naming_a_member_outside_its_volume_is_not_taken(tmp_path):
+    exported = _export_of(tmp_path)
+    with zipfile.ZipFile(exported) as zf:
+        table = next(n for n in zf.namelist() if n.endswith(".times.tsv"))
+        header = zf.read(table).decode().split("\n")[0].split("\t")
+        outside = "elsewhere/planted.bin"
+
+    def change(name, data):
+        if name == table:
+            row = {col: "" for col in header}
+            row.update(zip_member=outside, modified="2001-01-01 00:00:00")
+            return data + ("\t".join(row[c] for c in header) + "\n").encode()
+        return data
+    zipped = _rewritten(exported, tmp_path / "ev" / "outside.zip", change)
+    with zipfile.ZipFile(zipped, "a") as zf:
+        zf.writestr(outside, b"z" * 64)
+    with zipfile.ZipFile(zipped) as zf:
+        _prefixes, readings, _not_read = archive._export_times(zf, "")  # pylint: disable=protected-access
+    assert outside not in readings and readings, sorted(readings)[:3]
+
+
+def test_the_times_table_is_read_as_a_stream(tmp_path):
+    """Peak memory of reading a table of 100,000 rows, against reading its text whole,
+    measured with tracemalloc on one synthetic export."""
+    import tracemalloc
+    rows = 100_000
+    src = tmp_path / "ev" / "many.zip"
+    src.parent.mkdir(exist_ok=True)
+    header = "path\tzip_member\tmodified\tcreated\taccessed"
+    body = "\n".join(f"v/f{i}\tv/f{i}\t2020-01-01 00:00:00\t\t" for i in range(rows))
+    with zipfile.ZipFile(src, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("volumes.json", json.dumps({"written_by": "qnxprobe 1.88", "volumes": [
+            {"volume": "v", "filesystem": "fat32", "times_table": "v.times.tsv"}]}))
+        zf.writestr("v.times.tsv", header + "\n" + body + "\n")
+    with zipfile.ZipFile(src) as zf:
+        tracemalloc.start()
+        _p, readings, _n = archive._export_times(zf, "")  # pylint: disable=protected-access
+        _now, streamed = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        assert len(readings) == rows
+        # what main did: the member read and decoded whole, then the same rows taken
+        tracemalloc.start()
+        text = zf.read("v.times.tsv").decode("utf-8")
+        old = {}
+        for row in csv.DictReader(io.StringIO(text, newline=""), delimiter="\t"):
+            old[row["zip_member"]] = archive._export_readings(row)  # pylint: disable=protected-access
+        _now, held = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        del text
+    assert len(old) == rows
+    assert streamed < held, (streamed, held)

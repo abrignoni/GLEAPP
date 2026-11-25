@@ -1119,3 +1119,41 @@ def test_logical_evidence_cannot_be_a_set_member(tmp_path):
     evidence.write_bytes(L01_SIGNATURE + bytes(4096))
     with pytest.raises(ValueError, match="cannot be a member image"):
         image_set_source([evidence])
+
+
+# ---- issue 342 -------------------------------------------------------------------
+
+def test_a_reingest_from_another_location_is_sent_to_relink(ingest, tmp_path):
+    """Same sizes and times prove nothing about another copy's entries, and the pass
+    would save its entry hashes over the recorded ones, so a relink must check it first."""
+    import shutil
+    case, evidence, image = ingest([_Entry("a.jpg")])
+    try:
+        moved = tmp_path / "moved" / evidence.name
+        moved.parent.mkdir()
+        shutil.copy2(evidence, moved)
+        image.paths = [str(moved)]
+        archive._drop_logical(evidence)                  # pylint: disable=protected-access
+        src = Source(name=evidence.name, path=str(moved), kind="archive")
+        with pytest.raises(ValueError, match="recorded at another location; relink it"):
+            archive.ingest_archive(case, src)
+        # the same set again, at the location the case recorded, is ingested as before
+        image.paths = [str(evidence)]
+        archive._drop_logical(moved)                     # pylint: disable=protected-access
+        archive.ingest_archive(case, Source(name=evidence.name, path=str(evidence),
+                                            kind="archive"))
+        assert len(_rows(case)) == 1
+    finally:
+        case.close()
+
+
+def test_a_failure_reason_is_not_read_out_of_the_entry_path():
+    # pylint: disable=protected-access
+    planted = archive._LogicalReadError("read 3 of 8 bytes of 'x does not match.jpg'",
+                                        "short read")
+    assert archive._read_failure(planted) == "short read"
+    # a path holding a phrase is not taken for the reader saying it
+    assert archive._read_failure(OSError("'fails its checksum.jpg' gone")) == "OSError"
+    assert archive._read_failure(archive.ChunkDamage("anything")) == "chunk checksum"
+    assert archive._read_failure(archive.ewfprobe.EwfError(
+        "chunk 4 fails its checksum")) == "chunk checksum"
