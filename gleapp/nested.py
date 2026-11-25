@@ -25,6 +25,7 @@ from __future__ import annotations
 import bz2
 import gzip
 import hashlib
+import json
 import lzma
 import struct
 import tarfile
@@ -118,17 +119,18 @@ class _Member:
     """One file inside a container: its archive-relative name, size, timestamps
     and a zero-arg callable returning its bytes."""
 
-    __slots__ = ("name", "size", "mtime", "ctime", "read", "encrypted")
+    __slots__ = ("name", "size", "mtime", "ctime", "read", "encrypted", "recorded")
 
     def __init__(self, name: str, size: int, mtime: float | None,
                  ctime: float | None, read: Callable[[], bytes],
-                 encrypted: bool = False) -> None:
+                 encrypted: bool = False, recorded: dict | None = None) -> None:
         self.name = name
         self.size = size
         self.mtime = mtime
         self.ctime = ctime
         self.read = read
         self.encrypted = encrypted
+        self.recorded = recorded        # readings with no zone, as stored (a zip's DOS date)
 
 
 # --------------------------------------------------------------------------
@@ -207,12 +209,13 @@ def _zip_members(path: Path) -> Iterator[_Member]:
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            mtime, ctime, _ = archive._timestamps(info)  # noqa: SLF001  # pylint: disable=protected-access
+            mtime, ctime, which = archive._timestamps(info)  # noqa: SLF001  # pylint: disable=protected-access
             enc = bool(info.flag_bits & 0x1)
             yield _Member(
                 info.filename, info.file_size, mtime, ctime,
                 (lambda i=info: zf.read(i)) if not enc else (lambda: b""),
-                encrypted=enc)
+                encrypted=enc,
+                recorded=archive._dos_reading(info) if which == "dos" else None)  # noqa: SLF001  # pylint: disable=protected-access
 
 
 def _tar_members(path: Path) -> Iterator[_Member]:
@@ -382,6 +385,7 @@ def _expand_one(case, row, *, include_other: bool, tally: dict,
                     atime=None,
                     origin=row["origin"],
                     container_id=row["id"],
+                    recorded_times=json.dumps(m.recorded) if m.recorded else None,
                 )
                 written += 1
                 tally["added"] += 1

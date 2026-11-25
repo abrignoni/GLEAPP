@@ -334,6 +334,12 @@ Four distinct kinds. Do not conflate them.
   three FS times stay blank and appear as **Recorded (as stored, no zone)**
   instead. That applies in the list view, HTML report, CSV (`recorded_times`)
   and LAVA tables. See §16.
+- **A zip member with only a DOS date:** a DOS date carries no zone (writers
+  usually store their own local clock, and the zip does not say which), so FS
+  written stays blank and the date appears as **Recorded (as stored, no zone)**.
+  A member that carries the zip's extended timestamp, which is UTC, keeps it in
+  FS written. The source record counts which of the two each member of the zip
+  had; members of a zip found inside a source are not counted there.
 - **VIC exports vary:** one wrote created, written and accessed on most
   entries; another wrote written on some, created on almost none and accessed
   on none. GLEAPP reads every timestamp written (`...Z` and `...-05:00` forms),
@@ -759,8 +765,8 @@ The **Show** options:
   blank). With no range set, it shows only those files.
 - The filesystem times are instants, so the days are read in the display
   **Timezone**, as their columns show them. The EXIF capture time and the
-  as-stored readings of a FAT or exFAT volume carry no zone, so they are
-  compared on the date the device wrote. **Ingested** (when GLEAPP read the
+  as-stored readings of a FAT or exFAT volume or a zip's DOS date carry no zone, so they are
+  compared on the date as stored. **Ingested** (when GLEAPP read the
   file) is not one of the dates.
 
 ### Location

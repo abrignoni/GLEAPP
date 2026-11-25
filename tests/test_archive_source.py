@@ -1,5 +1,6 @@
 """A full-file-system extraction zip as a source, built synthetically so every path is exercised."""
 
+import json
 import struct
 import time
 import zipfile
@@ -107,9 +108,12 @@ def test_media_is_staged_registered_and_processed_when_staged(tmp_path):
         assert deep.is_file()
         assert Path(rows["Dump/odd/ic\x01on.png"]["path"]).is_file()  # the control char never hit disk
         assert rows["Dump/stamped/ts.png"]["mtime"] == EXT_TS
-        dos = rows["Dump/data/media/0/DCIM/photo_a.jpg"]["mtime"]
-        assert abs(dos - time.mktime((*zipfile.ZipFile(z).getinfo(
-            "Dump/data/media/0/DCIM/photo_a.jpg").date_time, 0, 0, -1))) < 1
+        # a DOS date has no zone, so it is kept as stored and no instant is made from it
+        dos = rows["Dump/data/media/0/DCIM/photo_a.jpg"]
+        y, mo, d, h, mi, s = zipfile.ZipFile(z).getinfo("Dump/data/media/0/DCIM/photo_a.jpg").date_time
+        assert dos["mtime"] is None
+        assert json.loads(dos["recorded_times"]) == {
+            "modified": f"{y:04d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}"}
         assert c.db.get_meta("archive:EXTRACTION_FFS.zip:sha256") == "ab" * 32
         assert c.db.get_meta("archive:EXTRACTION_FFS.zip:root") == "Dump/"
         assert c.db.get_meta("archive:EXTRACTION_FFS.zip:skipped_encrypted") == "1"

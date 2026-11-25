@@ -703,17 +703,33 @@ def _decode_extended_timestamp(extra: bytes) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _timestamps(info: zipfile.ZipInfo) -> tuple[float, float | None, str]:
-    """(mtime, ctime, which) for a member: the extended field when present, else DOS."""
+def _timestamps(info: zipfile.ZipInfo) -> tuple[float | None, float | None, str]:
+    """(mtime, ctime, which) for a member. The times come from the extended field when
+    present; for a member with only a DOS date both are None and which is "dos".
+
+    The extended field is UTC. A DOS date carries no zone: writers usually store their
+    own local clock, and the zip does not say which clock it was. So no instant is made
+    from it. Reading it in the examiner's zone gave an instant off by the difference
+    between the writer's offset and the examiner's, when they differ. It is kept as
+    stored instead, by ``_dos_reading``."""
     ctime, mtime = _decode_extended_timestamp(info.extra or b"")
     if mtime is not None:
         return float(mtime), float(ctime) if ctime is not None else None, "extended"
-    # DOS time is local to the machine that wrote the zip, at two-second resolution.
-    try:
-        dos = time.mktime((*info.date_time, 0, 0, -1))
-    except (OverflowError, ValueError):
-        dos = 0.0
-    return dos, None, "dos"
+    return None, None, "dos"
+
+
+def _dos_reading(info: zipfile.ZipInfo) -> dict | None:
+    """A member's DOS date as stored, ``{"modified": text}``, or None when it is unset.
+
+    Written as the vendored reader writes a FAT entry's modified time, since the zip
+    date is the same pair of words, so a zip member and a walked FAT file read alike.
+    zipfile hands back the decoded words unchanged, so they are rebuilt exactly."""
+    year, month, day, hour, minute, second = info.date_time
+    if not 1980 <= year <= 2107:
+        return None
+    date = ((year - 1980) << 9) | (month << 5) | day
+    shown = qnxprobe._fat_stamp(date, (hour << 11) | (minute << 5) | (second // 2))  # pylint: disable=protected-access
+    return {"modified": shown} if shown else None
 
 
 # The kinds a qnxprobe export writes with a <volume>.times.tsv (its _ZIP_FAT_KINDS).
@@ -2902,6 +2918,7 @@ class _Tally:
         self.ts_dos = 0
         self.ts_zoneless = 0            # FAT/exFAT members of a qnxprobe export: no instant
         self.ts_read = 0                # ... of which the export's times table gave readings
+        self.ts_dos_read = 0            # DOS-date members whose date was set, kept as stored
         self.mirrored = 0              # members that were another storage view of a kept one
         self.views_differ = 0           # mirrored groups registered in full, copies disagree
         self.placeholders = 0           # walked rows whose content is with a cloud provider
@@ -3201,7 +3218,10 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
                 tally.ts_zoneless += 1
                 tally.ts_read += bool(said)
             else:
+                # any other zip: its DOS date is kept as stored, with no instant
+                said = _dos_reading(info)
                 tally.ts_dos += 1
+                tally.ts_dos_read += bool(said)
             if stage:
                 _write_member(zf, info, dest)
                 if mtime is not None:
@@ -3220,7 +3240,9 @@ def _ingest_zip(case, src, zip_path: Path, *, count: int, progress) -> int:
     _finish(case, src, zip_path, fmt=FORMAT_ZIP, root=root, stage=stage, reason="",
             tally=tally, timestamps=(
                 f"extended field on {tally.ts_extended} of {tally.registered} registered "
-                f"members; DOS date on {tally.ts_dos}"
+                f"members; DOS date on {tally.ts_dos}, with no instant made from it, "
+                f"recorded as stored with no zone for the {tally.ts_dos_read} whose date "
+                f"is set"
                 + (f"; no instant made from the zip date on {tally.ts_zoneless} FAT or "
                    f"exFAT members of a qnxprobe export, stored readings recorded for "
                    f"{tally.ts_read} of them" if tally.ts_zoneless else "")))
@@ -3944,28 +3966,62 @@ _SAYING_KINDS = ("xfs", "btrfs", "refs", "efs", "jffs2", "squashfs")
 _VOLUME_NOTE_KINDS = ("efs", "jffs2", "squashfs")
 
 
-# The filesystems whose walkers record damage and no note: since qnxprobe 1.74, an
-# APFS or HFS+ file carrying a compression attribute without being flagged
-# compressed, which is read as stored. Only the damage is said for these, so a volume
-# that has none is recorded as it always was.
-_DAMAGE_KINDS = ("apfs", "hfs+", "hfsx")
+# The filesystems for which only the walker's damage list is said: since qnxprobe
+# 1.74, an APFS or HFS+ file carrying a compression attribute without being flagged
+# compressed, which is read as stored, and in qnxprobe 1.88 what the ext, F2FS, FAT,
+# exFAT, NTFS, QNX4, UBI, UBIFS and YAFFS walkers record in their ``damage`` as they
+# list a volume. Some of these walkers also have a volume note (ext, F2FS, APFS,
+# HFS+); it is not read here. A volume whose list is empty is recorded as it always
+# was. A FAT or UBI volume with only reader notes in the list gets those notes
+# (``_damage_said``). walker_for's names for them.
+_DAMAGE_KINDS = ("apfs", "hfs+", "hfsx", "ext2", "ext3", "ext4", "f2fs", "fat12",
+                 "fat16", "fat32", "exfat", "ntfs", "qnx4", "ubi", "ubifs", "yaffs1",
+                 "yaffs2")
+
+
+_READER_NOTE = "note: "
+
+
+def _damage_said(walker) -> list[str]:
+    """What a walker recorded in its ``damage`` as it listed a volume, as text: the
+    damaged records, then the lines the reader marks ``note:``. Those are kept in the
+    same list (the FAT and UBI walkers write them for an interrupted write, an empty
+    UBI volume and the like). The reader marks them as notes, so they are counted
+    apart from the damaged records. Five of each are shown, each cut at 240
+    characters."""
+    items = [str(d) for d in (getattr(walker, "damage", None) or [])]
+    hurt = [s for s in items if not s.startswith(_READER_NOTE)]
+    notes = [s[len(_READER_NOTE):] for s in items if s.startswith(_READER_NOTE)]
+    said = []
+    if hurt:
+        said.append(f"{len(hurt):,} damaged record{'' if len(hurt) == 1 else 's'}: "
+                    + "; ".join(s[:240] for s in hurt[:5]))
+    if notes:
+        said.append(f"{len(notes):,} reader note{'' if len(notes) == 1 else 's'}: "
+                    + "; ".join(s[:240] for s in notes[:5]))
+    return said
+
+
+def _only_reader_notes(walker, fskind: str) -> bool:
+    """True when all a volume of a ``_DAMAGE_KINDS`` kind has to say is reader notes:
+    it was read, so an empty one is not "not read"."""
+    items = [str(d) for d in (getattr(walker, "damage", None) or [])]
+    return (fskind in _DAMAGE_KINDS and bool(items)
+            and all(s.startswith(_READER_NOTE) for s in items))
 
 
 def _walker_says(walker, fskind: str) -> str:
     """The reader's own note and damage on a volume of a kind in ``_SAYING_KINDS``,
-    and its damage alone on one in ``_DAMAGE_KINDS``."""
+    and its damage list (damaged records and reader notes) on one in
+    ``_DAMAGE_KINDS``."""
     if fskind in _DAMAGE_KINDS:
-        count, lines = qnxprobe.damage_lines(walker)
-        return (f"{count:,} damaged record{'' if count == 1 else 's'}: " + "; ".join(lines)
-                if count else "")
+        return "; ".join(_damage_said(walker))
     if fskind not in _SAYING_KINDS:
         return ""
     note = getattr(walker, "volume_note" if fskind in _VOLUME_NOTE_KINDS else "note",
                    None) or ""
-    count, lines = qnxprobe.damage_lines(walker)
     parts = [str(note)] if note else []
-    if count:
-        parts.append(f"{count:,} damaged record{'' if count == 1 else 's'}: " + "; ".join(lines))
+    parts += _damage_said(walker)
     return "; ".join(parts)
 
 
@@ -4110,7 +4166,7 @@ def _ingest_image_walk(case, src, image_path: Path, fmt: str, *, count: int,
                 if mirror_note:
                     # a mirror member of a DDF or IMSM array, walked on its own
                     said = f"{said}; {mirror_note}" if said else mirror_note
-                if said and not entries:
+                if said and not entries and not _only_reader_notes(walker, fskind):
                     # a volume read with nothing listed, and the reader says why:
                     # one device of a multi-device Btrfs, a ReFS whose newest
                     # changes are in its log

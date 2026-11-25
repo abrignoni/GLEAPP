@@ -9,8 +9,8 @@ So a member of such a volume is registered as a walked file of the same volume i
 no instant made from its zip date, the readings carried as recorded text, and the
 UTC the export wrote kept as the modified time where there is one. The checks
 compare the zip's rows with the rows a walk of the same image gives, so they hold
-whatever zone the test runs in. A zip qnxprobe did not write keeps its DOS dates as
-before.
+whatever zone the test runs in. A zip qnxprobe did not write has its DOS dates kept
+as stored too, since a DOS date has no zone wherever the zip came from.
 """
 
 import gzip
@@ -87,8 +87,9 @@ def test_an_exported_member_carries_the_readings_a_walk_gives(tmp_path, stem):
             "the exFAT export carried no UTC, so its branch was not exercised"
 
 
-def test_a_zip_qnxprobe_did_not_write_keeps_its_dos_dates(tmp_path):
-    """Only an export the vendored reader names as its own is read this way."""
+def test_a_zip_qnxprobe_did_not_write_keeps_its_dos_date_as_stored(tmp_path):
+    """Only an export the vendored reader names as its own has its times table read.
+    Any other zip's DOS date is still kept as stored, with no instant made from it."""
     src = tmp_path / "ev" / "plain.zip"
     src.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(src, "w") as zf:
@@ -97,4 +98,46 @@ def test_a_zip_qnxprobe_did_not_write_keeps_its_dos_dates(tmp_path):
                                                  "volumes": [{"volume": "dcim",
                                                               "filesystem": "fat32"}]}))
     row = _rows(tmp_path, src, "plain")["dcim/a.bin"]
-    assert row["mtime"] is not None and row["recorded_times"] is None
+    assert row["mtime"] is None
+    assert json.loads(row["recorded_times"]) == {"modified": "2024-05-01 10:00:00"}
+
+
+def test_the_source_record_counts_only_the_dos_dates_it_recorded(tmp_path):
+    src = tmp_path / "ev" / "two.zip"
+    src.parent.mkdir(exist_ok=True)
+    with zipfile.ZipFile(src, "w") as zf:
+        zf.writestr(zipfile.ZipInfo("a.bin", (2024, 5, 1, 10, 0, 0)), b"x" * 64)
+        zf.writestr(zipfile.ZipInfo("b.bin", (1980, 0, 0, 0, 0, 0)), b"y" * 64)  # date unset
+    case = open_case(tmp_path / "case-two", create=True, examiner="t")
+    try:
+        sources, _ = parse_source_spec(src)
+        sources[0].include_other = True
+        ingest_sources(case, sources)
+        said = case.db.get_meta(f"archive:{sources[0].name}:timestamps")
+        assert ("DOS date on 2, with no instant made from it, recorded as stored with no "
+                "zone for the 1 whose date is set") in said, said
+    finally:
+        case.close()
+
+
+def test_a_dos_date_reads_as_a_walked_fat_entry_does():
+    def reading(date_time):
+        return archive._dos_reading(zipfile.ZipInfo("a", date_time))  # pylint: disable=protected-access
+
+    assert reading((2024, 5, 1, 10, 0, 58)) == {"modified": "2024-05-01 10:00:58"}
+    # a date word of zero is an unset date, so nothing is recorded
+    assert reading((1980, 0, 0, 0, 0, 0)) is None
+    # a stored pair that is no real day keeps its two words, as a FAT entry's does
+    said = reading((2023, 2, 30, 12, 0, 0))["modified"]
+    assert said.startswith("not a valid time (stored date word 0x565e"), said
+
+
+def test_a_member_with_the_extended_field_keeps_its_utc(tmp_path):
+    src = tmp_path / "ev" / "ext.zip"
+    src.parent.mkdir(exist_ok=True)
+    info = zipfile.ZipInfo("dcim/b.bin", (2024, 5, 1, 10, 0, 0))
+    info.extra = b"\x55\x54\x05\x00\x01" + (1714557600).to_bytes(4, "little")
+    with zipfile.ZipFile(src, "w") as zf:
+        zf.writestr(info, b"y" * 64)
+    row = _rows(tmp_path, src, "ext")["dcim/b.bin"]
+    assert row["mtime"] == 1714557600.0 and row["recorded_times"] is None

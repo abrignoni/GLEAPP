@@ -874,8 +874,9 @@ def _artifact_locations(writer: "_Writer", rows: list[dict],
             "own clock as recorded, with no timezone, so it is reported as text and "
             "not as an instant. Modified Timestamp is the filesystem's own time, "
             "which a FAT or exFAT volume records as a wall clock with no zone; that "
-            "column is empty for such a volume and the reading appears under "
-            "Recorded (as stored, no zone) instead. " + _MAP_NOTE))
+            "column is empty for such a volume, and for a zip member with only a DOS "
+            "date, and the reading appears under Recorded (as stored, no zone) "
+            "instead. " + _MAP_NOTE))
 
 
 def _stage_keyframes(case: Case, writer: "_Writer",
@@ -1552,10 +1553,10 @@ _MEDIA_NOTES = (
     "provenance, and the Device Info page states which applies to each source: for a "
     "folder they are the filesystem times of the copy this case read; for an "
     "extraction archive they are the times the archive recorded for that member, "
-    "which is its extended timestamp field where it has one and otherwise the DOS "
-    "date, local to whichever machine wrote the archive and at two-second "
-    "resolution, except a FAT or exFAT member of a qnxprobe export: its zip date "
-    "is a reading with no zone, so Modified stays empty and the readings the "
+    "which is its extended timestamp field where it has one; a member with only a "
+    "DOS date has a date with no zone, so Modified stays empty and the date as "
+    "stored is under Recorded. A FAT or exFAT member of a qnxprobe export is the "
+    "same: its zip date is a reading with no zone, so Modified stays empty and the readings the "
     "export's times table holds are under Recorded, and an exFAT member with a "
     "valid stored offset keeps the UTC the export wrote as Modified; for an acquisition they are the filesystem's own times, and what "
     "that means depends on the filesystem. NTFS records instants, so Modified, "

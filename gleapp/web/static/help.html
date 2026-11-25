@@ -281,6 +281,12 @@ server-side across the whole result set, not just the visible page.</p>
     the three FS times stay blank and appear as <strong>Recorded (as stored, no
     zone)</strong> instead. That applies in the list view, HTML report, CSV
     (<code>recorded_times</code>) and LAVA tables. See &sect;16.</li>
+  <li><strong>A zip member with only a DOS date:</strong> a DOS date carries no zone (writers
+    usually store their own local clock, and the zip does not say which), so FS written stays
+    blank and the date appears as <strong>Recorded (as stored, no zone)</strong>. A member that
+    carries the zip's extended timestamp, which is UTC, keeps it in FS written. The source record
+    counts which of the two each member of the zip had; members of a zip found inside a source are
+    not counted there.</li>
   <li><strong>VIC exports vary:</strong> one wrote created, written and accessed on most
     entries; another wrote written on some, created on almost none and accessed on none.
     GLEAPP reads every timestamp written (<code>...Z</code> and <code>...-05:00</code>
@@ -699,8 +705,8 @@ Processing history.</p>
   set, it shows only those files.</li>
   <li>The filesystem times are instants, so the days are read in the display
   <strong>Timezone</strong>, as their columns show them. The EXIF capture time and the as-stored
-  readings of a FAT or exFAT volume carry no zone, so they are compared on the date the device
-  wrote. <strong>Ingested</strong> (when GLEAPP read the file) is not one of the dates.</li>
+  readings of a FAT or exFAT volume or a zip's DOS date carry no zone, so they are compared on
+  the date as stored. <strong>Ingested</strong> (when GLEAPP read the file) is not one of the dates.</li>
 </ul>
 
 <h3>Location</h3>

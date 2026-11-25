@@ -7,6 +7,7 @@ never looked inside.
 
 import gzip
 import io
+import json
 import sys
 import tarfile
 import time
@@ -64,6 +65,23 @@ def test_a_zip_of_photos_in_a_folder_is_expanded(tmp_path):
     for r in kids:
         p = Path(r["path"])
         assert p.is_file() and "extracted" in p.parts
+
+
+def test_a_nested_zip_members_dos_date_is_kept_as_stored(tmp_path):
+    """A DOS date has no zone, so no instant is made from it; the extended field is UTC."""
+    def build(ev):
+        with zipfile.ZipFile(ev / "Donkeys.zip", "w") as zf:
+            zf.writestr(zipfile.ZipInfo("dos.jpg", (2024, 5, 1, 10, 0, 0)), _jpg((150, 90, 60)))
+            utc = zipfile.ZipInfo("utc.jpg", (2024, 5, 1, 10, 0, 0))
+            utc.extra = b"\x55\x54\x05\x00\x01" + (1714557600).to_bytes(4, "little")
+            zf.writestr(utc, _jpg((90, 60, 40)))
+
+    case, _ = _ingest_folder(tmp_path, build)
+    rows = _rows(case)
+    dos, utc = rows["Donkeys.zip/dos.jpg"], rows["Donkeys.zip/utc.jpg"]
+    assert dos["mtime"] is None
+    assert json.loads(dos["recorded_times"]) == {"modified": "2024-05-01 10:00:00"}
+    assert utc["mtime"] == 1714557600.0 and utc["recorded_times"] is None
 
 
 def test_the_extracted_files_process_like_any_other(tmp_path):
