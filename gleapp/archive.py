@@ -5455,13 +5455,17 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     and JFFS2 on NAND through the spare-stripped view, so their bytes do not sit
     at one image offset a carve would start from.
 
-    Returns (rows added, the set of image byte offsets recovered), the second so
-    a carve run alongside can skip the nameless twin of a file recovered here
-    with its name.
+    Returns (files recovered with a copy, the set of image byte offsets
+    recovered), the second so a carve run alongside can skip the nameless twin of
+    a file recovered here with its name. A file registered with a damage error and
+    no copy is not counted as recovered.
 
     Recovered files are always copied into the case: a deleted file is not one
     contiguous run the way a carved hit is (a resident one is not on the disk at
-    all), so it cannot be read back later by a single offset.
+    all), so it cannot be read back later by a single offset. A file read through
+    an acquisition chunk that fails its stored checksum gets no new copy and is
+    registered with that error, as a walked file is (``_damage_note``), so the case
+    still names it; the audit line counts those apart from the unreadable ones.
     """
     rec = _require(case, name)
     if rec["format"] not in IMAGE_FORMATS:
@@ -5544,23 +5548,31 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                     shown = e.name
                     member = f"{ident}_{e.name}"
                 dest = _staged_path(staged_dir, slug, member)
+                error = None
                 try:
                     _write_image_file(_DeletedReader(walker, e), dest,
                                       [b for _n, b in acquired],
                                       reread=_record_reread(walker, getattr(e, "record", None)))
-                except (*unreadable, OSError, ChunkDamage):
+                except ChunkDamage as exc:
+                    # read through a chunk that fails its stored checksum: registered
+                    # with that error and no new copy, as a walked file is, so the
+                    # case still names the file the deleted record holds
+                    error, _kept = _damage_note(exc, dest)
+                    tally.damaged += 1
+                except (*unreadable, OSError):
                     tally.failed += 1                # an earlier copy at dest stays
                     continue
                 # NTFS times are real instants; FAT and exFAT store a zone-less
                 # wall clock, so those are kept as text and no instant is set.
+                # A row with an error has no new copy to date.
                 if fskind == "ntfs":
-                    if e.modified:
+                    if e.modified and not error:
                         with contextlib.suppress(OSError):
                             os.utime(dest, (e.accessed or e.modified, e.modified))
                     mtime, ctime, atime = e.modified or None, e.created or None, e.accessed or None
                     recorded = None
                 elif flash:
-                    if e.mtime:
+                    if e.mtime and not error:
                         with contextlib.suppress(OSError):
                             os.utime(dest, (e.mtime, e.mtime))
                     mtime, ctime, atime = e.mtime or None, None, None
@@ -5586,7 +5598,7 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
                 _register(case, src_obj, dest, shown, shown, kind, ext, e.size,
                           mtime, ctime, None, None,
                           origin="deleted", volume_base=int(base),
-                          recorded_times=recorded, atime=atime,
+                          recorded_times=recorded, atime=atime, error=error,
                           content_unverified=bool(getattr(e, "content_unverified", False)))
                 tally.registered += 1
                 unverified += bool(getattr(e, "content_unverified", False))
@@ -5598,16 +5610,21 @@ def recover_deleted(case, name: str, *, progress=None) -> tuple[int, set]:
     finally:
         img.close()
     case.db.commit()
+    recovered = tally.registered - tally.damaged     # rows with a copy of the file
     case.db.audit_log(case.examiner, "recover-deleted",
-                      f"{name}: {tally.registered} deleted file(s) recovered from deleted "
+                      f"{name}: {recovered} deleted file(s) recovered from deleted "
                       f"records ({tally.failed} unreadable, {tally.skipped_size} over the size limit"
+                      + (f"; {tally.damaged} more registered with that error and no copy, "
+                         "because a chunk they were read through failed its stored checksum "
+                         "or the chunk holding the file could not be checked"
+                         if tally.damaged else "")
                       + (f"; {unverified} content unverified: FAT or exFAT cannot show their "
                          "clusters were not reused" if unverified else "")
                       + (f"; {refused} deleted file record(s) of any type the reader refused, first: "
                          f"{first_refusal}" if refused else "") + ")")
     if progress:
         progress(n)
-    return tally.registered, recovered_offsets
+    return recovered, recovered_offsets
 
 
 def _flash_first_offset(walker, entry) -> int | None:
