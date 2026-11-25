@@ -151,3 +151,55 @@ def test_recover_deleted_finds_nothing_when_no_files_were_deleted(tmp_path):
     ingest_sources(case, src)
     added, offsets = archive.recover_deleted(case, src[0].name)
     assert added == 0 and offsets == set()
+
+
+def _damaged_e01(folder, raw, content):
+    """An uncompressed E01 of ``raw`` with one byte of ``content`` changed in the
+    stored chunk data, its stored checksum left as written."""
+    folder.mkdir(parents=True, exist_ok=True)
+    image = Path(write_ewf(folder, "mini", raw, compress=False)[0])
+    data = bytearray(image.read_bytes())
+    probe = content[64:96]
+    assert data.count(probe) == 1, "the bytes to damage are not unique in the image"
+    data[data.find(probe)] ^= 0xFF
+    image.write_bytes(data)
+    return image
+
+
+def test_a_deleted_file_read_through_a_damaged_chunk_is_registered_with_the_error(tmp_path):
+    """Issue 344: such a file used to be dropped and counted with the unreadable ones,
+    so the case had no row naming it. It is now registered as a walked file is:
+    the damage error, no copy and no hash, and counted apart in the audit line."""
+    raw = gzip.decompress((FIXTURES / "exfat-deleted.img.gz").read_bytes())
+    (tmp_path / "clean").mkdir()
+    clean, name = _case(tmp_path / "clean", _e01(tmp_path / "clean", "exfat-deleted"))
+    try:
+        archive.recover_deleted(clean, name)
+        before = {r["orig_path"]: Path(r["path"]).read_bytes()
+                  for r in clean.db.iter_files("origin='deleted'")}
+    finally:
+        clean.close()
+    target = max(before, key=lambda p: len(before[p]))
+    assert len(before) >= 2 and len(before[target]) > 256
+
+    image = _damaged_e01(tmp_path / "bad" / "ev", raw, before[target])
+    case = open_case(tmp_path / "bad" / "case", create=True, examiner="t")
+    try:
+        sources, _ = parse_source_spec(image)
+        sources[0].stage = True
+        ingest_sources(case, sources)
+        added, _offsets = archive.recover_deleted(case, sources[0].name)
+        rows = {r["orig_path"]: r for r in case.db.iter_files("origin='deleted'")}
+        assert added == len(before) and set(rows) == set(before)
+        hit = rows[target]
+        assert archive.CHUNK_DAMAGE_ERROR in (hit["error"] or "")
+        assert not hit["md5"] and not hit["sha256"]
+        assert not Path(hit["path"]).exists()
+        for path, row in rows.items():
+            if path != target:
+                assert row["error"] is None and Path(row["path"]).read_bytes() == before[path]
+        said = [a["detail"] for a in case.db.iter_audit() if a["action"] == "recover-deleted"]
+        assert said and "(0 unreadable" in said[0]
+        assert "; 1 of them refused a new copy because a chunk failed its stored checksum" in said[0]
+    finally:
+        case.close()
