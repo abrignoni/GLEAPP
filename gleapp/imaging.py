@@ -84,6 +84,78 @@ def _min_compressed_bytes(codec: str, w: int, h: int, extra) -> int:
     return 0
 
 
+# ---- tiled ASTC 4x4 in AAPL textures --------------------------------------
+#
+# Ported from iLEAPP's scripts/ktx/ios_ktx2png.py (KTX_reader.untile_astc_4x4),
+# where the layout was measured. Snapshots and other AAPL textures seen from iOS
+# 16 to 27 hold their ASTC 4x4 blocks either in raster order (exactly one block
+# per 4x4 pixels, HEAD word 12 = 0, or a HEAD too short to hold word 12) or in
+# tiles of 32x32 blocks, Morton (Z)
+# ordered inside each tile, on a surface padded to whole tiles plus one block
+# (HEAD word 12 = 1). Every AAPL file measured had one of those two lengths; the
+# tiled length with no trailing block is accepted with word 12 = 1 but was not
+# seen. Anything else is refused, because the decoder would turn a cut-short
+# texture into a full-size picture. Apple does not document any of it.
+#
+# Inside a tile, x sits in the even bits and y in the odd bits, except on a 2x
+# screen: an @2x file name gets the swapped order. That order was measured on one
+# 2x device (iOS 26.2.1); whether the screen scale or the GPU decides it is not
+# established, and no field in the file was found to tell them apart.
+_ASTC_BLOCK_BYTES = 16
+_TILE_BLOCKS = 32
+
+
+def _spread_bits(value: int) -> int:
+    """Interleave a 5-bit value with zeros: abcde -> 0a0b0c0d0e."""
+    result = 0
+    for bit in range(5):
+        result |= ((value >> bit) & 1) << (2 * bit)
+    return result
+
+
+_MORTON_EVEN = tuple(_spread_bits(v) for v in range(_TILE_BLOCKS))
+_MORTON_ODD = tuple(_spread_bits(v) << 1 for v in range(_TILE_BLOCKS))
+_SCALE_IN_NAME = re.compile(r"@(\d+)x\.ktx$", re.IGNORECASE)
+
+
+def _image_scale(name: str | None) -> int | None:
+    """The screen scale in a snapshot file name (``<id>@2x.ktx``), or None.
+    Read from the file name only, never from the folders above it."""
+    if not name:
+        return None
+    match = _SCALE_IN_NAME.search(re.split(r"[\\/]", str(name))[-1])
+    return int(match.group(1)) if match else None
+
+
+def _aapl_astc44_raster(data: bytes, w: int, h: int, word12: int,
+                        scale: int | None) -> bytes | None:
+    """ASTC 4x4 blocks of an AAPL texture in raster order, or None for a length
+    that is neither the linear nor the tiled one."""
+    bx, by = -(-w // 4), -(-h // 4)
+    exact = bx * by
+    tx, ty = -(-bx // _TILE_BLOCKS), -(-by // _TILE_BLOCKS)
+    padded = tx * ty * _TILE_BLOCKS * _TILE_BLOCKS
+    count, rem = divmod(len(data), _ASTC_BLOCK_BYTES)
+    flagged = word12 == 1
+    if rem == 0 and count == exact and not flagged:
+        return data
+    if rem or not (count == padded + 1 or (count == padded and flagged)):
+        return None
+    mx, my = (_MORTON_ODD, _MORTON_EVEN) if scale == 2 else (_MORTON_EVEN, _MORTON_ODD)
+    src = memoryview(data)
+    out = bytearray(exact * _ASTC_BLOCK_BYTES)
+    pos = 0
+    for y in range(by):
+        row = (y // _TILE_BLOCKS) * tx
+        ybits = my[y % _TILE_BLOCKS]
+        for x in range(bx):
+            idx = (row + x // _TILE_BLOCKS) * _TILE_BLOCKS * _TILE_BLOCKS + (mx[x % _TILE_BLOCKS] | ybits)
+            start = idx * _ASTC_BLOCK_BYTES
+            out[pos:pos + _ASTC_BLOCK_BYTES] = src[start:start + _ASTC_BLOCK_BYTES]
+            pos += _ASTC_BLOCK_BYTES
+    return bytes(out)
+
+
 def _lzfse_decompress(buf: bytes) -> bytes:
     """LZFSE-decompress ``buf`` (already stripped to the ``bvx`` stream)."""
     import liblzfse
@@ -92,7 +164,7 @@ def _lzfse_decompress(buf: bytes) -> bytes:
 
 
 def _parse_aapl(b: bytes):
-    """Parse Apple's chunked ``AAPL`` texture -> (glinternal, w, h, data) or None.
+    """Parse Apple's chunked ``AAPL`` texture -> (glinternal, w, h, data, word12) or None.
 
     Layout: after the 8-byte magic, a run of ``<uint32 size><4-byte id><body>``
     chunks.  ``HEAD`` carries 11 little-endian uint32s (glInternalFormat at
@@ -101,7 +173,7 @@ def _parse_aapl(b: bytes):
     both preceded by a 4-byte lead value.
     """
     pos, n = 8, len(b)
-    glinternal = w = h = 0
+    glinternal = w = h = word12 = 0
     dpos = dsize = 0
     compressed = False
     while pos + 8 <= n:
@@ -113,6 +185,8 @@ def _parse_aapl(b: bytes):
         if ident == b"HEAD" and body + 44 <= n:
             vals = struct.unpack_from("<11I", b, body)
             glinternal, w, h = vals[4], vals[6], vals[7]
+            if item_size >= 52 and body + 52 <= n:
+                word12 = struct.unpack_from("<I", b, body + 48)[0]
         elif ident == b"LZFS":
             dpos, dsize, compressed = body + 4, item_size - 4, True
         elif ident in (b"astc", b"ASTC"):
@@ -126,7 +200,7 @@ def _parse_aapl(b: bytes):
             raw = _lzfse_decompress(raw)
         except Exception:  # noqa: BLE001
             return None
-    return glinternal, w, h, raw
+    return glinternal, w, h, raw, word12
 
 
 def _decode_texture(glinternal: int, data: bytes, w: int, h: int):
@@ -183,15 +257,22 @@ def _decode_texture(glinternal: int, data: bytes, w: int, h: int):
     return Image.fromarray(g, "L").convert("RGB")
 
 
-def _decode_ktx1(path: str | Path):
-    """Decode a KTX 1 or Apple ``AAPL`` GPU texture -> PIL Image, or None."""
+def _decode_ktx1(path: str | Path, name: str | None = None):
+    """Decode a KTX 1 or Apple ``AAPL`` GPU texture -> PIL Image, or None.
+
+    ``name`` is the evidence path when the bytes sit under another name (a cached
+    or extracted copy); the @2x scale of a snapshot is read from it."""
     b = Path(path).read_bytes()
 
     if b[:8] == _AAPL_MAGIC:
         parsed = _parse_aapl(b)
         if parsed is None:
             return None
-        glinternal, w, h, data = parsed
+        glinternal, w, h, data, word12 = parsed
+        if glinternal == 0x93B0:
+            data = _aapl_astc44_raster(data, w, h, word12, _image_scale(name or str(path)))
+            if data is None:
+                return None
         return _decode_texture(glinternal, data, w, h)
 
     if b[:12] != _KTX1_MAGIC:
@@ -353,6 +434,17 @@ def describe_failure(path: str | Path, exc: Exception) -> str:
 # extensions whose decode can hard-crash -> must go through a child process
 RISKY_EXTS = {".ktx", ".ktx2", ".dds", ".pvr", ".astc"}
 
+# Bump when a GPU-texture decode changes, so a case keeps no preview the older
+# decoder made (2: tiled ASTC 4x4 in AAPL snapshots is untiled).
+TEXTURE_PREVIEW_VERSION = 2
+
+
+def preview_cache_name(file_id: int, suffix: str) -> str:
+    """The file name of a cached display transcode under ``<case>/views``."""
+    if suffix.lower() in RISKY_EXTS:
+        return f"{file_id}.tex{TEXTURE_PREVIEW_VERSION}.jpg"
+    return f"{file_id}.jpg"
+
 
 # ---- Apple CgBI ("iPhone-optimised") PNG -----------------------------
 #
@@ -485,7 +577,7 @@ def _decode_cgbi_png(src: str | Path) -> Image.Image:
     return Image.fromarray(px, "RGB")
 
 
-def load_any(src: str | Path) -> Image.Image:
+def load_any(src: str | Path, name: str | None = None) -> Image.Image:
     """Open an image with Pillow; fall back to the KTX GPU-texture decoder.
 
     Only safe for non-risky formats (jpg/png/heic/tiff/...).  For KTX-family
@@ -501,25 +593,25 @@ def load_any(src: str | Path) -> Image.Image:
         im.load()
         return ImageOps.exif_transpose(im)
     except Exception:
-        ktx = _decode_ktx1(src)
+        ktx = _decode_ktx1(src, name)
         if ktx is not None:
             return ktx
         raise
 
 
-def load_for_processing(src: str | Path) -> Image.Image:
+def load_for_processing(src: str | Path, name: str | None = None) -> Image.Image:
     """Return a fully-loaded RGB image for hashing/thumbnailing.
 
     Safe formats are opened in-process; risky GPU-texture formats are decoded in
     a child process first.  Raises if nothing can decode it.
     """
     if Path(src).suffix.lower() not in RISKY_EXTS:
-        return load_any(src)
+        return load_any(src, name)
     import tempfile
 
     tmp = Path(tempfile.mkdtemp()) / "tex.jpg"
     try:
-        if not transcode_isolated(src, tmp):
+        if not transcode_isolated(src, tmp, name=name):
             raise ValueError("GPU-texture codec could not be decoded")
         im = Image.open(tmp)
         im.load()
@@ -533,7 +625,7 @@ def load_for_processing(src: str | Path) -> Image.Image:
 
 
 def transcode_isolated(src: str | Path, dest: Path, *, max_side: int = 2200,
-                       timeout: int = 40) -> bool:
+                       timeout: int = 40, name: str | None = None) -> bool:
     """Decode ``src`` to a JPEG at ``dest`` in a child process (crash-safe)."""
     import subprocess
 
@@ -543,9 +635,11 @@ def transcode_isolated(src: str | Path, dest: Path, *, max_side: int = 2200,
     if dest.exists():
         return True
     if Path(src).suffix.lower() not in RISKY_EXTS:
-        return to_web_jpeg(src, dest, max_side=max_side)   # safe in-process
+        return to_web_jpeg(src, dest, max_side=max_side, name=name)   # safe in-process
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = worker_command("texworker") + [src, str(dest), str(max_side)]
+    if name:
+        cmd.append(str(name))
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError):
@@ -554,10 +648,11 @@ def transcode_isolated(src: str | Path, dest: Path, *, max_side: int = 2200,
 
 
 def _write_web_image(src: str | Path, dest: Path, max_side: int, fmt: str,
-                     keep: tuple[str, ...], fallback: str, **save_kw) -> bool:
+                     keep: tuple[str, ...], fallback: str, name: str | None = None,
+                     **save_kw) -> bool:
     """``load_any`` + downscale + save as ``fmt``; False on any decode failure."""
     try:
-        im = load_any(src)
+        im = load_any(src, name)
         if im.mode not in keep:
             im = im.convert(fallback)
         if max(im.size) > max_side:
@@ -569,14 +664,15 @@ def _write_web_image(src: str | Path, dest: Path, max_side: int, fmt: str,
         return False
 
 
-def to_web_jpeg(src: str | Path, dest: Path, *, max_side: int = 2200) -> bool:
+def to_web_jpeg(src: str | Path, dest: Path, *, max_side: int = 2200,
+                name: str | None = None) -> bool:
     """Decode ``src`` (Pillow or KTX) and write a display JPEG to ``dest``.
 
     Returns False when nothing can turn it into an image (Apple AAPL assets,
     unknown codecs, truly corrupt data).
     """
     return _write_web_image(src, dest, max_side, "JPEG", ("RGB", "L"), "RGB",
-                            quality=88)
+                            name=name, quality=88)
 
 
 def to_web_png(src: str | Path, dest: Path, *, max_side: int = 2200) -> bool:

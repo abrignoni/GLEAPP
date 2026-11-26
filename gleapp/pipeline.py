@@ -356,7 +356,7 @@ def _process_one_at(thumb_dir, row, local: str, *, force: bool, keyframes: int,
                 upd["kind"] = sniffed
 
         if kind == "image":
-            im = imaging.load_for_processing(decode_path)   # Pillow/HEIC/KTX
+            im = imaging.load_for_processing(decode_path, name=path)   # Pillow/HEIC/KTX
             try:
                 upd.update(perceptual_hashes(im))
                 meta = extract_image(decode_path, im)

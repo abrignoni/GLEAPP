@@ -1111,8 +1111,9 @@ def _fullview_candidates(case: Case, d: dict, local: Path | None = None):
         if d.get("thumb"):
             yield case.thumb_dir / d["thumb"]
         return
-    yield _view_source(case, d, local)                # the (LZC sidecar or) original
-    v = case.root / "views" / f"{d['id']}.jpg"        # a cached transcode, if any
+    src = _view_source(case, d, local)
+    yield src                                         # the (LZC sidecar or) original
+    v = case.root / "views" / imaging.preview_cache_name(d["id"], src.suffix)   # a cached transcode, if any
     if v.exists():
         yield v
 
