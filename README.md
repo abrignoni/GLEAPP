@@ -283,6 +283,9 @@ mycase/
 ```
 
 Re-running `ingest` / `process` skips already-processed files; add `--force` to redo.
+After upgrading from a version before 2026-11-26, re-process with `--force` any case that
+holds iOS 26 or later app snapshots: their thumbnails and perceptual hashes were made from
+a scrambled decode of the tiled texture, and a normal `process` keeps them.
 
 ### Saving
 
