@@ -90,12 +90,13 @@ def _min_compressed_bytes(codec: str, w: int, h: int, extra) -> int:
 # where the layout was measured. Snapshots and other AAPL textures seen from iOS
 # 16 to 27 hold their ASTC 4x4 blocks either in raster order (exactly one block
 # per 4x4 pixels, HEAD word 12 = 0, or a HEAD too short to hold word 12) or in
-# tiles of 32x32 blocks, Morton (Z)
-# ordered inside each tile, on a surface padded to whole tiles plus one block
-# (HEAD word 12 = 1). Every AAPL file measured had one of those two lengths; the
-# tiled length with no trailing block is accepted with word 12 = 1 but was not
-# seen. Anything else is refused, because the decoder would turn a cut-short
-# texture into a full-size picture. Apple does not document any of it.
+# tiles of 32x32 blocks, Morton (Z) ordered inside each tile, on a surface
+# padded to whole tiles plus one block
+# (HEAD word 12 = 1). Every AAPL file measured had one of those two lengths with
+# that word 12; the tiled length with no trailing block is accepted with word 12 =
+# 1 but was not seen. Any other length, or a length whose word 12 disagrees, is
+# refused, because the decoder would turn a cut-short texture into a full-size
+# picture. Apple does not document any of it.
 #
 # Inside a tile, x sits in the even bits and y in the odd bits, except on a 2x
 # screen: an @2x file name gets the swapped order. That order was measured on one
@@ -136,10 +137,11 @@ def _aapl_astc44_raster(data: bytes, w: int, h: int, word12: int,
     tx, ty = -(-bx // _TILE_BLOCKS), -(-by // _TILE_BLOCKS)
     padded = tx * ty * _TILE_BLOCKS * _TILE_BLOCKS
     count, rem = divmod(len(data), _ASTC_BLOCK_BYTES)
-    flagged = word12 == 1
-    if rem == 0 and count == exact and not flagged:
+    if rem:
+        return None
+    if count == exact and word12 == 0:
         return data
-    if rem or not (count == padded + 1 or (count == padded and flagged)):
+    if word12 != 1 or count not in (padded, padded + 1):
         return None
     mx, my = (_MORTON_ODD, _MORTON_EVEN) if scale == 2 else (_MORTON_EVEN, _MORTON_ODD)
     src = memoryview(data)

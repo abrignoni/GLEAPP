@@ -129,3 +129,20 @@ def test_word_12_is_read_only_from_inside_head(tmp_path):
 def test_texture_previews_use_a_versioned_cache_name():
     assert imaging.preview_cache_name(7, ".KTX") == f"7.tex{imaging.TEXTURE_PREVIEW_VERSION}.jpg"
     assert imaging.preview_cache_name(7, ".heic") == "7.jpg"
+
+
+@pytest.mark.parametrize("word12", [0, 2])
+def test_tiled_length_needs_word_12_set(tmp_path, word12):
+    w, h = 132, 260
+    _bx, _by, colours = _blocks(w, h, 13)
+    path = tmp_path / "ABC@3x.ktx"
+    path.write_bytes(_aapl(w, h, _tiled_payload(w, h, colours, False), word12))
+    assert _decode_ktx1(path) is None
+
+
+def test_linear_length_needs_word_12_clear(tmp_path):
+    w, h = 132, 260
+    _bx, _by, colours = _blocks(w, h, 14)
+    path = tmp_path / "ABC@3x.ktx"
+    path.write_bytes(_aapl(w, h, b"".join(_void(*c) for c in colours), 2))
+    assert _decode_ktx1(path) is None
