@@ -1409,7 +1409,7 @@ def create_app(case_dir: str | None = None, *, native: bool = False) -> Flask:
         if r["kind"] == "video" or p.suffix.lower() in imaging.WEB_IMAGE_EXTS:
             mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
             return send_file(p, mimetype=mime, conditional=True)
-        cache = case.root / "views" / f"{file_id}.jpg"
+        cache = case.root / "views" / imaging.preview_cache_name(file_id, p.suffix)
         if not cache.exists() and not imaging.transcode_isolated(p, cache, name=r["path"]):
             abort(415, description=f"{p.suffix or 'this file'} can't be displayed "
                   "(proprietary Apple asset / unknown codec)")

@@ -100,3 +100,32 @@ def test_cut_short_tiled_snapshot_is_refused(tmp_path):
     path = tmp_path / "ABC@3x.ktx"
     path.write_bytes(_aapl(w, h, payload[: len(payload) // 2], 1))
     assert _decode_ktx1(path) is None
+
+
+def test_flagged_texture_at_the_linear_length_is_refused(tmp_path):
+    w, h = 132, 260
+    _bx, _by, colours = _blocks(w, h, 11)
+    path = tmp_path / "ABC@3x.ktx"
+    path.write_bytes(_aapl(w, h, b"".join(_void(*c) for c in colours), 1))
+    assert _decode_ktx1(path) is None
+
+
+def test_word_12_is_read_only_from_inside_head(tmp_path):
+    # An 11-word HEAD, then a chunk whose ID would read as word 12 = 1 if the
+    # parser looked past the end of HEAD. The texture is linear and must stay so.
+    w, h = 132, 260
+    _bx, _by, colours = _blocks(w, h, 12)
+    head = struct.pack("<11I", 0, 0, 0, 0, 0x93B0, 0x1908, w, h, 1, 1, 1)
+    fill = struct.pack("<I", 1) + bytes(12)
+    chunk = struct.pack("<I", 0) + b"".join(_void(*c) for c in colours)
+    data = (b"AAPL\r\n\x1a\n" + struct.pack("<I", len(head)) + b"HEAD" + head
+            + struct.pack("<I", len(fill)) + struct.pack("<I", 1) + fill
+            + struct.pack("<I", len(chunk)) + b"astc" + chunk)
+    path = tmp_path / "ABC@3x.ktx"
+    path.write_bytes(data)
+    assert _wrong_pixels(_decode_ktx1(path), w, h, colours) == 0
+
+
+def test_texture_previews_use_a_versioned_cache_name():
+    assert imaging.preview_cache_name(7, ".KTX") == f"7.tex{imaging.TEXTURE_PREVIEW_VERSION}.jpg"
+    assert imaging.preview_cache_name(7, ".heic") == "7.jpg"

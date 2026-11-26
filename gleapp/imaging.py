@@ -89,7 +89,8 @@ def _min_compressed_bytes(codec: str, w: int, h: int, extra) -> int:
 # Ported from iLEAPP's scripts/ktx/ios_ktx2png.py (KTX_reader.untile_astc_4x4),
 # where the layout was measured. Snapshots and other AAPL textures seen from iOS
 # 16 to 27 hold their ASTC 4x4 blocks either in raster order (exactly one block
-# per 4x4 pixels, HEAD word 12 = 0) or in tiles of 32x32 blocks, Morton (Z)
+# per 4x4 pixels, HEAD word 12 = 0, or a HEAD too short to hold word 12) or in
+# tiles of 32x32 blocks, Morton (Z)
 # ordered inside each tile, on a surface padded to whole tiles plus one block
 # (HEAD word 12 = 1). Every AAPL file measured had one of those two lengths; the
 # tiled length with no trailing block is accepted with word 12 = 1 but was not
@@ -136,7 +137,7 @@ def _aapl_astc44_raster(data: bytes, w: int, h: int, word12: int,
     padded = tx * ty * _TILE_BLOCKS * _TILE_BLOCKS
     count, rem = divmod(len(data), _ASTC_BLOCK_BYTES)
     flagged = word12 == 1
-    if rem == 0 and count == exact and not (padded == exact and flagged):
+    if rem == 0 and count == exact and not flagged:
         return data
     if rem or not (count == padded + 1 or (count == padded and flagged)):
         return None
@@ -184,7 +185,7 @@ def _parse_aapl(b: bytes):
         if ident == b"HEAD" and body + 44 <= n:
             vals = struct.unpack_from("<11I", b, body)
             glinternal, w, h = vals[4], vals[6], vals[7]
-            if body + 52 <= n:
+            if item_size >= 52 and body + 52 <= n:
                 word12 = struct.unpack_from("<I", b, body + 48)[0]
         elif ident == b"LZFS":
             dpos, dsize, compressed = body + 4, item_size - 4, True
@@ -432,6 +433,17 @@ def describe_failure(path: str | Path, exc: Exception) -> str:
 
 # extensions whose decode can hard-crash -> must go through a child process
 RISKY_EXTS = {".ktx", ".ktx2", ".dds", ".pvr", ".astc"}
+
+# Bump when a GPU-texture decode changes, so a case keeps no preview the older
+# decoder made (2: tiled ASTC 4x4 in AAPL snapshots is untiled).
+TEXTURE_PREVIEW_VERSION = 2
+
+
+def preview_cache_name(file_id: int, suffix: str) -> str:
+    """The file name of a cached display transcode under ``<case>/views``."""
+    if suffix.lower() in RISKY_EXTS:
+        return f"{file_id}.tex{TEXTURE_PREVIEW_VERSION}.jpg"
+    return f"{file_id}.jpg"
 
 
 # ---- Apple CgBI ("iPhone-optimised") PNG -----------------------------
