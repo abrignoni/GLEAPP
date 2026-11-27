@@ -186,6 +186,44 @@ jobs:
             /usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" dist/GLEAPP.app/Contents/Info.plist
           fi
 
+      # The .deb and the .rpm wrap the same one-folder build, so a packaging
+      # change that breaks them is caught here rather than at release time.
+      # Install and run each package once to confirm the packaged binary works
+      # from /usr/bin/gleapp and matches the smoke-tested build byte-for-byte.
+      - name: Linux, build and test the .deb and .rpm
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq rpm
+          python packaging/linux/build_linux_packages.py --dist dist/GLEAPP --out-dir dist
+          dpkg-deb --info "dist/gleapp_"*"_amd64.deb"
+          rpm -qpi dist/gleapp-*.x86_64.rpm
+          WANT="GLEAPP $(python -c "import sys; sys.path.insert(0, 'packaging'); import build; print(build.read_version())")"
+
+          # Call the packaged command by its path. The pip install above puts a source
+          # `gleapp` earlier on PATH, and that one has no --selfcheck.
+          APP=/usr/bin/gleapp
+
+          sudo dpkg -i dist/gleapp_*_amd64.deb
+          [ "$(readlink -f "$APP")" = /opt/gleapp/GLEAPP ] || { echo "$APP does not point into /opt/gleapp"; exit 1; }
+          diff -rq dist/GLEAPP /opt/gleapp
+          GOT="$("$APP" --version)"
+          echo "deb gleapp --version -> '$GOT'"
+          [ "$GOT" = "$WANT" ] || { echo "expected '$WANT'"; exit 1; }
+          "$APP" --selfcheck
+          sudo dpkg -r gleapp
+
+          # --nodeps because Ubuntu has no RPM database providing glibc.
+          sudo rpm -i --nodeps dist/gleapp-*.x86_64.rpm
+          [ "$(readlink -f "$APP")" = /opt/gleapp/GLEAPP ] || { echo "$APP does not point into /opt/gleapp"; exit 1; }
+          diff -rq dist/GLEAPP /opt/gleapp
+          GOT="$("$APP" --version)"
+          echo "rpm gleapp --version -> '$GOT'"
+          [ "$GOT" = "$WANT" ] || { echo "expected '$WANT'"; exit 1; }
+          "$APP" --selfcheck
+          sudo rpm -e gleapp
+
       # Windows only. --selfcheck imports the window's backend; this opens the window
       # itself from the marked single file, the way a user starts it: pythonnet loading .NET,
       # the WebView2 control, and Flask serving the launcher into it, then closes it

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GLEAPP
+GenericName=Media forensics triage
+Comment=Triage and analyze large sets of images and video in a digital-forensics workflow
+Exec=gleapp
+Icon=gleapp
+Terminal=false
+Categories=Utility;
+Keywords=forensics;images;video;triage;exif;hash;
+StartupWMClass=GLEAPP
